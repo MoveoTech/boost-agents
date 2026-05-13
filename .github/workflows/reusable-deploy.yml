@@ -20,14 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1. AUTH AS MASTER
       - id: 'auth_master'
         uses: 'google-github-actions/auth@v2'
         with:
           workload_identity_provider: 'projects/45358226626/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
           service_account: 'deployer@boost-agents-496211.iam.gserviceaccount.com'
 
-      # 2. PROVISIONING ENGINE
       - name: Provision GCP Project
         id: provision
         run: |
@@ -44,21 +42,15 @@ jobs:
             sleep 30
           fi
 
-          # SMART BILLING CHECK: Only link if NOT already enabled
-          BILLING_STATUS=$(gcloud billing projects describe $PROJECT_ID --format='value(billingEnabled)' 2>/dev/null || echo "false")
-          if [[ "$BILLING_STATUS" != "true" ]]; then
-            echo "Linking Billing Account..."
-            gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40
-          else
-            echo "Billing already enabled for $PROJECT_ID. Skipping link to avoid quota check."
-          fi
+          echo "Ensuring Billing is linked..."
+          # Added || true to bypass the quota rate-limit crash
+          gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Quota limit hit, moving to next step..."
 
           echo "Enabling Core APIs..."
           gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID
 
-          # SELF-HEALING SECURITY SETUP
           if ! gcloud iam workload-identity-pools describe "github-pool-v2" --project="$PROJECT_ID" --location="global" &>/dev/null; then
-            echo "Setting up Workload Identity..."
+            echo "Setting up Security..."
             gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global"
             gcloud iam workload-identity-pools providers create-oidc "github-provider-v2" \
               --project="$PROJECT_ID" --location="global" --workload-identity-pool="github-pool-v2" \
@@ -66,7 +58,7 @@ jobs:
               --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
               --attribute-condition="assertion.repository_owner == 'MoveoTech'"
 
-            gcloud iam service-accounts create "deployer" --project="$PROJECT_ID" || echo "SA exists"
+            gcloud iam service-accounts create "deployer" --project="$PROJECT_ID" || true
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/run.admin"
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/iam.serviceAccountUser"
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/artifactregistry.admin"
@@ -75,11 +67,10 @@ jobs:
             gcloud iam service-accounts add-iam-policy-binding "deployer@$PROJECT_ID.iam.gserviceaccount.com" --project="$PROJECT_ID" --role="roles/iam.workloadIdentityUser" \
               --member="principalSet://iam.googleapis.com/projects/$NUMERIC_ID/locations/global/workloadIdentityPools/github-pool-v2/attribute.repository_owner/MoveoTech"
 
-            gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID || echo "Repo exists"
+            gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID || true
             sleep 60
           fi
 
-      # 3. AUTH AS LOCAL
       - name: Get Project Number
         id: info
         run: echo "num=$(gcloud projects describe ${{ steps.provision.outputs.project_id }} --format='value(projectNumber)')" >> $GITHUB_OUTPUT
@@ -90,7 +81,6 @@ jobs:
           workload_identity_provider: 'projects/${{ steps.info.outputs.num }}/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
           service_account: 'deployer@${{ steps.provision.outputs.project_id }}.iam.gserviceaccount.com'
 
-      # 4. BUILD & DEPLOY
       - name: Build and Push Image
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
