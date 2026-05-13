@@ -5,7 +5,7 @@ import {
   SchemaType,
   Tool,
 } from "@google/generative-ai";
-import { fetchUrl } from "./tools";
+import { fetchUrl, httpRequest } from "./tools";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -25,6 +25,29 @@ const TOOLS: Tool[] = [
             },
           },
           required: ["url"],
+        },
+      },
+      {
+        name: "http_request",
+        description:
+          "Make an HTTP request with a custom method and optional JSON body. Use for REST APIs that require POST, PUT, or PATCH with a JSON body.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            url: {
+              type: SchemaType.STRING,
+              description: "The full URL (must start with http:// or https://)",
+            },
+            method: {
+              type: SchemaType.STRING,
+              description: "HTTP method: GET, POST, PUT, PATCH, or DELETE",
+            },
+            body: {
+              type: SchemaType.OBJECT,
+              description: "JSON body to send with the request (optional)",
+            },
+          },
+          required: ["url", "method"],
         },
       },
     ],
@@ -65,6 +88,10 @@ export async function chat(message: string, history: Content[]): Promise<ChatRes
           const url = (call.args as { url: string }).url;
           output = await fetchUrl(url);
           toolUses.push({ name: "fetch_url", input: url, output: output.slice(0, 500) });
+        } else if (call.name === "http_request") {
+          const { url, method, body } = call.args as { url: string; method: string; body?: unknown };
+          output = await httpRequest(url, method, body);
+          toolUses.push({ name: "http_request", input: `${method} ${url}`, output: output.slice(0, 500) });
         }
 
         return {
