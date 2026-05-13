@@ -45,7 +45,7 @@ jobs:
           gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Billing failed."
 
           echo "Attempting to Enable APIs..."
-          gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID || echo "API failed."
+          gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com iamcredentials.googleapis.com --project=$PROJECT_ID || echo "API failed."
 
           if ! gcloud iam workload-identity-pools describe "github-pool-v2" --project="$PROJECT_ID" --location="global" &>/dev/null; then
             gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global" || true
@@ -63,6 +63,9 @@ jobs:
               --member="principalSet://iam.googleapis.com/projects/$NUMERIC_ID/locations/global/workloadIdentityPools/github-pool-v2/attribute.repository_owner/MoveoTech" || true
 
             gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID || true
+
+            echo "Waiting 60s for IAM/WIF propagation..."
+            sleep 60
           fi
 
       # 3. AUTH AS LOCAL
