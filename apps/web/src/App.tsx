@@ -60,7 +60,7 @@ export default function App() {
           <span className="header-icon">✦</span>
           <h1>Boost Agent</h1>
         </div>
-        <span className="model-badge">Gemini 2.0 Flash</span>
+        <span className="model-badge">Gemini 2.5 Flash</span>
       </header>
       <ChatWindow messages={messages} />
       <InputBar onSend={handleSend} disabled={loading} />

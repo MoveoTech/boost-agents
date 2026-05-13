@@ -48,7 +48,7 @@ export interface ChatResult {
 
 export async function chat(message: string, history: Content[]): Promise<ChatResult> {
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: "gemini-2.5-flash",
     tools: TOOLS,
   });
 
