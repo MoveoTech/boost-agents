@@ -29,8 +29,6 @@ const TOOLS: Tool[] = [
       },
     ],
   },
-  // @ts-ignore — googleSearch is supported by Gemini 2.5 but not yet in SDK types
-  { googleSearch: {} },
 ];
 
 export interface ToolUse {
@@ -55,7 +53,7 @@ export async function chat(message: string, history: Content[]): Promise<ChatRes
 
   let result = await session.sendMessage(message);
 
-  // Agentic loop: handle fetch_url function calls until the model produces a final response
+  // Agentic loop: handle fetch_url calls until the model produces a final text response
   while (result.response.functionCalls()?.length) {
     const calls = result.response.functionCalls()!;
 
@@ -76,17 +74,6 @@ export async function chat(message: string, history: Content[]): Promise<ChatRes
     );
 
     result = await session.sendMessage(responses);
-  }
-
-  // Extract Google Search queries from grounding metadata
-  const groundingMeta = result.response.candidates?.[0]?.groundingMetadata as
-    | { webSearchQueries?: string[] }
-    | undefined;
-  if (groundingMeta?.webSearchQueries?.length) {
-    toolUses.push({
-      name: "google_search",
-      input: groundingMeta.webSearchQueries.join("; "),
-    });
   }
 
   return { reply: result.response.text(), toolUses };
