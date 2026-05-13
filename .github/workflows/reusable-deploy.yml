@@ -3,79 +3,105 @@ name: Reusable Agent Deployment
 on:
   workflow_call:
     inputs:
-      gcp_project_id:
-        required: true
-        type: string
       service_name:
         required: true
         type: string
-      region:
-        required: false
-        type: string
-        default: "us-central1"
     secrets:
       GEMINI_API_KEY:
         required: true
 
 jobs:
-  # --- GUARD: ENSURE DEVS DIDN'T FORGET KEYS ---
-  validate-setup:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check for Required Secrets and Variables
-        run: |
-          if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then
-            echo "::error::Missing Secret: GEMINI_API_KEY is not set in GitHub Secrets!"
-            exit 1
-          fi
-          if [ -z "${{ inputs.gcp_project_id }}" ]; then
-            echo "::error::Missing Variable: GCP_PROJECT_ID is not set in GitHub Variables!"
-            exit 1
-          fi
-
-  # --- DEPLOYMENT: THE ACTUAL HEAVY LIFTING ---
-  deploy-to-gcp:
-    needs: validate-setup
+  provision-and-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
-      id-token: 'write' # Required for Workload Identity Federation
+      id-token: 'write'
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # 1. Authenticate with Google Cloud
-      - id: 'auth'
+      # 1. AUTH AS MASTER: Gain "Creator" powers using the Master Project
+      - id: 'auth_master'
         uses: 'google-github-actions/auth@v2'
         with:
-          # Your Golden Ticket string
+          # Your Master WIF Provider from boost-agents-platform
           workload_identity_provider: 'projects/790741248712/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
-          service_account: 'deployer@${{ inputs.gcp_project_id }}.iam.gserviceaccount.com'
+          service_account: 'deployer@boost-agents-platform.iam.gserviceaccount.com'
 
-      # 2. Build and Push the Container to Artifact Registry
-      - name: Build and Push
+      # 2. PROVISIONING ENGINE: Automated Project Management
+      - name: Provision GCP Project
+        id: provision
         run: |
-          gcloud auth configure-docker --quiet
-          # Builds from the /apps/server folder specifically
-          docker build -t gcr.io/${{ inputs.gcp_project_id }}/${{ inputs.service_name }}:${{ github.sha }} ./apps/server
-          docker push gcr.io/${{ inputs.gcp_project_id }}/${{ inputs.service_name }}:${{ github.sha }}
+          # Create a globally unique Project ID (boost- + repo name)
+          CLEAN_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-24)
+          PROJECT_ID="boost-${CLEAN_NAME}"
+          echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
-      # 3. Deploy to Cloud Run
-      - name: Deploy to Cloud Run
+          # If the project doesn't exist, build the whole environment
+          if ! gcloud projects describe $PROJECT_ID &>/dev/null; then
+            echo "Building new project: $PROJECT_ID..."
+            
+            # Create project inside your 'Boost-Agents' Folder
+            gcloud projects create $PROJECT_ID --folder=324333743991 --name="${{ github.event.repository.name }}"
+            
+            # Link to MoveoTech Billing
+            gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40
+            
+            # Enable Required APIs
+            gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID
+            
+            # Setup Security Handshake (Workload Identity) in the NEW project
+            gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global"
+            gcloud iam workload-identity-pools providers create-oidc "github-provider-v2" \
+              --project="$PROJECT_ID" --location="global" --workload-identity-pool="github-pool-v2" \
+              --issuer-uri="https://token.actions.githubusercontent.com" \
+              --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+              --attribute-condition="assertion.repository_owner == 'MoveoTech'"
+
+            # Create Local 'Deployer' Service Account
+            gcloud iam service-accounts create "deployer" --project="$PROJECT_ID"
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/run.admin"
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/iam.serviceAccountUser"
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/artifactregistry.admin"
+            
+            # Map the GitHub Pool to the new Service Account
+            NUMERIC_ID=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+            gcloud iam service-accounts add-iam-policy-binding "deployer@$PROJECT_ID.iam.gserviceaccount.com" --project="$PROJECT_ID" --role="roles/iam.workloadIdentityUser" \
+              --member="principalSet://iam.googleapis.com/projects/$NUMERIC_ID/locations/global/workloadIdentityPools/github-pool-v2/attribute.repository_owner/MoveoTech"
+
+            # Create the Artifact Registry
+            gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID
+            
+            echo "Waiting for propagation..."
+            sleep 40
+          else
+            echo "Project $PROJECT_ID exists. Moving to deployment."
+          fi
+
+      # 3. AUTH AS LOCAL: Switch identity to the new project
+      - name: Get New Project Number
+        id: info
+        run: echo "num=$(gcloud projects describe ${{ steps.provision.outputs.project_id }} --format='value(projectNumber)')" >> $GITHUB_OUTPUT
+
+      - id: 'auth_local'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: 'projects/${{ steps.info.outputs.num }}/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
+          service_account: 'deployer@${{ steps.provision.outputs.project_id }}.iam.gserviceaccount.com'
+
+      # 4. BUILD & DEPLOY
+      - name: Docker Build & Push
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} ./apps/server
+          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
+
+      - name: Cloud Run Deploy
         id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
           service: ${{ inputs.service_name }}
-          region: ${{ inputs.region }}
-          image: gcr.io/${{ inputs.gcp_project_id }}/${{ inputs.service_name }}:${{ github.sha }}
-          # Inject keys directly into the running agent
+          region: us-central1
+          image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
           env_vars: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-            PORT=8080
-
-      # 4. Success Message
-      - name: Show URL
-        run: |
-          echo "Deployment successful!"
-          echo "Agent Service URL: ${{ steps.deploy.outputs.url }}"
