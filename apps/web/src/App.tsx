@@ -10,8 +10,6 @@ export default function App() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
 
-  if (!authed) return <LoginPage onLogin={() => setAuthed(true)} />;
-
   const handleSend = useCallback(
     async (text: string) => {
       const userMsg: DisplayMessage = { id: crypto.randomUUID(), role: "user", text };
@@ -52,6 +50,8 @@ export default function App() {
     },
     [messages]
   );
+
+  if (!authed) return <LoginPage onLogin={() => setAuthed(true)} />;
 
   return (
     <div className="app">

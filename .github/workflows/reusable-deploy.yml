@@ -94,6 +94,7 @@ jobs:
           service: ${{ inputs.service_name }}
           region: us-central1
           image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
+          flags: '--allow-unauthenticated'
           env_vars: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             API_KEY=${{ secrets.API_KEY }}
@@ -118,6 +119,7 @@ jobs:
           service: ${{ inputs.service_name }}-web
           region: us-central1
           image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}-web:${{ github.sha }}
+          flags: '--allow-unauthenticated'
 
       - name: Print URLs
         run: |
