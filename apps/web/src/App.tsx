@@ -1,12 +1,16 @@
 import { useState, useCallback } from "react";
 import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
+import LoginPage from "./components/LoginPage";
 import { sendMessage } from "./api/client";
 import type { DisplayMessage, HistoryItem } from "./types";
 
 export default function App() {
+  const [authed, setAuthed] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
+
+  if (!authed) return <LoginPage onLogin={() => setAuthed(true)} />;
 
   const handleSend = useCallback(
     async (text: string) => {
