@@ -5,12 +5,11 @@ on:
     branches: [ main ]
 
 jobs:
-  call-boost-pipeline:
-    # Points to your organization's central 'boost-agents' repo
+  run-factory-pipeline:
+    # This calls your central logic
     uses: MoveoTech/boost-agents/.github/workflows/reusable-deploy.yml@main
     with:
-      # These come from the Repo Settings > Secrets and variables > Actions
-      gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+      # We ONLY pass the service_name now. 
+      # The Factory handles the Project ID automatically.
       service_name: ${{ github.event.repository.name }}
-    secrets:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    secrets: inherit
