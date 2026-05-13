@@ -7,7 +7,7 @@ on:
 jobs:
   call-boost-pipeline:
     # Points to your organization's central 'boost-agents' repo
-    uses: YOUR_ORG_NAME/boost-agents/.github/workflows/reusable-deploy.yml@main
+    uses: MoveoTech/boost-agents/.github/workflows/reusable-deploy.yml@main
     with:
       # These come from the Repo Settings > Secrets and variables > Actions
       gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
