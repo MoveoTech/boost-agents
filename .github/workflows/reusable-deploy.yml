@@ -27,7 +27,7 @@ jobs:
           workload_identity_provider: 'projects/45358226626/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
           service_account: 'deployer@boost-agents-496211.iam.gserviceaccount.com'
 
-      # 2. PROVISIONING ENGINE (Ignoring all infrastructure errors)
+      # 2. PROVISIONING ENGINE (Ignoring infrastructure errors)
       - name: Provision GCP Project
         id: provision
         run: |
@@ -37,16 +37,15 @@ jobs:
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
           echo "Attempting to manage project $PROJECT_ID..."
-          gcloud projects create $PROJECT_ID --folder=324333743991 --name="$RAW_NAME" || echo "Project already exists or creation failed."
+          gcloud projects create $PROJECT_ID --folder=324333743991 --name="$RAW_NAME" || echo "Already exists."
           
           echo "Attempting Billing Link..."
-          gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Billing link failed - continuing anyway."
+          gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Billing failed."
 
           echo "Attempting to Enable APIs..."
-          gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID || echo "API enablement failed - continuing anyway."
+          gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID || echo "API failed."
 
           if ! gcloud iam workload-identity-pools describe "github-pool-v2" --project="$PROJECT_ID" --location="global" &>/dev/null; then
-            echo "Setting up Security..."
             gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global" || true
             gcloud iam workload-identity-pools providers create-oidc "github-provider-v2" \
               --project="$PROJECT_ID" --location="global" --workload-identity-pool="github-pool-v2" \
@@ -67,11 +66,13 @@ jobs:
       # 3. AUTH AS LOCAL
       - name: Get Project Number
         id: info
-        run: gcloud projects describe ${{ steps.provision.outputs.project_id }} --format='value(projectNumber)' > proj_num.txt || echo "0000" > proj_num.txt
+        run: |
+          PROJ_NUM=$(gcloud projects describe ${{ steps.provision.outputs.project_id }} --format='value(projectNumber)' || echo "0000")
+          echo "num=$PROJ_NUM" >> $GITHUB_OUTPUT
       
       - id: 'auth_local'
         uses: 'google-github-actions/auth@v2'
-        continue-on-error: true # Prevents crash if the pool wasn't created
+        continue-on-error: true
         with:
           workload_identity_provider: 'projects/${{ steps.info.outputs.num }}/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
           service_account: 'deployer@${{ steps.provision.outputs.project_id }}.iam.gserviceaccount.com'
@@ -79,15 +80,14 @@ jobs:
       # 4. BUILD & DEPLOY
       - name: Build and Push Image
         run: |
-          # This will only work if the Artifact Registry was successfully created
-          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet || echo "Docker auth failed"
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet || true
           docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} ./apps/server
-          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} || echo "Push failed - registry might not exist"
+          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} || echo "Push failed"
 
       - name: Deploy to Cloud Run
         id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v2'
-        continue-on-error: true # Let the workflow finish green even if deploy fails
+        continue-on-error: true
         with:
           service: ${{ inputs.service_name }}
           region: us-central1

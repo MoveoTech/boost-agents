@@ -80,18 +80,17 @@ export async function chat(message: string, history: Content[]): Promise<ChatRes
     result = await session.sendMessage(responses);
   }
 
-  // Extract code execution tool uses from response parts
-  const parts = result.response.candidates?.[0]?.content?.parts ?? [];
+  // Extract code execution tool uses from response parts.
+  // Cast to a flat type to avoid fighting the SDK's discriminated union
+  // (each union member has sibling fields typed as `never`).
+  type RawPart = { executableCode?: { code: string }; codeExecutionResult?: { output: string } };
+  const parts = (result.response.candidates?.[0]?.content?.parts ?? []) as RawPart[];
   for (let i = 0; i < parts.length; i++) {
-    const part = parts[i] as Part & {
-      executableCode?: { code: string };
-      codeExecutionResult?: { output: string };
-    };
-    if (part.executableCode) {
+    if (parts[i].executableCode) {
       toolUses.push({
         name: "code_execution",
-        input: part.executableCode.code,
-        output: (parts[i + 1] as typeof part)?.codeExecutionResult?.output,
+        input: parts[i].executableCode!.code,
+        output: parts[i + 1]?.codeExecutionResult?.output,
       });
     }
   }
