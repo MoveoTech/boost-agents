@@ -31,28 +31,30 @@ jobs:
       - name: Provision GCP Project
         id: provision
         run: |
-          # DYNAMIC: Create ID based on the repo name
-          CLEAN_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-24)
-          # ADDING -V6 TO AVOID THE DELETION LOCKOUT
-          PROJECT_ID="boost-${CLEAN_NAME}-v6"
+          # Clean name: remove "boost-" prefix if it exists, lowercase, and trim
+          RAW_NAME="${{ github.event.repository.name }}"
+          STRIPPED_NAME=$(echo "$RAW_NAME" | sed 's/^boost-//' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-20)
+          
+          # Use -v7 to ensure a fresh ID from any previous failed runs
+          PROJECT_ID="boost-${STRIPPED_NAME}-v7"
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
           STATE=$(gcloud projects describe $PROJECT_ID --format='value(lifecycleState)' 2>/dev/null || echo "NOT_FOUND")
 
           if [[ "$STATE" != "ACTIVE" ]]; then
             echo "--- CREATING NEW PROJECT: $PROJECT_ID ---"
-            gcloud projects create $PROJECT_ID --folder=324333743991 --name="${{ github.event.repository.name }}"
+            gcloud projects create $PROJECT_ID --folder=324333743991 --name="$RAW_NAME"
             
-            echo "Waiting 30s for project birth stabilization..."
+            echo "Waiting 30s for project creation to propagate..."
             sleep 30
             
             echo "Linking Billing Account..."
             gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40
             
-            echo "Enabling Core APIs (Waking up the new project)..."
+            echo "Enabling Core APIs (Initial Wake-up)..."
             gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID
             
-            echo "Waiting 60s for Folder Owner permissions to propagate to the new project..."
+            echo "Waiting 60s for Folder Owner permissions to sync to new project..."
             sleep 60
             
             echo "Setting up Security (Workload Identity)..."
@@ -79,11 +81,11 @@ jobs:
             echo "Final Security Sync..."
             sleep 20
           else
-            echo "--- PROJECT $PROJECT_ID IS ACTIVE ---"
+            echo "--- PROJECT $PROJECT_ID IS ALREADY ACTIVE ---"
             gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID
           fi
 
-      # 3. AUTH AS LOCAL
+      # 3. AUTH AS LOCAL (Switching from Manager to the New Project)
       - name: Get Project Number
         id: info
         run: echo "num=$(gcloud projects describe ${{ steps.provision.outputs.project_id }} --format='value(projectNumber)')" >> $GITHUB_OUTPUT
