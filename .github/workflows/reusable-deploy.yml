@@ -33,26 +33,31 @@ jobs:
         run: |
           # DYNAMIC: Create ID based on the repo name
           CLEAN_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-24)
-          PROJECT_ID="boost-${CLEAN_NAME}"
+          # ADDING -V6 TO AVOID THE DELETION LOCKOUT
+          PROJECT_ID="boost-${CLEAN_NAME}-v6"
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
-          # Check if project exists
           STATE=$(gcloud projects describe $PROJECT_ID --format='value(lifecycleState)' 2>/dev/null || echo "NOT_FOUND")
 
           if [[ "$STATE" != "ACTIVE" ]]; then
             echo "--- CREATING NEW PROJECT: $PROJECT_ID ---"
-            
-            # Create project inside the Boost folder
             gcloud projects create $PROJECT_ID --folder=324333743991 --name="${{ github.event.repository.name }}"
+            
+            echo "Waiting 30s for project birth stabilization..."
+            sleep 30
             
             echo "Linking Billing Account..."
             gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40
             
-            echo "Enabling Core APIs..."
+            echo "Enabling Core APIs (Waking up the new project)..."
             gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID
+            
+            echo "Waiting 60s for Folder Owner permissions to propagate to the new project..."
+            sleep 60
             
             echo "Setting up Security (Workload Identity)..."
             gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global"
+            
             gcloud iam workload-identity-pools providers create-oidc "github-provider-v2" \
               --project="$PROJECT_ID" --location="global" --workload-identity-pool="github-pool-v2" \
               --issuer-uri="https://token.actions.githubusercontent.com" \
@@ -71,24 +76,14 @@ jobs:
 
             gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID
             
-            echo "CRITICAL: Waiting 90s for Global IAM Propagation..."
-            sleep 90
+            echo "Final Security Sync..."
+            sleep 20
           else
             echo "--- PROJECT $PROJECT_ID IS ACTIVE ---"
-            
-            # Link billing if it somehow got detached
-            BILLING_STATUS=$(gcloud billing projects describe $PROJECT_ID --format='value(billingEnabled)' 2>/dev/null || echo "false")
-            if [ "$BILLING_STATUS" != "true" ]; then
-                gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Billing link skipped."
-            fi
-
             gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID
           fi
 
-      # 3. AUTH AS LOCAL (Switching context to the new project)
-      - name: 'Security Propagation Buffer'
-        run: sleep 10
-
+      # 3. AUTH AS LOCAL
       - name: Get Project Number
         id: info
         run: echo "num=$(gcloud projects describe ${{ steps.provision.outputs.project_id }} --format='value(projectNumber)')" >> $GITHUB_OUTPUT
