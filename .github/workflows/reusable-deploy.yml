@@ -20,36 +20,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1. AUTH AS MASTER: Using boost-agents-platform to gain Creator/Admin powers
+      # 1. AUTH AS MASTER
+      # Using the new boost-agents-496211 management project
       - id: 'auth_master'
         uses: 'google-github-actions/auth@v2'
         with:
-          workload_identity_provider: 'projects/790741248712/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
-          service_account: 'deployer@boost-agents-platform.iam.gserviceaccount.com'
+          workload_identity_provider: 'projects/45358226626/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
+          service_account: 'deployer@boost-agents-496211.iam.gserviceaccount.com'
 
       # 2. PROVISIONING ENGINE
       - name: Provision GCP Project
         id: provision
         run: |
+          # DYNAMIC: Create ID based on the repo name (e.g., boost-test-1)
           CLEAN_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-24)
           PROJECT_ID="boost-${CLEAN_NAME}"
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
-          # Fetch current project state
+          # Check if project already exists
           STATE=$(gcloud projects describe $PROJECT_ID --format='value(lifecycleState)' 2>/dev/null || echo "NOT_FOUND")
 
           if [[ "$STATE" != "ACTIVE" ]]; then
-            echo "--- NEW PROJECT SETUP REQUIRED: $PROJECT_ID ---"
+            echo "--- CREATING NEW PROJECT: $PROJECT_ID ---"
             
+            # Create project inside the Boost folder (324333743991)
             gcloud projects create $PROJECT_ID --folder=324333743991 --name="${{ github.event.repository.name }}"
             
             echo "Linking Billing Account..."
             gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40
             
-            echo "Enabling Core APIs..."
+            echo "Enabling APIs..."
             gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID
             
-            echo "Creating Workload Identity Pool..."
+            echo "Setting up Workload Identity..."
             gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global"
             gcloud iam workload-identity-pools providers create-oidc "github-provider-v2" \
               --project="$PROJECT_ID" --location="global" --workload-identity-pool="github-pool-v2" \
@@ -57,38 +60,38 @@ jobs:
               --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
               --attribute-condition="assertion.repository_owner == 'MoveoTech'"
 
-            echo "Setting up Local Deployer Service Account..."
+            echo "Creating Project-Specific Deployer..."
             gcloud iam service-accounts create "deployer" --project="$PROJECT_ID"
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/run.admin"
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/iam.serviceAccountUser"
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/artifactregistry.admin"
             
+            # Connect the new project-level SA to the new project-level Pool
             NUMERIC_ID=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
             gcloud iam service-accounts add-iam-policy-binding "deployer@$PROJECT_ID.iam.gserviceaccount.com" --project="$PROJECT_ID" --role="roles/iam.workloadIdentityUser" \
               --member="principalSet://iam.googleapis.com/projects/$NUMERIC_ID/locations/global/workloadIdentityPools/github-pool-v2/attribute.repository_owner/MoveoTech"
 
             gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID
             
-            echo "WAITING 90s: Allowing global sync..."
+            echo "Waiting 90s for Global IAM Propagation..."
             sleep 90
           else
-            echo "--- PROJECT $PROJECT_ID IS ACTIVE ---"
+            echo "--- PROJECT $PROJECT_ID IS ALREADY ACTIVE ---"
             
-            # SMART CHECK: Avoid re-linking billing if already enabled to bypass Quota limits
+            # Ensure billing is linked if missing
             BILLING_STATUS=$(gcloud billing projects describe $PROJECT_ID --format='value(billingEnabled)' 2>/dev/null || echo "false")
             if [ "$BILLING_STATUS" != "true" ]; then
-                echo "Billing not active. Attempting to link..."
-                gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Billing link skipped/failed due to quota."
-            else
-                echo "Billing already active. Skipping link command to avoid quota usage."
+                gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Billing link skipped."
             fi
 
-            echo "Ensuring APIs are active..."
             gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com --project=$PROJECT_ID
           fi
 
-      # 3. AUTH AS LOCAL: Switch to the agent's specific project identity
-      - name: Get Project Number
+      # 3. AUTH AS LOCAL (Switching context to the new project)
+      - name: 'Handshake Buffer'
+        run: sleep 10
+
+      - name: Get Project Info
         id: info
         run: echo "num=$(gcloud projects describe ${{ steps.provision.outputs.project_id }} --format='value(projectNumber)')" >> $GITHUB_OUTPUT
 
@@ -105,12 +108,12 @@ jobs:
           docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} ./apps/server
           docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
 
-      - name: Cloud Run Deployment
+      - name: Cloud Run Deploy
         id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
           service: ${{ inputs.service_name }}
-          region: us-central1
           image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
+          region: us-central1
           env_vars: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
