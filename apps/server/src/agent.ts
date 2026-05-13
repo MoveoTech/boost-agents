@@ -29,9 +29,7 @@ const TOOLS: Tool[] = [
       },
     ],
   },
-  // googleSearch and codeExecution are handled internally by Gemini
-  { codeExecution: {} },
-  // @ts-ignore — googleSearch is supported by Gemini 2.0 but not yet in SDK types
+  // @ts-ignore — googleSearch is supported by Gemini 2.5 but not yet in SDK types
   { googleSearch: {} },
 ];
 
@@ -78,21 +76,6 @@ export async function chat(message: string, history: Content[]): Promise<ChatRes
     );
 
     result = await session.sendMessage(responses);
-  }
-
-  // Extract code execution tool uses from response parts.
-  // Cast to a flat type to avoid fighting the SDK's discriminated union
-  // (each union member has sibling fields typed as `never`).
-  type RawPart = { executableCode?: { code: string }; codeExecutionResult?: { output: string } };
-  const parts = (result.response.candidates?.[0]?.content?.parts ?? []) as RawPart[];
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i].executableCode) {
-      toolUses.push({
-        name: "code_execution",
-        input: parts[i].executableCode!.code,
-        output: parts[i + 1]?.codeExecutionResult?.output,
-      });
-    }
   }
 
   // Extract Google Search queries from grounding metadata
