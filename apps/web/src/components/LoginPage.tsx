@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { login } from "../api/client";
 
 interface Props {
   onLogin: () => void;
@@ -14,19 +15,14 @@ export default function LoginPage({ onLogin }: Props) {
     setLoading(true);
     setError("");
 
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
-
-    setLoading(false);
-
-    if (res.ok) {
+    try {
+      await login(password);
       onLogin();
-    } else {
+    } catch {
       setError("Incorrect password");
       setPassword("");
+    } finally {
+      setLoading(false);
     }
   };
 

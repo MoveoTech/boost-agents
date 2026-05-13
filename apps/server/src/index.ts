@@ -18,7 +18,7 @@ app.use(cors());
 app.use(express.json());
 app.use(cookieParser(COOKIE_SECRET));
 
-// Serve web app static files if present (production single-service setup)
+// Serve web app static files when running as a single service
 const staticDir = path.join(__dirname, "public");
 app.use(express.static(staticDir));
 
@@ -35,13 +35,17 @@ app.post("/api/login", (req, res) => {
   }
 
   const token = jwt.sign({ ok: true }, COOKIE_SECRET, { expiresIn: "7d" });
+
+  // Cookie for same-origin (local dev via Vite proxy)
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure: IS_PROD,
     sameSite: "strict",
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
-  res.json({ ok: true });
+
+  // Return token in body for cross-origin (two-service production setup)
+  res.json({ ok: true, token });
 });
 
 app.post("/api/logout", (_req, res) => {
@@ -49,14 +53,19 @@ app.post("/api/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
-// Auth middleware — cookie (browser) or x-api-key header (programmatic)
+// Auth: x-api-key header (programmatic), Bearer token (cross-origin browser), or cookie (same-origin)
 app.use((req, res, next) => {
   if (!ACCESS_PASSWORD && !API_KEY) return next();
 
   if (API_KEY && req.headers["x-api-key"] === API_KEY) return next();
 
+  const bearer = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7)
+    : null;
+
+  const tokenToVerify = bearer ?? req.cookies[COOKIE_NAME];
   try {
-    jwt.verify(req.cookies[COOKIE_NAME], COOKIE_SECRET);
+    jwt.verify(tokenToVerify, COOKIE_SECRET);
     next();
   } catch {
     res.status(401).json({ error: "Unauthorized" });
@@ -86,7 +95,7 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// Fallback: serve the SPA for any non-API route
+// Fallback: serve the SPA for any non-API route (single-service mode)
 app.get("*", (_req, res) => {
   res.sendFile(path.join(staticDir, "index.html"));
 });

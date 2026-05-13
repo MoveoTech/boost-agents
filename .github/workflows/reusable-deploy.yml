@@ -86,7 +86,7 @@ jobs:
           docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} ./apps/server
           docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} || echo "Push failed"
 
-      - name: Deploy to Cloud Run
+      - name: Deploy Server to Cloud Run
         id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v2'
         continue-on-error: true
@@ -97,3 +97,29 @@ jobs:
           env_vars: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             API_KEY=${{ secrets.API_KEY }}
+            ACCESS_PASSWORD=${{ secrets.ACCESS_PASSWORD }}
+            COOKIE_SECRET=${{ secrets.COOKIE_SECRET }}
+            NODE_ENV=production
+
+      # 5. BUILD & DEPLOY WEB
+      - name: Build & Push Web Image
+        run: |
+          docker build \
+            --build-arg VITE_API_URL=${{ steps.deploy.outputs.url }} \
+            -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}-web:${{ github.sha }} \
+            ./apps/web
+          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}-web:${{ github.sha }} || echo "Push failed"
+
+      - name: Deploy Web to Cloud Run
+        id: 'deploy_web'
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        continue-on-error: true
+        with:
+          service: ${{ inputs.service_name }}-web
+          region: us-central1
+          image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}-web:${{ github.sha }}
+
+      - name: Print URLs
+        run: |
+          echo "Server: ${{ steps.deploy.outputs.url }}"
+          echo "Web:    ${{ steps.deploy_web.outputs.url }}"
