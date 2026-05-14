@@ -2,11 +2,11 @@ import { useState, useEffect } from "react";
 import { getConfig, saveConfig, getApiKey } from "../api/client";
 import type { AgentConfig } from "../types";
 
-const TOOLS: { key: keyof AgentConfig["tools"]; label: string; description: string }[] = [
+const TOOLS: { key: keyof AgentConfig["tools"]; label: string; description: string; warning?: string }[] = [
   { key: "fetchUrl", label: "Web Fetch", description: "GET any URL and read its content" },
   { key: "httpRequest", label: "HTTP Request", description: "POST/PUT/PATCH to REST APIs with JSON body" },
   { key: "googleSearch", label: "Google Search", description: "Search the web via Gemini built-in" },
-  { key: "codeExecution", label: "Code Execution", description: "Run Python code via Gemini built-in" },
+  { key: "codeExecution", label: "Code Execution", description: "Run Python code via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
 ];
 
 type Tab = "settings" | "api";
@@ -107,11 +107,12 @@ export default function ConfigurePanel() {
 
             <section className="configure-section">
               <h2 className="configure-section-title">Tools</h2>
-              {TOOLS.map(({ key, label, description }) => (
+              {TOOLS.map(({ key, label, description, warning }) => (
                 <label key={key} className="configure-toggle-row">
                   <div>
                     <span className="configure-toggle-label">{label}</span>
                     <span className="configure-toggle-desc">{description}</span>
+                    {warning && <span className="configure-toggle-warning">{warning}</span>}
                   </div>
                   <input
                     type="checkbox"

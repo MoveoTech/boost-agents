@@ -58,8 +58,11 @@ function buildTools(): Tool[] {
 
   const tools: Tool[] = [];
   if (functionDeclarations.length > 0) tools.push({ functionDeclarations });
-  // @ts-ignore
-  if (agentConfig.tools.codeExecution) tools.push({ codeExecution: {} });
+  // code_execution cannot be combined with function declarations (Gemini limitation)
+  if (agentConfig.tools.codeExecution && functionDeclarations.length === 0) {
+    // @ts-ignore
+    tools.push({ codeExecution: {} });
+  }
   // @ts-ignore
   if (agentConfig.tools.googleSearch) tools.push({ googleSearch: {} });
 

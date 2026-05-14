@@ -20,7 +20,7 @@ export const agentConfig: AgentConfig = {
     fetchUrl: true,
     httpRequest: true,
     googleSearch: true,
-    codeExecution: true,
+    codeExecution: false,
   },
   ui: {
     title: "Boost Agent",

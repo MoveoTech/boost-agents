@@ -638,6 +638,13 @@ body {
   margin-top: 2px;
 }
 
+.configure-toggle-warning {
+  display: block;
+  font-size: 11px;
+  color: #d97706;
+  margin-top: 2px;
+}
+
 .configure-checkbox {
   width: 18px;
   height: 18px;
