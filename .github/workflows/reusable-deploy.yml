@@ -47,13 +47,16 @@ jobs:
           echo "Attempting to Enable APIs..."
           gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com iamcredentials.googleapis.com --project=$PROJECT_ID || echo "API failed."
 
+          echo "Waiting 30s for APIs to activate..."
+          sleep 30
+
           if ! gcloud iam workload-identity-pools describe "github-pool-v2" --project="$PROJECT_ID" --location="global" &>/dev/null; then
-            gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global" || true
+            gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global"
             gcloud iam workload-identity-pools providers create-oidc "github-provider-v2" \
               --project="$PROJECT_ID" --location="global" --workload-identity-pool="github-pool-v2" \
               --issuer-uri="https://token.actions.githubusercontent.com" \
               --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
-              --attribute-condition="assertion.repository_owner == 'MoveoTech'" || true
+              --attribute-condition="assertion.repository_owner == 'MoveoTech'"
 
             gcloud iam service-accounts create "deployer" --project="$PROJECT_ID" || true
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/owner" || true
