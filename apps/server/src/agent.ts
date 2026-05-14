@@ -225,7 +225,7 @@ export async function chat(message: string, history: Content[], mode: "search" |
             }
           }
           toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
-        } else if (call.name === "calendar_list_events" || call.name === "calendar_create_event" || call.name === "calendar_get_event") {
+        } else if (call.name === "calendar_list_events" || call.name === "calendar_create_event" || call.name === "calendar_get_event" || call.name === "calendar_check_availability") {
           if (!calendarUser) {
             output = "User has not connected their Google Calendar. Ask them to connect Google Calendar first.";
           } else {
