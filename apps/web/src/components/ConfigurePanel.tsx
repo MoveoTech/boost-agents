@@ -5,7 +5,7 @@ import type { AgentConfig } from "../types";
 const TOOLS: { key: keyof AgentConfig["tools"]; label: string; description: string; warning?: string }[] = [
   { key: "fetchUrl", label: "Web Fetch", description: "GET any URL and read its content" },
   { key: "httpRequest", label: "HTTP Request", description: "POST/PUT/PATCH to REST APIs with JSON body" },
-  { key: "googleSearch", label: "Google Search", description: "Search the web via Gemini built-in" },
+  { key: "googleSearch", label: "Google Search", description: "Search the web via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
   { key: "codeExecution", label: "Code Execution", description: "Run Python code via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
 ];
 

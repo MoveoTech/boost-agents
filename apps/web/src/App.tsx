@@ -4,7 +4,7 @@ import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
 import ConfigurePanel from "./components/ConfigurePanel";
 import { sendMessage, getToken, getConfig, whoami } from "./api/client";
-import type { DisplayMessage, HistoryItem, AgentConfig } from "./types";
+import type { DisplayMessage, HistoryItem, AgentConfig, Mode } from "./types";
 
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken());
@@ -12,6 +12,7 @@ export default function App() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [configuring, setConfiguring] = useState(false);
+  const [mode, setMode] = useState<Mode>("tools");
   const [uiConfig, setUiConfig] = useState<AgentConfig["ui"] | null>(null);
 
   useEffect(() => {
@@ -43,7 +44,7 @@ export default function App() {
         .map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
 
       try {
-        const result = await sendMessage(text, history);
+        const result = await sendMessage(text, history, mode);
         setMessages((prev) =>
           prev.map((m) =>
             m.pending
@@ -97,6 +98,8 @@ export default function App() {
             onSend={handleSend}
             disabled={loading}
             placeholder={uiConfig?.placeholder}
+            mode={mode}
+            onModeChange={setMode}
           />
         </>
       )}

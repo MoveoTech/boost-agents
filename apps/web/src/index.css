@@ -325,13 +325,41 @@ body {
 /* ── Input bar ───────────────────────────────────────── */
 
 .input-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 12px 16px 16px;
   border-top: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
+  padding: 8px 16px 16px;
+}
+
+.input-bar-inner {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.mode-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+
+.mode-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.mode-btn.active {
+  background: var(--primary);
+  color: #fff;
 }
 
 .input-bar textarea {

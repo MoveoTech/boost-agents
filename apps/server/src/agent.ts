@@ -51,22 +51,21 @@ const HTTP_REQUEST_DECL = {
   },
 };
 
-function buildTools(): Tool[] {
+function buildTools(mode: "search" | "tools"): Tool[] {
+  // Gemini cannot combine built-in tools and function declarations in one request
+  if (mode === "search") {
+    const tools: Tool[] = [];
+    // @ts-ignore
+    if (agentConfig.tools.googleSearch) tools.push({ googleSearch: {} });
+    // @ts-ignore
+    if (agentConfig.tools.codeExecution) tools.push({ codeExecution: {} });
+    return tools;
+  }
+
   const functionDeclarations = [];
   if (agentConfig.tools.fetchUrl) functionDeclarations.push(FETCH_URL_DECL);
   if (agentConfig.tools.httpRequest) functionDeclarations.push(HTTP_REQUEST_DECL);
-
-  const tools: Tool[] = [];
-  if (functionDeclarations.length > 0) tools.push({ functionDeclarations });
-  // code_execution cannot be combined with function declarations (Gemini limitation)
-  if (agentConfig.tools.codeExecution && functionDeclarations.length === 0) {
-    // @ts-ignore
-    tools.push({ codeExecution: {} });
-  }
-  // @ts-ignore
-  if (agentConfig.tools.googleSearch) tools.push({ googleSearch: {} });
-
-  return tools;
+  return functionDeclarations.length > 0 ? [{ functionDeclarations }] : [];
 }
 
 export interface ToolUse {
@@ -80,10 +79,10 @@ export interface ChatResult {
   toolUses: ToolUse[];
 }
 
-export async function chat(message: string, history: Content[]): Promise<ChatResult> {
+export async function chat(message: string, history: Content[], mode: "search" | "tools" = "tools"): Promise<ChatResult> {
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    tools: buildTools(),
+    tools: buildTools(mode),
     systemInstruction: agentConfig.systemPrompt,
   });
 

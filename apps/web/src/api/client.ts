@@ -1,4 +1,4 @@
-import type { ChatResponse, HistoryItem, AgentConfig } from "../types";
+import type { ChatResponse, HistoryItem, AgentConfig, Mode } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 const TOKEN_KEY = "auth_token";
@@ -74,7 +74,8 @@ export async function saveConfig(config: AgentConfig): Promise<{ commitUrl: stri
 
 export async function sendMessage(
   message: string,
-  history: HistoryItem[]
+  history: HistoryItem[],
+  mode: Mode = "tools"
 ): Promise<ChatResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
@@ -83,7 +84,7 @@ export async function sendMessage(
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, mode }),
   });
 
   if (!res.ok) {

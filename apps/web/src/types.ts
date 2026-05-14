@@ -17,6 +17,8 @@ export interface HistoryItem {
   parts: Array<{ text: string }>;
 }
 
+export type Mode = "search" | "tools";
+
 export interface ChatResponse {
   reply: string;
   toolUses: ToolUse[];
