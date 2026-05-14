@@ -72,6 +72,18 @@ app.post("/api/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/auth/google/start", (req, res) => {
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !agentId) {
+    res.status(500).json({ error: "OAuth service not configured" });
+    return;
+  }
+  const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
+  const params = new URLSearchParams({ agentId, agentUrl });
+  res.redirect(`${oauthServiceUrl}/auth/google/start?${params}`);
+});
+
 // Auth: x-api-key header (programmatic), Bearer token (cross-origin browser), or cookie (same-origin)
 app.use((req, res, next) => {
   if (!ACCESS_PASSWORD && !API_KEY) return next();
@@ -89,20 +101,6 @@ app.use((req, res, next) => {
   } catch {
     res.status(401).json({ error: "Unauthorized" });
   }
-});
-
-app.get("/api/auth/google/start", (req, res) => {
-  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
-  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
-  if (!oauthServiceUrl || !agentId) {
-    res.status(500).json({ error: "OAuth service not configured" });
-    return;
-  }
-  // returnUrl is the web UI origin passed by the browser so the OAuth
-  // callback lands on the web UI, not the server
-  const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
-  const params = new URLSearchParams({ agentId, agentUrl });
-  res.redirect(`${oauthServiceUrl}/auth/google/start?${params}`);
 });
 
 app.get("/api/config", (_req, res) => {
