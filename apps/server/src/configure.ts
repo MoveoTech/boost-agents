@@ -13,6 +13,11 @@ function generateConfigFile(config: AgentConfig): string {
     httpRequest: boolean;
     googleSearch: boolean;
     codeExecution: boolean;
+    gmail: boolean;
+  };
+  access: {
+    chatEnabled: boolean;
+    apiEnabled: boolean;
   };
   ui: {
     title: string;
