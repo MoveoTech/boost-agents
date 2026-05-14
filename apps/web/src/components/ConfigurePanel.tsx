@@ -7,7 +7,8 @@ const TOOLS: { key: keyof AgentConfig["tools"]; label: string; description: stri
   { key: "httpRequest", label: "HTTP Request", description: "POST/PUT/PATCH to REST APIs with JSON body" },
   { key: "googleSearch", label: "Google Search", description: "Search the web via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
   { key: "codeExecution", label: "Code Execution", description: "Run Python code via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
-  { key: "gmail", label: "Gmail", description: "Send, search, and read emails from the user's connected Gmail account" },
+  { key: "gmail", label: "Gmail", description: "Send, search, and read emails from the user's connected Google account" },
+  { key: "googleCalendar", label: "Google Calendar", description: "List, create, and view calendar events from the user's connected Google account" },
 ];
 
 type Tab = "settings" | "api";
@@ -19,11 +20,12 @@ const STORAGE_KEY = "agent_config";
 interface Props {
   onSave: (config: AgentConfig) => void;
   gmailUser: string | null;
-  onGmailConnect: (email: string) => void;
+  calendarUser: string | null;
   onGmailDisconnect: () => void;
+  onCalendarDisconnect: () => void;
 }
 
-export default function ConfigurePanel({ onSave, gmailUser, onGmailDisconnect }: Props) {
+export default function ConfigurePanel({ onSave, gmailUser, calendarUser, onGmailDisconnect, onCalendarDisconnect }: Props) {
   const [tab, setTab] = useState<Tab>("settings");
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [status, setStatus] = useState<DeployStatus>("idle");
@@ -142,28 +144,39 @@ export default function ConfigurePanel({ onSave, gmailUser, onGmailDisconnect }:
               ))}
             </section>
 
-            {config.tools.gmail && (
+            {(config.tools.gmail || config.tools.googleCalendar) && (
               <section className="configure-section">
                 <h2 className="configure-section-title">Connections</h2>
-                <div className="configure-connection-row">
-                  <div>
-                    <span className="configure-toggle-label">Gmail</span>
+                {config.tools.gmail && (
+                  <div className="configure-connection-row">
+                    <div>
+                      <span className="configure-toggle-label">Gmail</span>
+                      <span className="configure-toggle-desc">{gmailUser ? `Connected as ${gmailUser}` : "Not connected"}</span>
+                    </div>
                     {gmailUser ? (
-                      <span className="configure-toggle-desc">Connected as {gmailUser}</span>
+                      <button className="connection-disconnect-btn" onClick={onGmailDisconnect}>Disconnect</button>
                     ) : (
-                      <span className="configure-toggle-desc">Not connected</span>
+                      <a className="connection-connect-btn" href={`${BASE}/api/auth/google/start?service=gmail&returnUrl=${encodeURIComponent(window.location.origin)}`}>
+                        Connect Gmail
+                      </a>
                     )}
                   </div>
-                  {gmailUser ? (
-                    <button className="connection-disconnect-btn" onClick={onGmailDisconnect}>
-                      Disconnect
-                    </button>
-                  ) : (
-                    <a className="connection-connect-btn" href={`${BASE}/api/auth/google/start?returnUrl=${encodeURIComponent(window.location.origin)}`}>
-                      Connect Gmail
-                    </a>
-                  )}
-                </div>
+                )}
+                {config.tools.googleCalendar && (
+                  <div className="configure-connection-row">
+                    <div>
+                      <span className="configure-toggle-label">Google Calendar</span>
+                      <span className="configure-toggle-desc">{calendarUser ? `Connected as ${calendarUser}` : "Not connected"}</span>
+                    </div>
+                    {calendarUser ? (
+                      <button className="connection-disconnect-btn" onClick={onCalendarDisconnect}>Disconnect</button>
+                    ) : (
+                      <a className="connection-connect-btn" href={`${BASE}/api/auth/google/start?service=calendar&returnUrl=${encodeURIComponent(window.location.origin)}`}>
+                        Connect Calendar
+                      </a>
+                    )}
+                  </div>
+                )}
               </section>
             )}
 

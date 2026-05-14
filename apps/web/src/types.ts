@@ -33,6 +33,7 @@ export interface AgentConfig {
     googleSearch: boolean;
     codeExecution: boolean;
     gmail: boolean;
+    googleCalendar: boolean;
   };
   access: {
     chatEnabled: boolean;

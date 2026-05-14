@@ -21,6 +21,9 @@ export default function App() {
   const [gmailUser, setGmailUser] = useState<string | null>(
     () => sessionStorage.getItem("gmail_user")
   );
+  const [calendarUser, setCalendarUser] = useState<string | null>(
+    () => sessionStorage.getItem("calendar_user")
+  );
 
   useEffect(() => {
     if (!authed) return;
@@ -31,13 +34,19 @@ export default function App() {
     }).catch(() => setView("chat"));
   }, [authed]);
 
-  // Handle OAuth callback from gmail connect
+  // Handle OAuth callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const email = params.get("gmail_email");
-    if (params.get("gmail_connected") === "true" && email) {
-      sessionStorage.setItem("gmail_user", email);
-      setGmailUser(email);
+    const email = params.get("google_email");
+    const service = params.get("google_service");
+    if (params.get("google_connected") === "true" && email && service) {
+      if (service === "gmail") {
+        sessionStorage.setItem("gmail_user", email);
+        setGmailUser(email);
+      } else if (service === "calendar") {
+        sessionStorage.setItem("calendar_user", email);
+        setCalendarUser(email);
+      }
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -58,7 +67,7 @@ export default function App() {
       .map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
 
     try {
-      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailUser ?? undefined);
+      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailUser ?? undefined, calendarUser ?? undefined);
       setMessages((prev) =>
         prev.map((m) => m.pending ? { ...m, text: result.reply, toolUses: result.toolUses, pending: false } : m)
       );
@@ -106,8 +115,9 @@ export default function App() {
         <ConfigurePanel
           onSave={(c) => setAgentConfig(c)}
           gmailUser={gmailUser}
-          onGmailConnect={(email) => setGmailUser(email)}
+          calendarUser={calendarUser}
           onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); setGmailUser(null); }}
+          onCalendarDisconnect={() => { sessionStorage.removeItem("calendar_user"); setCalendarUser(null); }}
         />
       ) : !chatEnabled ? (
         <div className="empty-state">

@@ -80,7 +80,8 @@ app.get("/api/auth/google/start", (req, res) => {
     return;
   }
   const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
-  const params = new URLSearchParams({ agentId, agentUrl });
+  const service = (req.query.service as string) || "gmail";
+  const params = new URLSearchParams({ agentId, agentUrl, service });
   res.redirect(`${oauthServiceUrl}/auth/google/start?${params}`);
 });
 
@@ -135,12 +136,13 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools", systemPrompt, gmailUser } = req.body as {
+  const { message, history = [], mode = "tools", systemPrompt, gmailUser, calendarUser } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
     systemPrompt?: string;
     gmailUser?: string;
+    calendarUser?: string;
   };
 
   if (!message?.trim()) {
@@ -149,7 +151,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const result = await chat(message.trim(), history, mode, systemPrompt, gmailUser);
+    const result = await chat(message.trim(), history, mode, systemPrompt, gmailUser, calendarUser);
     res.json(result);
   } catch (err) {
     console.error(err);

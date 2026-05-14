@@ -8,6 +8,7 @@ import {
 } from "@google/generative-ai";
 import { fetchUrl, httpRequest } from "./tools";
 import { gmailSend, gmailSearch, gmailRead } from "./gmail";
+import { calendarListEvents, calendarCreateEvent, calendarGetEvent } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
 
@@ -92,7 +93,47 @@ const GMAIL_READ_DECL = {
   },
 };
 
-function buildTools(mode: "search" | "tools", gmailUser?: string): Tool[] {
+const CALENDAR_LIST_DECL = {
+  name: "calendar_list_events",
+  description: "List upcoming events from the user's Google Calendar.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      maxResults: { type: SchemaType.NUMBER, description: "Max events to return (default 10)" },
+    },
+    required: [],
+  },
+};
+
+const CALENDAR_CREATE_DECL = {
+  name: "calendar_create_event",
+  description: "Create a new event in the user's Google Calendar.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      title:         { type: SchemaType.STRING, description: "Event title" },
+      startDateTime: { type: SchemaType.STRING, description: "Start time in ISO 8601 format (e.g. 2026-05-15T10:00:00Z)" },
+      endDateTime:   { type: SchemaType.STRING, description: "End time in ISO 8601 format" },
+      description:   { type: SchemaType.STRING, description: "Event description (optional)" },
+      location:      { type: SchemaType.STRING, description: "Event location (optional)" },
+    },
+    required: ["title", "startDateTime", "endDateTime"],
+  },
+};
+
+const CALENDAR_GET_DECL = {
+  name: "calendar_get_event",
+  description: "Get details of a specific calendar event by its ID.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      eventId: { type: SchemaType.STRING, description: "The Google Calendar event ID" },
+    },
+    required: ["eventId"],
+  },
+};
+
+function buildTools(mode: "search" | "tools", gmailUser?: string, calendarUser?: string): Tool[] {
   // Gemini cannot combine built-in tools and function declarations in one request
   if (mode === "search") {
     const tools: Tool[] = [];
@@ -106,10 +147,9 @@ function buildTools(mode: "search" | "tools", gmailUser?: string): Tool[] {
   const functionDeclarations = [];
   if (agentConfig.tools.fetchUrl) functionDeclarations.push(FETCH_URL_DECL);
   if (agentConfig.tools.httpRequest) functionDeclarations.push(HTTP_REQUEST_DECL);
-  // Gmail tools are available immediately when user has connected — no redeploy needed
-  if (gmailUser) {
-    functionDeclarations.push(GMAIL_SEND_DECL, GMAIL_SEARCH_DECL, GMAIL_READ_DECL);
-  }
+  // Google tools are available immediately when user has connected — no redeploy needed
+  if (gmailUser) functionDeclarations.push(GMAIL_SEND_DECL, GMAIL_SEARCH_DECL, GMAIL_READ_DECL);
+  if (calendarUser) functionDeclarations.push(CALENDAR_LIST_DECL, CALENDAR_CREATE_DECL, CALENDAR_GET_DECL);
   return functionDeclarations.length > 0 ? [{ functionDeclarations }] : [];
 }
 
@@ -124,10 +164,10 @@ export interface ChatResult {
   toolUses: ToolUse[];
 }
 
-export async function chat(message: string, history: Content[], mode: "search" | "tools" = "tools", systemPrompt?: string, gmailUser?: string): Promise<ChatResult> {
+export async function chat(message: string, history: Content[], mode: "search" | "tools" = "tools", systemPrompt?: string, gmailUser?: string, calendarUser?: string): Promise<ChatResult> {
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    tools: buildTools(mode, gmailUser),
+    tools: buildTools(mode, gmailUser, calendarUser),
     systemInstruction: systemPrompt ?? agentConfig.systemPrompt,
   });
 
@@ -155,7 +195,7 @@ export async function chat(message: string, history: Content[], mode: "search" |
           if (!gmailUser) {
             output = "User has not connected their Gmail account. Ask them to connect Gmail first.";
           } else {
-            const accessToken = await getUserAccessToken(gmailUser);
+            const accessToken = await getUserAccessToken("gmail", gmailUser);
             if (!accessToken) {
               output = "Could not retrieve Gmail access token. The user may need to reconnect their Gmail account.";
             } else if (call.name === "gmail_send") {
@@ -167,6 +207,25 @@ export async function chat(message: string, history: Content[], mode: "search" |
             } else {
               const { messageId } = call.args as { messageId: string };
               output = await gmailRead(accessToken, messageId);
+            }
+          }
+          toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
+        } else if (call.name === "calendar_list_events" || call.name === "calendar_create_event" || call.name === "calendar_get_event") {
+          if (!calendarUser) {
+            output = "User has not connected their Google Calendar. Ask them to connect Google Calendar first.";
+          } else {
+            const accessToken = await getUserAccessToken("calendar", calendarUser);
+            if (!accessToken) {
+              output = "Could not retrieve Google access token. The user may need to reconnect their account.";
+            } else if (call.name === "calendar_list_events") {
+              const { maxResults } = call.args as { maxResults?: number };
+              output = await calendarListEvents(accessToken, maxResults);
+            } else if (call.name === "calendar_create_event") {
+              const { title, startDateTime, endDateTime, description, location } = call.args as { title: string; startDateTime: string; endDateTime: string; description?: string; location?: string };
+              output = await calendarCreateEvent(accessToken, title, startDateTime, endDateTime, description, location);
+            } else {
+              const { eventId } = call.args as { eventId: string };
+              output = await calendarGetEvent(accessToken, eventId);
             }
           }
           toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
