@@ -3,9 +3,10 @@ import { useState, useRef, type KeyboardEvent } from "react";
 interface Props {
   onSend: (text: string) => void;
   disabled?: boolean;
+  placeholder?: string;
 }
 
-export default function InputBar({ onSend, disabled }: Props) {
+export default function InputBar({ onSend, disabled, placeholder }: Props) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -40,7 +41,7 @@ export default function InputBar({ onSend, disabled }: Props) {
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
         onInput={handleInput}
-        placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"
+        placeholder={placeholder ?? "Message the agent… (Enter to send, Shift+Enter for newline)"}
         disabled={disabled}
         rows={1}
       />

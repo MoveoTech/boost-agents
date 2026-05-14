@@ -4,55 +4,67 @@ import {
   Part,
   SchemaType,
   Tool,
+  FunctionCall,
 } from "@google/generative-ai";
 import { fetchUrl, httpRequest } from "./tools";
+import { agentConfig } from "./config";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-const TOOLS: Tool[] = [
-  {
-    functionDeclarations: [
-      {
-        name: "fetch_url",
-        description:
-          "Fetch the content of a URL and return it as text. Use for reading web pages, documentation, or calling REST APIs.",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            url: {
-              type: SchemaType.STRING,
-              description: "The full URL to fetch (must start with http:// or https://)",
-            },
-          },
-          required: ["url"],
-        },
+const FETCH_URL_DECL = {
+  name: "fetch_url",
+  description:
+    "Fetch the content of a URL and return it as text. Use for reading web pages, documentation, or calling REST APIs.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      url: {
+        type: SchemaType.STRING,
+        description: "The full URL to fetch (must start with http:// or https://)",
       },
-      {
-        name: "http_request",
-        description:
-          "Make an HTTP request with a custom method and optional JSON body. Use for REST APIs that require POST, PUT, or PATCH with a JSON body.",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            url: {
-              type: SchemaType.STRING,
-              description: "The full URL (must start with http:// or https://)",
-            },
-            method: {
-              type: SchemaType.STRING,
-              description: "HTTP method: GET, POST, PUT, PATCH, or DELETE",
-            },
-            body: {
-              type: SchemaType.OBJECT,
-              description: "JSON body to send with the request (optional)",
-            },
-          },
-          required: ["url", "method"],
-        },
-      },
-    ],
+    },
+    required: ["url"],
   },
-];
+};
+
+const HTTP_REQUEST_DECL = {
+  name: "http_request",
+  description:
+    "Make an HTTP request with a custom method and optional JSON body. Use for REST APIs that require POST, PUT, or PATCH with a JSON body.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      url: {
+        type: SchemaType.STRING,
+        description: "The full URL (must start with http:// or https://)",
+      },
+      method: {
+        type: SchemaType.STRING,
+        description: "HTTP method: GET, POST, PUT, PATCH, or DELETE",
+      },
+      body: {
+        type: SchemaType.OBJECT,
+        description: "JSON body to send with the request (optional)",
+      },
+    },
+    required: ["url", "method"],
+  },
+};
+
+function buildTools(): Tool[] {
+  const functionDeclarations = [];
+  if (agentConfig.tools.fetchUrl) functionDeclarations.push(FETCH_URL_DECL);
+  if (agentConfig.tools.httpRequest) functionDeclarations.push(HTTP_REQUEST_DECL);
+
+  const tools: Tool[] = [];
+  if (functionDeclarations.length > 0) tools.push({ functionDeclarations });
+  // @ts-ignore
+  if (agentConfig.tools.codeExecution) tools.push({ codeExecution: {} });
+  // @ts-ignore
+  if (agentConfig.tools.googleSearch) tools.push({ googleSearch: {} });
+
+  return tools;
+}
 
 export interface ToolUse {
   name: string;
@@ -68,7 +80,8 @@ export interface ChatResult {
 export async function chat(message: string, history: Content[]): Promise<ChatResult> {
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    tools: TOOLS,
+    tools: buildTools(),
+    systemInstruction: agentConfig.systemPrompt,
   });
 
   const session = model.startChat({ history });
@@ -76,12 +89,11 @@ export async function chat(message: string, history: Content[]): Promise<ChatRes
 
   let result = await session.sendMessage(message);
 
-  // Agentic loop: handle fetch_url calls until the model produces a final text response
   while (result.response.functionCalls()?.length) {
     const calls = result.response.functionCalls()!;
 
     const responses: Part[] = await Promise.all(
-      calls.map(async (call) => {
+      calls.map(async (call: FunctionCall) => {
         let output = "Tool not implemented";
 
         if (call.name === "fetch_url") {

@@ -11,6 +11,8 @@ on:
         required: true
       API_KEY:
         required: true
+      GH_PAT:
+        required: false
 
 jobs:
   provision-and-deploy:
@@ -107,6 +109,8 @@ jobs:
             ACCESS_PASSWORD=${{ secrets.ACCESS_PASSWORD }}
             COOKIE_SECRET=${{ secrets.COOKIE_SECRET }}
             NODE_ENV=production
+            GH_PAT=${{ secrets.GH_PAT }}
+            GITHUB_REPO=${{ github.repository }}
 
       # 5. BUILD & DEPLOY WEB
       - name: Build & Push Web Image

@@ -1,14 +1,29 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
-import { sendMessage, getToken } from "./api/client";
-import type { DisplayMessage, HistoryItem } from "./types";
+import ConfigurePanel from "./components/ConfigurePanel";
+import { sendMessage, getToken, getConfig, whoami } from "./api/client";
+import type { DisplayMessage, HistoryItem, AgentConfig } from "./types";
 
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken());
+  const [isAdmin, setIsAdmin] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
+  const [uiConfig, setUiConfig] = useState<AgentConfig["ui"] | null>(null);
+
+  useEffect(() => {
+    if (!authed) return;
+    getConfig().then((c) => setUiConfig(c.ui)).catch(() => {});
+    whoami().then(({ isAdmin: a }) => setIsAdmin(a)).catch(() => {});
+  }, [authed]);
+
+  const handleLogin = useCallback(async (adminFlag: boolean) => {
+    setIsAdmin(adminFlag);
+    setAuthed(true);
+  }, []);
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -51,19 +66,40 @@ export default function App() {
     [messages]
   );
 
-  if (!authed) return <LoginPage onLogin={() => setAuthed(true)} />;
+  if (!authed) return <LoginPage onLogin={handleLogin} />;
 
   return (
     <div className="app">
       <header className="header">
         <div className="header-title">
           <span className="header-icon">✦</span>
-          <h1>Boost Agent</h1>
+          <h1>{uiConfig?.title ?? "Boost Agent"}</h1>
         </div>
-        <span className="model-badge">Gemini 2.5 Flash</span>
+        <div className="header-actions">
+          <span className="model-badge">Gemini 2.5 Flash</span>
+          {isAdmin && (
+            <button
+              className={`configure-btn ${configuring ? "active" : ""}`}
+              onClick={() => setConfiguring((v) => !v)}
+              title="Configure agent"
+            >
+              ⚙
+            </button>
+          )}
+        </div>
       </header>
-      <ChatWindow messages={messages} />
-      <InputBar onSend={handleSend} disabled={loading} />
+      {configuring ? (
+        <ConfigurePanel />
+      ) : (
+        <>
+          <ChatWindow messages={messages} />
+          <InputBar
+            onSend={handleSend}
+            disabled={loading}
+            placeholder={uiConfig?.placeholder}
+          />
+        </>
+      )}
     </div>
   );
 }

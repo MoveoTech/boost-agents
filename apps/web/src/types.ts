@@ -22,3 +22,18 @@ export interface ChatResponse {
   toolUses: ToolUse[];
   error?: string;
 }
+
+export interface AgentConfig {
+  name: string;
+  systemPrompt: string;
+  tools: {
+    fetchUrl: boolean;
+    httpRequest: boolean;
+    googleSearch: boolean;
+    codeExecution: boolean;
+  };
+  ui: {
+    title: string;
+    placeholder: string;
+  };
+}

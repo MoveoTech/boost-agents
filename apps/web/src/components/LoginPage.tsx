@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { login } from "../api/client";
 
 interface Props {
-  onLogin: () => void;
+  onLogin: (isAdmin: boolean) => void;
 }
 
 export default function LoginPage({ onLogin }: Props) {
@@ -16,8 +16,8 @@ export default function LoginPage({ onLogin }: Props) {
     setError("");
 
     try {
-      await login(password);
-      onLogin();
+      const { isAdmin } = await login(password);
+      onLogin(isAdmin);
     } catch {
       setError("Incorrect password");
       setPassword("");

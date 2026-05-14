@@ -4,6 +4,9 @@ import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import path from "path";
 import { chat } from "./agent";
+import { agentConfig } from "./config";
+import { commitConfig } from "./configure";
+import type { AgentConfig } from "./config";
 import type { Content } from "@google/generative-ai";
 
 const app = express();
@@ -26,15 +29,31 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+app.get("/api/whoami", (req, res) => {
+  const bearer = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7)
+    : null;
+  const tokenToVerify = bearer ?? req.cookies[COOKIE_NAME];
+  try {
+    const payload = jwt.verify(tokenToVerify, COOKIE_SECRET) as { admin?: boolean };
+    res.json({ isAdmin: !!payload.admin });
+  } catch {
+    res.json({ isAdmin: false });
+  }
+});
+
 app.post("/api/login", (req, res) => {
   const { password } = req.body as { password?: string };
 
-  if (!ACCESS_PASSWORD || password !== ACCESS_PASSWORD) {
+  const isAdmin = !!API_KEY && password === API_KEY;
+  const isUser = !!ACCESS_PASSWORD && password === ACCESS_PASSWORD;
+
+  if (!isAdmin && !isUser) {
     res.status(401).json({ error: "Invalid password" });
     return;
   }
 
-  const token = jwt.sign({ ok: true }, COOKIE_SECRET, { expiresIn: "7d" });
+  const token = jwt.sign({ ok: true, admin: isAdmin }, COOKIE_SECRET, { expiresIn: "7d" });
 
   // Cookie for same-origin (local dev via Vite proxy)
   res.cookie(COOKIE_NAME, token, {
@@ -45,7 +64,7 @@ app.post("/api/login", (req, res) => {
   });
 
   // Return token in body for cross-origin (two-service production setup)
-  res.json({ ok: true, token });
+  res.json({ ok: true, token, isAdmin });
 });
 
 app.post("/api/logout", (_req, res) => {
@@ -69,6 +88,37 @@ app.use((req, res, next) => {
     next();
   } catch {
     res.status(401).json({ error: "Unauthorized" });
+  }
+});
+
+app.get("/api/config", (_req, res) => {
+  res.json(agentConfig);
+});
+
+function requireAdmin(req: any, res: any, next: any) {
+  const bearer = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7)
+    : null;
+  const tokenToVerify = bearer ?? req.cookies[COOKIE_NAME];
+  try {
+    const payload = jwt.verify(tokenToVerify, COOKIE_SECRET) as { admin?: boolean };
+    if (!payload.admin) throw new Error();
+    next();
+  } catch {
+    res.status(403).json({ error: "Admin access required" });
+  }
+}
+
+app.get("/api/admin/key", requireAdmin, (_req, res) => {
+  res.json({ apiKey: API_KEY ?? "" });
+});
+
+app.post("/api/configure", requireAdmin, async (req, res) => {
+  try {
+    const commitUrl = await commitConfig(req.body as AgentConfig);
+    res.json({ ok: true, commitUrl });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
