@@ -92,7 +92,7 @@ const GMAIL_READ_DECL = {
   },
 };
 
-function buildTools(mode: "search" | "tools"): Tool[] {
+function buildTools(mode: "search" | "tools", gmailUser?: string): Tool[] {
   // Gemini cannot combine built-in tools and function declarations in one request
   if (mode === "search") {
     const tools: Tool[] = [];
@@ -106,7 +106,8 @@ function buildTools(mode: "search" | "tools"): Tool[] {
   const functionDeclarations = [];
   if (agentConfig.tools.fetchUrl) functionDeclarations.push(FETCH_URL_DECL);
   if (agentConfig.tools.httpRequest) functionDeclarations.push(HTTP_REQUEST_DECL);
-  if (agentConfig.tools.gmail) {
+  // Gmail tools are available immediately when user has connected — no redeploy needed
+  if (gmailUser) {
     functionDeclarations.push(GMAIL_SEND_DECL, GMAIL_SEARCH_DECL, GMAIL_READ_DECL);
   }
   return functionDeclarations.length > 0 ? [{ functionDeclarations }] : [];
@@ -126,7 +127,7 @@ export interface ChatResult {
 export async function chat(message: string, history: Content[], mode: "search" | "tools" = "tools", systemPrompt?: string, gmailUser?: string): Promise<ChatResult> {
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    tools: buildTools(mode),
+    tools: buildTools(mode, gmailUser),
     systemInstruction: systemPrompt ?? agentConfig.systemPrompt,
   });
 
