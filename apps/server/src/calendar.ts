@@ -35,9 +35,10 @@ export async function calendarCreateEvent(
   startDateTime: string,
   endDateTime: string,
   description?: string,
-  location?: string
+  location?: string,
+  attendees?: string[]
 ): Promise<string> {
-  const created = await calendarFetch(accessToken, "/calendars/primary/events", {
+  const created = await calendarFetch(accessToken, "/calendars/primary/events?sendUpdates=all", {
     method: "POST",
     body: JSON.stringify({
       summary: title,
@@ -45,10 +46,37 @@ export async function calendarCreateEvent(
       location,
       start: { dateTime: startDateTime, timeZone: "UTC" },
       end: { dateTime: endDateTime, timeZone: "UTC" },
+      attendees: attendees?.map((email) => ({ email })),
     }),
   }) as { id: string; summary: string; htmlLink: string };
 
-  return `Event created: "${created.summary}"\nID: ${created.id}\nLink: ${created.htmlLink}`;
+  const attendeeList = attendees?.length ? `\nAttendees: ${attendees.join(", ")}` : "";
+  return `Event created: "${created.summary}"\nID: ${created.id}${attendeeList}\nLink: ${created.htmlLink}`;
+}
+
+export async function calendarCheckAvailability(
+  accessToken: string,
+  emails: string[],
+  timeMin: string,
+  timeMax: string
+): Promise<string> {
+  const data = await calendarFetch(accessToken, "/freeBusy", {
+    method: "POST",
+    body: JSON.stringify({
+      timeMin,
+      timeMax,
+      items: emails.map((email) => ({ id: email })),
+    }),
+  }) as { calendars: Record<string, { busy: { start: string; end: string }[] }> };
+
+  const lines = emails.map((email) => {
+    const busy = data.calendars[email]?.busy ?? [];
+    if (!busy.length) return `${email}: fully available`;
+    const slots = busy.map((b) => `  busy ${b.start} → ${b.end}`).join("\n");
+    return `${email}:\n${slots}`;
+  });
+
+  return `Free/busy between ${timeMin} and ${timeMax}:\n\n${lines.join("\n\n")}`;
 }
 
 export async function calendarGetEvent(accessToken: string, eventId: string): Promise<string> {

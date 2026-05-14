@@ -8,7 +8,7 @@ import {
 } from "@google/generative-ai";
 import { fetchUrl, httpRequest } from "./tools";
 import { gmailSend, gmailSearch, gmailRead } from "./gmail";
-import { calendarListEvents, calendarCreateEvent, calendarGetEvent } from "./calendar";
+import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
 
@@ -107,7 +107,7 @@ const CALENDAR_LIST_DECL = {
 
 const CALENDAR_CREATE_DECL = {
   name: "calendar_create_event",
-  description: "Create a new event in the user's Google Calendar.",
+  description: "Create a new event in the user's Google Calendar. Invite attendees by including their emails — they will receive calendar invitations automatically.",
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
@@ -116,8 +116,23 @@ const CALENDAR_CREATE_DECL = {
       endDateTime:   { type: SchemaType.STRING, description: "End time in ISO 8601 format" },
       description:   { type: SchemaType.STRING, description: "Event description (optional)" },
       location:      { type: SchemaType.STRING, description: "Event location (optional)" },
+      attendees:     { type: SchemaType.ARRAY, description: "List of attendee email addresses (optional)", items: { type: SchemaType.STRING } },
     },
     required: ["title", "startDateTime", "endDateTime"],
+  },
+};
+
+const CALENDAR_CHECK_DECL = {
+  name: "calendar_check_availability",
+  description: "Check free/busy availability for one or more people within a time range. Use this before creating a meeting to find the earliest open slot for all attendees.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      emails:  { type: SchemaType.ARRAY, description: "List of email addresses to check", items: { type: SchemaType.STRING } },
+      timeMin: { type: SchemaType.STRING, description: "Start of the time range in ISO 8601 format" },
+      timeMax: { type: SchemaType.STRING, description: "End of the time range in ISO 8601 format" },
+    },
+    required: ["emails", "timeMin", "timeMax"],
   },
 };
 
@@ -149,7 +164,7 @@ function buildTools(mode: "search" | "tools", gmailUser?: string, calendarUser?:
   if (agentConfig.tools.httpRequest) functionDeclarations.push(HTTP_REQUEST_DECL);
   // Google tools are available immediately when user has connected — no redeploy needed
   if (gmailUser) functionDeclarations.push(GMAIL_SEND_DECL, GMAIL_SEARCH_DECL, GMAIL_READ_DECL);
-  if (calendarUser) functionDeclarations.push(CALENDAR_LIST_DECL, CALENDAR_CREATE_DECL, CALENDAR_GET_DECL);
+  if (calendarUser) functionDeclarations.push(CALENDAR_LIST_DECL, CALENDAR_CREATE_DECL, CALENDAR_GET_DECL, CALENDAR_CHECK_DECL);
   return functionDeclarations.length > 0 ? [{ functionDeclarations }] : [];
 }
 
@@ -221,8 +236,11 @@ export async function chat(message: string, history: Content[], mode: "search" |
               const { maxResults } = call.args as { maxResults?: number };
               output = await calendarListEvents(accessToken, maxResults);
             } else if (call.name === "calendar_create_event") {
-              const { title, startDateTime, endDateTime, description, location } = call.args as { title: string; startDateTime: string; endDateTime: string; description?: string; location?: string };
-              output = await calendarCreateEvent(accessToken, title, startDateTime, endDateTime, description, location);
+              const { title, startDateTime, endDateTime, description, location, attendees } = call.args as { title: string; startDateTime: string; endDateTime: string; description?: string; location?: string; attendees?: string[] };
+              output = await calendarCreateEvent(accessToken, title, startDateTime, endDateTime, description, location, attendees);
+            } else if (call.name === "calendar_check_availability") {
+              const { emails, timeMin, timeMax } = call.args as { emails: string[]; timeMin: string; timeMax: string };
+              output = await calendarCheckAvailability(accessToken, emails, timeMin, timeMax);
             } else {
               const { eventId } = call.args as { eventId: string };
               output = await calendarGetEvent(accessToken, eventId);
