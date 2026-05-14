@@ -24,6 +24,11 @@ jobs:
           workload_identity_provider: 'projects/45358226626/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
           service_account: 'deployer@boost-agents-496211.iam.gserviceaccount.com'
 
+      - name: Enable APIs and setup Firestore
+        run: |
+          gcloud services enable firestore.googleapis.com --project=boost-agents-496211
+          gcloud firestore databases create --location=europe-west1 --project=boost-agents-496211 || echo "Already exists."
+
       - name: Create Artifact Registry repo
         run: |
           gcloud artifacts repositories create oauth-service \
