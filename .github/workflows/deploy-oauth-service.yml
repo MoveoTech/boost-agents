@@ -26,7 +26,7 @@ jobs:
 
       - name: Enable APIs and setup Firestore
         run: |
-          gcloud services enable firestore.googleapis.com --project=boost-agents-496211
+          gcloud services enable firestore.googleapis.com calendar-json.googleapis.com --project=boost-agents-496211
           gcloud firestore databases create --location=europe-west1 --project=boost-agents-496211 || echo "Already exists."
 
       - name: Create Artifact Registry repo
