@@ -75,7 +75,8 @@ export async function saveConfig(config: AgentConfig): Promise<{ commitUrl: stri
 export async function sendMessage(
   message: string,
   history: HistoryItem[],
-  mode: Mode = "tools"
+  mode: Mode = "tools",
+  systemPrompt?: string
 ): Promise<ChatResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
@@ -84,7 +85,7 @@ export async function sendMessage(
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, history, mode }),
+    body: JSON.stringify({ message, history, mode, systemPrompt }),
   });
 
   if (!res.ok) {

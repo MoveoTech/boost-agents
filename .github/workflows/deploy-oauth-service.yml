@@ -1,0 +1,60 @@
+name: Deploy OAuth Service
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/oauth-service/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/45358226626/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
+          service_account: 'deployer@boost-agents-496211.iam.gserviceaccount.com'
+
+      - name: Create Artifact Registry repo
+        run: |
+          gcloud artifacts repositories create oauth-service \
+            --repository-format=docker \
+            --location=us-central1 \
+            --project=boost-agents-496211 || true
+
+      - name: Build and Push Image
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker build \
+            -t us-central1-docker.pkg.dev/boost-agents-496211/oauth-service/oauth-service:${{ github.sha }} \
+            ./apps/oauth-service
+          docker push us-central1-docker.pkg.dev/boost-agents-496211/oauth-service/oauth-service:${{ github.sha }}
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: oauth-service
+          region: us-central1
+          image: us-central1-docker.pkg.dev/boost-agents-496211/oauth-service/oauth-service:${{ github.sha }}
+          flags: '--allow-unauthenticated'
+          env_vars: |
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            OAUTH_SERVICE_KEY=${{ secrets.OAUTH_SERVICE_KEY }}
+            GCP_PROJECT_ID=boost-agents-496211
+
+      - name: Print URL
+        run: |
+          echo "========================================"
+          echo "OAuth Service URL: ${{ steps.deploy.outputs.url }}"
+          echo "Redirect URI to register: ${{ steps.deploy.outputs.url }}/auth/google/callback"
+          echo "========================================"

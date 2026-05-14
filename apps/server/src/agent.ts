@@ -79,11 +79,11 @@ export interface ChatResult {
   toolUses: ToolUse[];
 }
 
-export async function chat(message: string, history: Content[], mode: "search" | "tools" = "tools"): Promise<ChatResult> {
+export async function chat(message: string, history: Content[], mode: "search" | "tools" = "tools", systemPrompt?: string): Promise<ChatResult> {
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     tools: buildTools(mode),
-    systemInstruction: agentConfig.systemPrompt,
+    systemInstruction: systemPrompt ?? agentConfig.systemPrompt,
   });
 
   const session = model.startChat({ history });

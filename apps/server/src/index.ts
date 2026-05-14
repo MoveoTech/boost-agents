@@ -123,10 +123,11 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools" } = req.body as {
+  const { message, history = [], mode = "tools", systemPrompt } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
+    systemPrompt?: string;
   };
 
   if (!message?.trim()) {
@@ -135,7 +136,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const result = await chat(message.trim(), history, mode);
+    const result = await chat(message.trim(), history, mode, systemPrompt);
     res.json(result);
   } catch (err) {
     console.error(err);

@@ -13,8 +13,13 @@ type Tab = "settings" | "api";
 type DeployStatus = "idle" | "deploying" | "done" | "error";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
+const STORAGE_KEY = "agent_config";
 
-export default function ConfigurePanel() {
+interface Props {
+  onSave: (config: AgentConfig) => void;
+}
+
+export default function ConfigurePanel({ onSave }: Props) {
   const [tab, setTab] = useState<Tab>("settings");
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [status, setStatus] = useState<DeployStatus>("idle");
@@ -24,7 +29,14 @@ export default function ConfigurePanel() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    getConfig().then(setConfig).catch(() => {});
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      try { setConfig(JSON.parse(stored)); } catch {}
+    }
+    getConfig().then((c) => {
+      setConfig(c);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(c));
+    }).catch(() => {});
     getApiKey().then(setApiKey).catch(() => {});
   }, []);
 
@@ -42,6 +54,8 @@ export default function ConfigurePanel() {
   const handleDeploy = async () => {
     setStatus("deploying");
     setError("");
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    onSave(config);
     try {
       const { commitUrl: url } = await saveConfig(config);
       setCommitUrl(url);

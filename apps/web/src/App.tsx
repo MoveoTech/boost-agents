@@ -13,11 +13,14 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [configuring, setConfiguring] = useState(false);
   const [mode, setMode] = useState<Mode>("tools");
-  const [uiConfig, setUiConfig] = useState<AgentConfig["ui"] | null>(null);
+  const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(() => {
+    const stored = localStorage.getItem("agent_config");
+    try { return stored ? JSON.parse(stored) : null; } catch { return null; }
+  });
 
   useEffect(() => {
     if (!authed) return;
-    getConfig().then((c) => setUiConfig(c.ui)).catch(() => {});
+    getConfig().then((c) => setAgentConfig(c)).catch(() => {});
     whoami().then(({ isAdmin: a }) => setIsAdmin(a)).catch(() => {});
   }, [authed]);
 
@@ -44,7 +47,7 @@ export default function App() {
         .map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
 
       try {
-        const result = await sendMessage(text, history, mode);
+        const result = await sendMessage(text, history, mode, agentConfig?.systemPrompt);
         setMessages((prev) =>
           prev.map((m) =>
             m.pending
@@ -74,7 +77,7 @@ export default function App() {
       <header className="header">
         <div className="header-title">
           <span className="header-icon">✦</span>
-          <h1>{uiConfig?.title ?? "Boost Agent"}</h1>
+          <h1>{agentConfig?.ui.title ?? "Boost Agent"}</h1>
         </div>
         <div className="header-actions">
           <span className="model-badge">Gemini 2.5 Flash</span>
@@ -90,14 +93,14 @@ export default function App() {
         </div>
       </header>
       {configuring ? (
-        <ConfigurePanel />
+        <ConfigurePanel onSave={(c) => setAgentConfig(c)} />
       ) : (
         <>
           <ChatWindow messages={messages} />
           <InputBar
             onSend={handleSend}
             disabled={loading}
-            placeholder={uiConfig?.placeholder}
+            placeholder={agentConfig?.ui.placeholder}
             mode={mode}
             onModeChange={setMode}
           />
