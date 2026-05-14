@@ -159,7 +159,7 @@ export default function ConfigurePanel({ onSave, gmailUser, onGmailDisconnect }:
                       Disconnect
                     </button>
                   ) : (
-                    <a className="connection-connect-btn" href={`${BASE}/api/auth/google/start`}>
+                    <a className="connection-connect-btn" href={`${BASE}/api/auth/google/start?returnUrl=${encodeURIComponent(window.location.origin)}`}>
                       Connect Gmail
                     </a>
                   )}

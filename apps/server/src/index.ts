@@ -98,7 +98,9 @@ app.get("/api/auth/google/start", (req, res) => {
     res.status(500).json({ error: "OAuth service not configured" });
     return;
   }
-  const agentUrl = `${req.protocol}://${req.get("host")}`;
+  // returnUrl is the web UI origin passed by the browser so the OAuth
+  // callback lands on the web UI, not the server
+  const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
   const params = new URLSearchParams({ agentId, agentUrl });
   res.redirect(`${oauthServiceUrl}/auth/google/start?${params}`);
 });
