@@ -7,6 +7,8 @@ import {
   FunctionCall,
 } from "@google/generative-ai";
 import { fetchUrl, httpRequest } from "./tools";
+import { gmailSend, gmailSearch, gmailRead } from "./gmail";
+import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -51,6 +53,45 @@ const HTTP_REQUEST_DECL = {
   },
 };
 
+const GMAIL_SEND_DECL = {
+  name: "gmail_send",
+  description: "Send an email via the user's connected Gmail account.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      to:      { type: SchemaType.STRING, description: "Recipient email address" },
+      subject: { type: SchemaType.STRING, description: "Email subject" },
+      body:    { type: SchemaType.STRING, description: "Email body (plain text)" },
+    },
+    required: ["to", "subject", "body"],
+  },
+};
+
+const GMAIL_SEARCH_DECL = {
+  name: "gmail_search",
+  description: "Search the user's Gmail inbox. Supports Gmail search operators (from:, subject:, after:, etc.).",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      query:      { type: SchemaType.STRING, description: "Gmail search query" },
+      maxResults: { type: SchemaType.NUMBER, description: "Max emails to return (default 10)" },
+    },
+    required: ["query"],
+  },
+};
+
+const GMAIL_READ_DECL = {
+  name: "gmail_read",
+  description: "Read the full content of a specific email by its message ID.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      messageId: { type: SchemaType.STRING, description: "The Gmail message ID" },
+    },
+    required: ["messageId"],
+  },
+};
+
 function buildTools(mode: "search" | "tools"): Tool[] {
   // Gemini cannot combine built-in tools and function declarations in one request
   if (mode === "search") {
@@ -65,6 +106,9 @@ function buildTools(mode: "search" | "tools"): Tool[] {
   const functionDeclarations = [];
   if (agentConfig.tools.fetchUrl) functionDeclarations.push(FETCH_URL_DECL);
   if (agentConfig.tools.httpRequest) functionDeclarations.push(HTTP_REQUEST_DECL);
+  if (agentConfig.tools.gmail) {
+    functionDeclarations.push(GMAIL_SEND_DECL, GMAIL_SEARCH_DECL, GMAIL_READ_DECL);
+  }
   return functionDeclarations.length > 0 ? [{ functionDeclarations }] : [];
 }
 
@@ -79,7 +123,7 @@ export interface ChatResult {
   toolUses: ToolUse[];
 }
 
-export async function chat(message: string, history: Content[], mode: "search" | "tools" = "tools", systemPrompt?: string): Promise<ChatResult> {
+export async function chat(message: string, history: Content[], mode: "search" | "tools" = "tools", systemPrompt?: string, gmailUser?: string): Promise<ChatResult> {
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     tools: buildTools(mode),
@@ -106,6 +150,25 @@ export async function chat(message: string, history: Content[], mode: "search" |
           const { url, method, body } = call.args as { url: string; method: string; body?: unknown };
           output = await httpRequest(url, method, body);
           toolUses.push({ name: "http_request", input: `${method} ${url}`, output: output.slice(0, 500) });
+        } else if (call.name === "gmail_send" || call.name === "gmail_search" || call.name === "gmail_read") {
+          if (!gmailUser) {
+            output = "User has not connected their Gmail account. Ask them to connect Gmail first.";
+          } else {
+            const accessToken = await getUserAccessToken(gmailUser);
+            if (!accessToken) {
+              output = "Could not retrieve Gmail access token. The user may need to reconnect their Gmail account.";
+            } else if (call.name === "gmail_send") {
+              const { to, subject, body } = call.args as { to: string; subject: string; body: string };
+              output = await gmailSend(accessToken, to, subject, body);
+            } else if (call.name === "gmail_search") {
+              const { query, maxResults } = call.args as { query: string; maxResults?: number };
+              output = await gmailSearch(accessToken, query, maxResults);
+            } else {
+              const { messageId } = call.args as { messageId: string };
+              output = await gmailRead(accessToken, messageId);
+            }
+          }
+          toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
         }
 
         return {

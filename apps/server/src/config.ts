@@ -6,6 +6,11 @@ export interface AgentConfig {
     httpRequest: boolean;
     googleSearch: boolean;
     codeExecution: boolean;
+    gmail: boolean;
+  };
+  access: {
+    chatEnabled: boolean;
+    apiEnabled: boolean;
   };
   ui: {
     title: string;
@@ -21,6 +26,11 @@ export const agentConfig: AgentConfig = {
     httpRequest: true,
     googleSearch: true,
     codeExecution: false,
+    gmail: false,
+  },
+  access: {
+    chatEnabled: true,
+    apiEnabled: true,
   },
   ui: {
     title: "Boost Agent",

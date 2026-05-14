@@ -91,6 +91,18 @@ app.use((req, res, next) => {
   }
 });
 
+app.get("/api/auth/google/start", (req, res) => {
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !agentId) {
+    res.status(500).json({ error: "OAuth service not configured" });
+    return;
+  }
+  const agentUrl = `${req.protocol}://${req.get("host")}`;
+  const params = new URLSearchParams({ agentId, agentUrl });
+  res.redirect(`${oauthServiceUrl}/auth/google/start?${params}`);
+});
+
 app.get("/api/config", (_req, res) => {
   res.json(agentConfig);
 });
@@ -123,11 +135,12 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools", systemPrompt } = req.body as {
+  const { message, history = [], mode = "tools", systemPrompt, gmailUser } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
     systemPrompt?: string;
+    gmailUser?: string;
   };
 
   if (!message?.trim()) {
@@ -136,7 +149,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const result = await chat(message.trim(), history, mode, systemPrompt);
+    const result = await chat(message.trim(), history, mode, systemPrompt, gmailUser);
     res.json(result);
   } catch (err) {
     console.error(err);

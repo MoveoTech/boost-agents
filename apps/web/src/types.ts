@@ -33,6 +33,11 @@ export interface AgentConfig {
     httpRequest: boolean;
     googleSearch: boolean;
     codeExecution: boolean;
+    gmail: boolean;
+  };
+  access: {
+    chatEnabled: boolean;
+    apiEnabled: boolean;
   };
   ui: {
     title: string;

@@ -76,7 +76,8 @@ export async function sendMessage(
   message: string,
   history: HistoryItem[],
   mode: Mode = "tools",
-  systemPrompt?: string
+  systemPrompt?: string,
+  gmailUser?: string
 ): Promise<ChatResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
@@ -85,7 +86,7 @@ export async function sendMessage(
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, history, mode, systemPrompt }),
+    body: JSON.stringify({ message, history, mode, systemPrompt, gmailUser }),
   });
 
   if (!res.ok) {

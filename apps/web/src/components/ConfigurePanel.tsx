@@ -7,6 +7,7 @@ const TOOLS: { key: keyof AgentConfig["tools"]; label: string; description: stri
   { key: "httpRequest", label: "HTTP Request", description: "POST/PUT/PATCH to REST APIs with JSON body" },
   { key: "googleSearch", label: "Google Search", description: "Search the web via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
   { key: "codeExecution", label: "Code Execution", description: "Run Python code via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
+  { key: "gmail", label: "Gmail", description: "Send, search, and read emails from the user's connected Gmail account" },
 ];
 
 type Tab = "settings" | "api";
@@ -136,6 +137,30 @@ export default function ConfigurePanel({ onSave }: Props) {
                   />
                 </label>
               ))}
+            </section>
+
+            <section className="configure-section">
+              <h2 className="configure-section-title">Access</h2>
+              <label className="configure-toggle-row">
+                <div>
+                  <span className="configure-toggle-label">Enable Chat UI</span>
+                  <span className="configure-toggle-desc">Users can chat with the agent via this URL</span>
+                </div>
+                <input type="checkbox" className="configure-checkbox"
+                  checked={config.access.chatEnabled}
+                  onChange={(e) => setConfig((c) => c ? { ...c, access: { ...c.access, chatEnabled: e.target.checked } } : c)}
+                />
+              </label>
+              <label className="configure-toggle-row">
+                <div>
+                  <span className="configure-toggle-label">Enable API</span>
+                  <span className="configure-toggle-desc">Allow calling the agent via API key</span>
+                </div>
+                <input type="checkbox" className="configure-checkbox"
+                  checked={config.access.apiEnabled}
+                  onChange={(e) => setConfig((c) => c ? { ...c, access: { ...c.access, apiEnabled: e.target.checked } } : c)}
+                />
+              </label>
             </section>
 
             <section className="configure-section">
