@@ -91,8 +91,8 @@ app.get("/auth/google/callback", async (req, res) => {
   }
 });
 
-// Agents call this to retrieve a user's refresh token
-app.get("/api/tokens/:agentId/:userId", async (req, res) => {
+// Agents call this to get a fresh access token for a user
+app.get("/api/access-token/:agentId/:userId", async (req, res) => {
   if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -113,7 +113,26 @@ app.get("/api/tokens/:agentId/:userId", async (req, res) => {
       return;
     }
 
-    res.json(doc.data());
+    const { refreshToken } = doc.data() as { refreshToken: string };
+
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+      }),
+    });
+
+    const { access_token, error } = await tokenRes.json() as { access_token?: string; error?: string };
+    if (!access_token) {
+      res.status(500).json({ error: error ?? "Failed to refresh access token" });
+      return;
+    }
+
+    res.json({ accessToken: access_token });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
