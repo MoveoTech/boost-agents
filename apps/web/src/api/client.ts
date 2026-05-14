@@ -1,4 +1,4 @@
-import type { ChatResponse, HistoryItem, AgentConfig, Mode } from "../types";
+import type { ChatResponse, HistoryItem, AgentConfig } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 const TOKEN_KEY = "auth_token";
@@ -75,7 +75,7 @@ export async function saveConfig(config: AgentConfig): Promise<{ commitUrl: stri
 export async function sendMessage(
   message: string,
   history: HistoryItem[],
-  mode: Mode = "tools",
+  mode: "search" | "tools" = "tools",
   systemPrompt?: string,
   gmailUser?: string
 ): Promise<ChatResponse> {

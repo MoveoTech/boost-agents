@@ -18,9 +18,12 @@ const STORAGE_KEY = "agent_config";
 
 interface Props {
   onSave: (config: AgentConfig) => void;
+  gmailUser: string | null;
+  onGmailConnect: (email: string) => void;
+  onGmailDisconnect: () => void;
 }
 
-export default function ConfigurePanel({ onSave }: Props) {
+export default function ConfigurePanel({ onSave, gmailUser, onGmailDisconnect }: Props) {
   const [tab, setTab] = useState<Tab>("settings");
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [status, setStatus] = useState<DeployStatus>("idle");
@@ -138,6 +141,31 @@ export default function ConfigurePanel({ onSave }: Props) {
                 </label>
               ))}
             </section>
+
+            {config.tools.gmail && (
+              <section className="configure-section">
+                <h2 className="configure-section-title">Connections</h2>
+                <div className="configure-connection-row">
+                  <div>
+                    <span className="configure-toggle-label">Gmail</span>
+                    {gmailUser ? (
+                      <span className="configure-toggle-desc">Connected as {gmailUser}</span>
+                    ) : (
+                      <span className="configure-toggle-desc">Not connected</span>
+                    )}
+                  </div>
+                  {gmailUser ? (
+                    <button className="connection-disconnect-btn" onClick={onGmailDisconnect}>
+                      Disconnect
+                    </button>
+                  ) : (
+                    <a className="connection-connect-btn" href={`${BASE}/api/auth/google/start`}>
+                      Connect Gmail
+                    </a>
+                  )}
+                </div>
+              </section>
+            )}
 
             <section className="configure-section">
               <h2 className="configure-section-title">Access</h2>

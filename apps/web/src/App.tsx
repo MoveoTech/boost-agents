@@ -3,9 +3,8 @@ import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
 import ConfigurePanel from "./components/ConfigurePanel";
-import ConnectGmail from "./components/ConnectGmail";
 import { sendMessage, getToken, getConfig, whoami } from "./api/client";
-import type { DisplayMessage, HistoryItem, AgentConfig, Mode } from "./types";
+import type { DisplayMessage, HistoryItem, AgentConfig } from "./types";
 
 type View = "builder" | "chat";
 
@@ -15,7 +14,6 @@ export default function App() {
   const [view, setView] = useState<View>("builder");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<Mode>("tools");
   const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(() => {
     const stored = localStorage.getItem("agent_config");
     try { return stored ? JSON.parse(stored) : null; } catch { return null; }
@@ -29,10 +27,20 @@ export default function App() {
     getConfig().then((c) => setAgentConfig(c)).catch(() => {});
     whoami().then(({ isAdmin: a }) => {
       setIsAdmin(a);
-      // admins land on builder, regular users go straight to chat
       setView(a ? "builder" : "chat");
     }).catch(() => setView("chat"));
   }, [authed]);
+
+  // Handle OAuth callback from gmail connect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const email = params.get("gmail_email");
+    if (params.get("gmail_connected") === "true" && email) {
+      sessionStorage.setItem("gmail_user", email);
+      setGmailUser(email);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   const handleLogin = useCallback((adminFlag: boolean) => {
     setIsAdmin(adminFlag);
@@ -50,7 +58,7 @@ export default function App() {
       .map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
 
     try {
-      const result = await sendMessage(text, history, mode, agentConfig?.systemPrompt, gmailUser ?? undefined);
+      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailUser ?? undefined);
       setMessages((prev) =>
         prev.map((m) => m.pending ? { ...m, text: result.reply, toolUses: result.toolUses, pending: false } : m)
       );
@@ -61,13 +69,13 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [messages, mode, agentConfig, gmailUser]);
+  }, [messages, agentConfig, gmailUser]);
 
   if (!authed) return <LoginPage onLogin={handleLogin} />;
 
   const title = agentConfig?.ui.title ?? "Boost Agent";
-  const chatEnabled = agentConfig?.access.chatEnabled ?? true;
-  const gmailEnabled = agentConfig?.tools.gmail ?? false;
+  const chatEnabled = agentConfig?.access?.chatEnabled ?? true;
+  const gmailEnabled = agentConfig?.tools?.gmail ?? false;
 
   return (
     <div className="app">
@@ -77,30 +85,30 @@ export default function App() {
           <h1>{title}</h1>
         </div>
         <div className="header-actions">
-          {isAdmin && (
+          {isAdmin ? (
             <>
-              <button
-                className={`view-tab ${view === "builder" ? "active" : ""}`}
-                onClick={() => setView("builder")}
-              >
+              <button className={`view-tab ${view === "builder" ? "active" : ""}`} onClick={() => setView("builder")}>
                 Builder
               </button>
               {chatEnabled && (
-                <button
-                  className={`view-tab ${view === "chat" ? "active" : ""}`}
-                  onClick={() => setView("chat")}
-                >
+                <button className={`view-tab ${view === "chat" ? "active" : ""}`} onClick={() => setView("chat")}>
                   Chat
                 </button>
               )}
             </>
+          ) : (
+            <span className="model-badge">Gemini 2.5 Flash</span>
           )}
-          {!isAdmin && <span className="model-badge">Gemini 2.5 Flash</span>}
         </div>
       </header>
 
       {view === "builder" ? (
-        <ConfigurePanel onSave={(c) => setAgentConfig(c)} />
+        <ConfigurePanel
+          onSave={(c) => setAgentConfig(c)}
+          gmailUser={gmailUser}
+          onGmailConnect={(email) => setGmailUser(email)}
+          onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); setGmailUser(null); }}
+        />
       ) : !chatEnabled ? (
         <div className="empty-state">
           <span className="empty-title">API Only</span>
@@ -108,9 +116,6 @@ export default function App() {
         </div>
       ) : (
         <>
-          {gmailEnabled && !gmailUser && (
-            <ConnectGmail onConnected={(email) => setGmailUser(email)} />
-          )}
           {gmailEnabled && gmailUser && (
             <div className="gmail-connected">
               Gmail: {gmailUser} &nbsp;
@@ -124,8 +129,6 @@ export default function App() {
             onSend={handleSend}
             disabled={loading}
             placeholder={agentConfig?.ui.placeholder}
-            mode={mode}
-            onModeChange={setMode}
           />
         </>
       )}
