@@ -150,5 +150,28 @@ app.get("/api/access-token/:service/:agentId/:userId", async (req, res) => {
   }
 });
 
+// Returns all users connected for any service in this agent
+app.get("/api/users/:agentId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const { agentId } = req.params;
+  try {
+    const services = ["gmail", "calendar"] as const;
+    const userMap: Record<string, { gmail: boolean; calendar: boolean }> = {};
+    for (const service of services) {
+      const snapshot = await db.collection(`${service}_tokens`).doc(agentId).collection("users").get();
+      snapshot.forEach((doc) => {
+        if (!userMap[doc.id]) userMap[doc.id] = { gmail: false, calendar: false };
+        userMap[doc.id][service] = true;
+      });
+    }
+    res.json({ users: Object.entries(userMap).map(([email, s]) => ({ email, ...s })) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 const PORT = process.env.PORT ?? 8080;
 app.listen(PORT, () => console.log(`OAuth service running on :${PORT}`));

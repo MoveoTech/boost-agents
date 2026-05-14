@@ -17,6 +17,8 @@ on:
         required: false
       OAUTH_SERVICE_KEY:
         required: false
+      AUTOMATION_SECRET:
+        required: false
 
 jobs:
   provision-and-deploy:
@@ -51,7 +53,7 @@ jobs:
           gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Billing failed."
 
           echo "Attempting to Enable APIs..."
-          gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com iamcredentials.googleapis.com --project=$PROJECT_ID || echo "API failed."
+          gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com iamcredentials.googleapis.com cloudscheduler.googleapis.com --project=$PROJECT_ID || echo "API failed."
 
           echo "Waiting 30s for APIs to activate..."
           sleep 30
@@ -66,6 +68,7 @@ jobs:
 
             gcloud iam service-accounts create "deployer" --project="$PROJECT_ID" || true
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/owner" || true
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/cloudscheduler.admin" || true
             
             NUMERIC_ID=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
             gcloud iam service-accounts add-iam-policy-binding "deployer@$PROJECT_ID.iam.gserviceaccount.com" --project="$PROJECT_ID" --role="roles/iam.workloadIdentityUser" \
@@ -117,6 +120,7 @@ jobs:
             GITHUB_REPO=${{ github.repository }}
             OAUTH_SERVICE_URL=${{ secrets.OAUTH_SERVICE_URL }}
             OAUTH_SERVICE_KEY=${{ secrets.OAUTH_SERVICE_KEY }}
+            AUTOMATION_SECRET=${{ secrets.AUTOMATION_SECRET }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       # 5. BUILD & DEPLOY WEB

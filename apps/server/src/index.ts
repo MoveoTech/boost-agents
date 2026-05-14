@@ -7,6 +7,8 @@ import { chat } from "./agent";
 import { agentConfig } from "./config";
 import { commitConfig } from "./configure";
 import type { AgentConfig } from "./config";
+import { listAutomations, upsertAutomation, deleteAutomation } from "./automations";
+import type { Automation } from "./automations";
 import type { Content } from "@google/generative-ai";
 
 const app = express();
@@ -72,6 +74,43 @@ app.post("/api/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
+// Called by Cloud Scheduler — no user JWT, secured by AUTOMATION_SECRET header
+app.post("/api/run-automation", async (req, res) => {
+  if (req.headers["x-automation-secret"] !== process.env.AUTOMATION_SECRET) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const { prompt } = req.body as { prompt: string; name: string; id: string };
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) {
+    res.status(500).json({ error: "Not configured" });
+    return;
+  }
+  try {
+    const usersRes = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
+      headers: { "x-api-key": oauthServiceKey },
+    });
+    const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean }[] };
+    const results = [];
+    for (const user of users) {
+      try {
+        const result = await chat(prompt, [], "tools", undefined,
+          user.gmail ? user.email : undefined,
+          user.calendar ? user.email : undefined
+        );
+        results.push({ email: user.email, success: true, reply: result.reply });
+      } catch (err) {
+        results.push({ email: user.email, success: false, error: (err as Error).message });
+      }
+    }
+    res.json({ ok: true, results });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.get("/api/auth/google/start", (req, res) => {
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;
@@ -101,6 +140,33 @@ app.use((req, res, next) => {
     next();
   } catch {
     res.status(401).json({ error: "Unauthorized" });
+  }
+});
+
+app.get("/api/automations", async (_req, res) => {
+  try {
+    res.json(await listAutomations());
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/automations", async (req, res) => {
+  try {
+    const { automation, agentUrl } = req.body as { automation: Automation; agentUrl: string };
+    await upsertAutomation(automation, agentUrl);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.delete("/api/automations/:id", async (req, res) => {
+  try {
+    await deleteAutomation(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 

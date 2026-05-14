@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getConfig, saveConfig, getApiKey } from "../api/client";
+import AutomationsPanel from "./AutomationsPanel";
 import type { AgentConfig } from "../types";
 
 const TOOLS: { key: keyof AgentConfig["tools"]; label: string; description: string; warning?: string }[] = [
@@ -11,7 +12,7 @@ const TOOLS: { key: keyof AgentConfig["tools"]; label: string; description: stri
   { key: "googleCalendar", label: "Google Calendar", description: "List, create, and view calendar events from the user's connected Google account" },
 ];
 
-type Tab = "settings" | "api";
+type Tab = "settings" | "automations" | "api";
 type DeployStatus = "idle" | "deploying" | "done" | "error";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
@@ -94,6 +95,12 @@ export default function ConfigurePanel({ onSave, gmailUser, calendarUser, onGmai
           Settings
         </button>
         <button
+          className={`configure-tab ${tab === "automations" ? "active" : ""}`}
+          onClick={() => setTab("automations")}
+        >
+          Automations
+        </button>
+        <button
           className={`configure-tab ${tab === "api" ? "active" : ""}`}
           onClick={() => setTab("api")}
         >
@@ -101,7 +108,9 @@ export default function ConfigurePanel({ onSave, gmailUser, calendarUser, onGmai
         </button>
       </div>
 
-      {tab === "settings" ? (
+      {tab === "automations" ? (
+        <AutomationsPanel />
+      ) : tab === "settings" ? (
         <>
           <div className="configure-body">
             <section className="configure-section">

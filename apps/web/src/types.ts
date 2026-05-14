@@ -24,6 +24,14 @@ export interface ChatResponse {
   error?: string;
 }
 
+export interface Automation {
+  id: string;
+  name: string;
+  schedule: string;
+  prompt: string;
+  enabled: boolean;
+}
+
 export interface AgentConfig {
   name: string;
   systemPrompt: string;

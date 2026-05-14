@@ -1,4 +1,4 @@
-import type { ChatResponse, HistoryItem, AgentConfig } from "../types";
+import type { ChatResponse, HistoryItem, AgentConfig, Automation } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 const TOKEN_KEY = "auth_token";
@@ -45,6 +45,32 @@ export async function login(password: string): Promise<{ isAdmin: boolean }> {
   const { token, isAdmin } = await res.json();
   if (token) saveToken(token);
   return { isAdmin: !!isAdmin };
+}
+
+export async function listAutomations(): Promise<Automation[]> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/api/automations`, { headers });
+  return res.ok ? res.json() : [];
+}
+
+export async function saveAutomation(automation: Automation): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  await fetch(`${BASE}/api/automations`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ automation, agentUrl: BASE }),
+  });
+}
+
+export async function removeAutomation(id: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  await fetch(`${BASE}/api/automations/${id}`, { method: "DELETE", headers });
 }
 
 export async function getConfig(): Promise<AgentConfig> {
