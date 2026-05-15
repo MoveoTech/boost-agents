@@ -3,12 +3,13 @@ import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
 import AgentSidebar from "./components/AgentSidebar";
-import { sendMessage, getToken, getConfig, whoami, fetchGoogleToken } from "./api/client";
+import { sendMessage, getToken, getConfig, whoami, fetchGoogleToken, identityComplete } from "./api/client";
 import type { DisplayMessage, HistoryItem, AgentConfig } from "./types";
 
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken());
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(() => {
@@ -20,12 +21,31 @@ export default function App() {
   const [gmailToken, setGmailToken] = useState<string | null>(() => sessionStorage.getItem("gmail_token"));
   const [calendarToken, setCalendarToken] = useState<string | null>(() => sessionStorage.getItem("calendar_token"));
 
-  useEffect(() => {
-    if (!authed) return;
-    getConfig().then((c) => setAgentConfig(c)).catch(() => {});
-    whoami().then(({ isAdmin: a }) => setIsAdmin(a)).catch(() => {});
-  }, [authed]);
+  const autoFetchTokens = useCallback((email: string) => {
+    fetchGoogleToken(email, "gmail").then((t) => {
+      if (t) { sessionStorage.setItem("gmail_token", t); sessionStorage.setItem("gmail_user", email); setGmailToken(t); setGmailUser(email); }
+    }).catch(() => {});
+    fetchGoogleToken(email, "calendar").then((t) => {
+      if (t) { sessionStorage.setItem("calendar_token", t); sessionStorage.setItem("calendar_user", email); setCalendarToken(t); setCalendarUser(email); }
+    }).catch(() => {});
+  }, []);
 
+  // Handle Google identity callback (?identity_token=xxx)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const identityToken = params.get("identity_token");
+    if (identityToken) {
+      window.history.replaceState({}, "", window.location.pathname);
+      identityComplete(identityToken).then(({ isAdmin: a, email }) => {
+        setIsAdmin(a);
+        setUserEmail(email);
+        setAuthed(true);
+        autoFetchTokens(email);
+      }).catch(() => {});
+    }
+  }, [autoFetchTokens]);
+
+  // Handle Google service callback (?google_connected=true)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const email = params.get("google_email");
@@ -43,6 +63,18 @@ export default function App() {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
+
+  useEffect(() => {
+    if (!authed) return;
+    getConfig().then((c) => setAgentConfig(c)).catch(() => {});
+    whoami().then(({ isAdmin: a, email }) => {
+      setIsAdmin(a);
+      if (email) {
+        setUserEmail(email);
+        if (!gmailUser && !calendarUser) autoFetchTokens(email);
+      }
+    }).catch(() => {});
+  }, [authed]);
 
   const handleSend = useCallback(async (text: string) => {
     const userMsg: DisplayMessage = { id: crypto.randomUUID(), role: "user", text };
@@ -66,16 +98,15 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [messages, agentConfig, gmailUser, calendarUser]);
+  }, [messages, agentConfig, gmailToken, calendarToken]);
 
-  if (!authed) return <LoginPage onLogin={(adminFlag) => { setIsAdmin(adminFlag); setAuthed(true); }} />;
+  if (!authed) return <LoginPage onLogin={(adminFlag, email) => { setIsAdmin(adminFlag); if (email) setUserEmail(email); setAuthed(true); }} />;
 
   const title = agentConfig?.ui?.title ?? agentConfig?.name ?? "Boost Agent";
   const placeholder = agentConfig?.ui?.placeholder;
 
   return (
-    <div className={`app ${isAdmin ? "app-admin" : ""}`}>
-      {/* Chat area */}
+    <div className="app app-admin">
       <div className="chat-area">
         <header className="header">
           <div className="header-title">
@@ -88,19 +119,18 @@ export default function App() {
         <InputBar onSend={handleSend} disabled={loading} placeholder={placeholder} />
       </div>
 
-      {/* Sidebar — admin only */}
-      {isAdmin && (
-        <AgentSidebar
-          agentConfig={agentConfig}
-          onSave={(c) => setAgentConfig(c)}
-          gmailUser={gmailUser}
-          calendarUser={calendarUser}
-          gmailToken={gmailToken}
-          calendarToken={calendarToken}
-          onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); sessionStorage.removeItem("gmail_token"); setGmailUser(null); setGmailToken(null); }}
-          onCalendarDisconnect={() => { sessionStorage.removeItem("calendar_user"); sessionStorage.removeItem("calendar_token"); setCalendarUser(null); setCalendarToken(null); }}
-        />
-      )}
+      <AgentSidebar
+        isAdmin={isAdmin}
+        userEmail={userEmail}
+        agentConfig={agentConfig}
+        onSave={(c) => setAgentConfig(c)}
+        gmailUser={gmailUser}
+        calendarUser={calendarUser}
+        gmailToken={gmailToken}
+        calendarToken={calendarToken}
+        onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); sessionStorage.removeItem("gmail_token"); setGmailUser(null); setGmailToken(null); }}
+        onCalendarDisconnect={() => { sessionStorage.removeItem("calendar_user"); sessionStorage.removeItem("calendar_token"); setCalendarUser(null); setCalendarToken(null); }}
+      />
     </div>
   );
 }

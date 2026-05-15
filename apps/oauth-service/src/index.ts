@@ -26,6 +26,7 @@ const SERVICE_SCOPES: Record<string, string> = {
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/userinfo.email",
   ].join(" "),
+  identity: "openid email profile",
 };
 
 function getRedirectUri(req: express.Request): string {
@@ -34,6 +35,23 @@ function getRedirectUri(req: express.Request): string {
 }
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+// Identity-only login (no Gmail/Calendar scopes — just email)
+// ?agentId=xxx&agentUrl=xxx
+app.get("/auth/identity/start", (req, res) => {
+  const { agentId, agentUrl } = req.query as { agentId: string; agentUrl: string };
+  const state = Buffer.from(JSON.stringify({ agentId, agentUrl, service: "identity" })).toString("base64url");
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: getRedirectUri(req),
+    response_type: "code",
+    scope: SERVICE_SCOPES.identity,
+    access_type: "online",
+    prompt: "select_account",
+    state,
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+});
 
 // Agent redirects user here to start OAuth
 // ?agentId=xxx&agentUrl=xxx&service=gmail|calendar
@@ -84,6 +102,15 @@ app.get("/auth/google/callback", async (req, res) => {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
     const { email } = await userInfoRes.json() as { email: string };
+
+    if (service === "identity") {
+      // Issue a short-lived token the agent server will exchange for a session
+      const identityToken = jwt.sign({ email, type: "identity" }, OAUTH_SERVICE_KEY, { expiresIn: "5m" });
+      const redirect = new URL(agentUrl);
+      redirect.searchParams.set("identity_token", identityToken);
+      res.redirect(redirect.toString());
+      return;
+    }
 
     // Store in service-specific collection
     await db.collection(`${service}_tokens`).doc(agentId).collection("users").doc(email).set({

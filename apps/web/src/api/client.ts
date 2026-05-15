@@ -15,12 +15,12 @@ export function clearToken() {
   sessionStorage.removeItem(TOKEN_KEY);
 }
 
-export async function whoami(): Promise<{ isAdmin: boolean }> {
+export async function whoami(): Promise<{ isAdmin: boolean; email: string | null }> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`${BASE}/api/whoami`, { headers });
-  return res.ok ? res.json() : { isAdmin: false };
+  return res.ok ? res.json() : { isAdmin: false, email: null };
 }
 
 export async function getApiKey(): Promise<string> {
@@ -31,6 +31,18 @@ export async function getApiKey(): Promise<string> {
   if (!res.ok) return "";
   const { apiKey } = await res.json();
   return apiKey;
+}
+
+export async function identityComplete(identityToken: string): Promise<{ isAdmin: boolean; email: string }> {
+  const res = await fetch(`${BASE}/api/auth/identity/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identityToken }),
+  });
+  if (!res.ok) throw new Error("Identity verification failed");
+  const { token, isAdmin, email } = await res.json();
+  if (token) saveToken(token);
+  return { isAdmin: !!isAdmin, email };
 }
 
 export async function login(password: string): Promise<{ isAdmin: boolean }> {

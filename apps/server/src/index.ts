@@ -33,7 +33,7 @@ app.get("/health", (_req, res) => {
 
 app.get("/api/whoami", (req, res) => {
   if (!ACCESS_PASSWORD && !API_KEY) {
-    res.json({ isAdmin: true });
+    res.json({ isAdmin: true, email: null });
     return;
   }
   const bearer = req.headers.authorization?.startsWith("Bearer ")
@@ -41,10 +41,10 @@ app.get("/api/whoami", (req, res) => {
     : null;
   const tokenToVerify = bearer ?? req.cookies[COOKIE_NAME];
   try {
-    const payload = jwt.verify(tokenToVerify, COOKIE_SECRET) as { admin?: boolean };
-    res.json({ isAdmin: !!payload.admin });
+    const payload = jwt.verify(tokenToVerify, COOKIE_SECRET) as { admin?: boolean; email?: string };
+    res.json({ isAdmin: !!payload.admin, email: payload.email ?? null });
   } catch {
-    res.json({ isAdmin: false });
+    res.json({ isAdmin: false, email: null });
   }
 });
 
@@ -113,6 +113,34 @@ app.post("/api/run-automation", async (req, res) => {
     res.json({ ok: true, results });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Google identity login (no Gmail/Calendar scopes — just verifies who the user is)
+app.get("/api/auth/identity/start", (req, res) => {
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !agentId) {
+    res.status(500).json({ error: "OAuth service not configured" });
+    return;
+  }
+  const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
+  const params = new URLSearchParams({ agentId, agentUrl });
+  res.redirect(`${oauthServiceUrl}/auth/identity/start?${params}`);
+});
+
+// Exchanges the short-lived identity token for a session JWT
+app.post("/api/auth/identity/complete", (req, res) => {
+  const { identityToken } = req.body as { identityToken: string };
+  const oauthKey = process.env.OAUTH_SERVICE_KEY ?? "";
+  try {
+    const payload = jwt.verify(identityToken, oauthKey) as { email: string; type: string };
+    if (payload.type !== "identity") throw new Error("Invalid token type");
+    const token = jwt.sign({ ok: true, admin: false, email: payload.email }, COOKIE_SECRET, { expiresIn: "7d" });
+    res.cookie(COOKIE_NAME, token, { httpOnly: true, secure: IS_PROD, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.json({ ok: true, token, isAdmin: false, email: payload.email });
+  } catch {
+    res.status(401).json({ error: "Invalid or expired identity token" });
   }
 });
 

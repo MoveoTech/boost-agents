@@ -64,6 +64,8 @@ function avatarColor(name: string) {
 }
 
 interface Props {
+  isAdmin: boolean;
+  userEmail: string | null;
   agentConfig: AgentConfig | null;
   onSave: (config: AgentConfig) => void;
   gmailUser: string | null;
@@ -74,7 +76,7 @@ interface Props {
   onCalendarDisconnect: () => void;
 }
 
-export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect }: Props) {
   const [config, setConfig] = useState<AgentConfig | null>(agentConfig);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [apiKey, setApiKey] = useState("");
@@ -169,132 +171,154 @@ export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarU
 
   return (
     <aside className="agent-sidebar">
-      {/* Identity */}
+      {/* Identity — editable for admins, display-only for users */}
       <div className="sidebar-identity">
         <div className="sidebar-avatar-wrap">
           <div
             className="sidebar-avatar"
             style={{ background: avatarUrl ? "transparent" : avatarColor(agentName) }}
-            onClick={() => fileRef.current?.click()}
-            title="Click to upload avatar"
+            onClick={() => isAdmin && fileRef.current?.click()}
+            title={isAdmin ? "Click to upload avatar" : undefined}
           >
             {avatarUrl
               ? <img src={avatarUrl} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               : agentName[0]?.toUpperCase()}
           </div>
-          <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleAvatarUpload} />
+          {isAdmin && <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleAvatarUpload} />}
         </div>
         <div className="sidebar-identity-info">
-          <input
-            className="sidebar-name-input"
-            value={agentName}
-            onChange={(e) => update({ name: e.target.value, ui: { ...config.ui, title: e.target.value } })}
-            placeholder="Agent name"
-          />
+          {isAdmin ? (
+            <input
+              className="sidebar-name-input"
+              value={agentName}
+              onChange={(e) => update({ name: e.target.value, ui: { ...config.ui, title: e.target.value } })}
+              placeholder="Agent name"
+            />
+          ) : (
+            <span className="sidebar-name-input" style={{ cursor: "default" }}>{agentName}</span>
+          )}
           <span className="sidebar-model-tag">Gemini 2.5 Flash</span>
         </div>
       </div>
 
-      {/* Automations */}
-      <SidebarSection
-        title="Automations"
-        action={
-          <button className="sidebar-add-btn" onClick={() => {
-            setCustomCron(false);
-            setNewAuto({ id: crypto.randomUUID(), name: "", schedule: "0 9 * * *", prompt: "", enabled: true });
-          }}>+ Add</button>
-        }
-      >
-        {automations.length === 0 && !newAuto && (
-          <p className="sidebar-empty">No automations yet. Add one to run tasks on a schedule.</p>
-        )}
-        {automations.map((a) => (
-          <div key={a.id} className="sidebar-automation-row">
-            <div className="sidebar-automation-info">
-              <span className="sidebar-automation-name">{a.name || "Unnamed"}</span>
-              <span className="sidebar-automation-schedule">
-                {SCHEDULES.find((s) => s.cron === a.schedule)?.label ?? a.schedule}
-              </span>
-            </div>
-            <div className="sidebar-automation-actions">
-              <button
-                className="sidebar-run-btn"
-                onClick={() => handleRunNow(a.id)}
-                title="Run now"
-                disabled={runningId === a.id}
-              >
-                {runningId === a.id ? "…" : "▶"}
-              </button>
-              <input type="checkbox" checked={a.enabled} onChange={() => handleToggleAutomation(a)}
-                className="configure-checkbox" title={a.enabled ? "Enabled" : "Paused"} />
-              <button className="automation-delete-btn" onClick={() => handleDeleteAutomation(a.id)}>✕</button>
-            </div>
-          </div>
-        ))}
+      {/* Logged-in user */}
+      {userEmail && (
+        <div className="sidebar-user-row">
+          <span className="sidebar-user-avatar" style={{ background: avatarColor(userEmail) }}>
+            {userEmail[0].toUpperCase()}
+          </span>
+          <span className="sidebar-user-email">{userEmail}</span>
+        </div>
+      )}
 
-        {newAuto && (
-          <div className="sidebar-automation-form">
-            <input className="configure-input" placeholder="Name" value={newAuto.name}
-              onChange={(e) => setNewAuto({ ...newAuto, name: e.target.value })} />
-            <select className="configure-input" value={customCron ? "custom" : newAuto.schedule}
-              onChange={(e) => {
-                if (e.target.value === "custom") setCustomCron(true);
-                else { setCustomCron(false); setNewAuto({ ...newAuto, schedule: e.target.value }); }
-              }}>
-              {SCHEDULES.map((s) => <option key={s.cron} value={s.cron}>{s.label}</option>)}
-            </select>
-            {customCron && (
-              <input className="configure-input" placeholder="0 9 * * 1-5" value={newAuto.schedule}
-                onChange={(e) => setNewAuto({ ...newAuto, schedule: e.target.value })} />
-            )}
-            <textarea className="configure-textarea" rows={3} placeholder="Describe what the agent should do…"
-              value={newAuto.prompt} onChange={(e) => setNewAuto({ ...newAuto, prompt: e.target.value })} />
-            <div className="sidebar-automation-form-actions">
-              <button className="automation-cancel-btn" onClick={() => setNewAuto(null)}>Cancel</button>
-              <button className="sidebar-save-btn" onClick={handleSaveAutomation}>Save</button>
-            </div>
-          </div>
-        )}
-      </SidebarSection>
-
-      {/* Model */}
-      <SidebarSection title="Model">
-        <select
-          className="configure-input"
-          value={`${config.model?.provider ?? "gemini"}:${config.model?.modelId ?? "gemini-2.5-flash"}`}
-          onChange={(e) => {
-            const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
-            update({ model: { provider, modelId: rest.join(":") } });
-          }}
+      {/* Automations — admin only */}
+      {isAdmin && (
+        <SidebarSection
+          title="Automations"
+          action={
+            <button className="sidebar-add-btn" onClick={() => {
+              setCustomCron(false);
+              setNewAuto({ id: crypto.randomUUID(), name: "", schedule: "0 9 * * *", prompt: "", enabled: true });
+            }}>+ Add</button>
+          }
         >
-          {(["gemini", "claude", "openai"] as const).map((p) => (
-            <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude (Anthropic)" : "OpenAI"}>
-              {MODELS.filter((m) => m.provider === p).map((m) => (
-                <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
-                  {m.label}{!providers[p] ? " — API key not set" : ""}
-                </option>
-              ))}
-            </optgroup>
+          {automations.length === 0 && !newAuto && (
+            <p className="sidebar-empty">No automations yet. Add one to run tasks on a schedule.</p>
+          )}
+          {automations.map((a) => (
+            <div key={a.id} className="sidebar-automation-row">
+              <div className="sidebar-automation-info">
+                <span className="sidebar-automation-name">{a.name || "Unnamed"}</span>
+                <span className="sidebar-automation-schedule">
+                  {SCHEDULES.find((s) => s.cron === a.schedule)?.label ?? a.schedule}
+                </span>
+              </div>
+              <div className="sidebar-automation-actions">
+                <button
+                  className="sidebar-run-btn"
+                  onClick={() => handleRunNow(a.id)}
+                  title="Run now"
+                  disabled={runningId === a.id}
+                >
+                  {runningId === a.id ? "…" : "▶"}
+                </button>
+                <input type="checkbox" checked={a.enabled} onChange={() => handleToggleAutomation(a)}
+                  className="configure-checkbox" title={a.enabled ? "Enabled" : "Paused"} />
+                <button className="automation-delete-btn" onClick={() => handleDeleteAutomation(a.id)}>✕</button>
+              </div>
+            </div>
           ))}
-        </select>
-      </SidebarSection>
 
-      {/* Instructions */}
-      <SidebarSection title="Instructions">
-        <textarea
-          className="configure-textarea sidebar-instructions"
-          rows={6}
-          placeholder="Define your agent's operating framework. Who is it? What can it do?"
-          value={config.systemPrompt}
-          onChange={(e) => update({ systemPrompt: e.target.value })}
-        />
-      </SidebarSection>
+          {newAuto && (
+            <div className="sidebar-automation-form">
+              <input className="configure-input" placeholder="Name" value={newAuto.name}
+                onChange={(e) => setNewAuto({ ...newAuto, name: e.target.value })} />
+              <select className="configure-input" value={customCron ? "custom" : newAuto.schedule}
+                onChange={(e) => {
+                  if (e.target.value === "custom") setCustomCron(true);
+                  else { setCustomCron(false); setNewAuto({ ...newAuto, schedule: e.target.value }); }
+                }}>
+                {SCHEDULES.map((s) => <option key={s.cron} value={s.cron}>{s.label}</option>)}
+              </select>
+              {customCron && (
+                <input className="configure-input" placeholder="0 9 * * 1-5" value={newAuto.schedule}
+                  onChange={(e) => setNewAuto({ ...newAuto, schedule: e.target.value })} />
+              )}
+              <textarea className="configure-textarea" rows={3} placeholder="Describe what the agent should do…"
+                value={newAuto.prompt} onChange={(e) => setNewAuto({ ...newAuto, prompt: e.target.value })} />
+              <div className="sidebar-automation-form-actions">
+                <button className="automation-cancel-btn" onClick={() => setNewAuto(null)}>Cancel</button>
+                <button className="sidebar-save-btn" onClick={handleSaveAutomation}>Save</button>
+              </div>
+            </div>
+          )}
+        </SidebarSection>
+      )}
 
-      {/* Tools */}
-      <SidebarSection title="Tools">
+      {/* Model — admin only */}
+      {isAdmin && (
+        <SidebarSection title="Model">
+          <select
+            className="configure-input"
+            value={`${config.model?.provider ?? "gemini"}:${config.model?.modelId ?? "gemini-2.5-flash"}`}
+            onChange={(e) => {
+              const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
+              update({ model: { provider, modelId: rest.join(":") } });
+            }}
+          >
+            {(["gemini", "claude", "openai"] as const).map((p) => (
+              <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude (Anthropic)" : "OpenAI"}>
+                {MODELS.filter((m) => m.provider === p).map((m) => (
+                  <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
+                    {m.label}{!providers[p] ? " — API key not set" : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </SidebarSection>
+      )}
+
+      {/* Instructions — admin only */}
+      {isAdmin && (
+        <SidebarSection title="Instructions">
+          <textarea
+            className="configure-textarea sidebar-instructions"
+            rows={6}
+            placeholder="Define your agent's operating framework. Who is it? What can it do?"
+            value={config.systemPrompt}
+            onChange={(e) => update({ systemPrompt: e.target.value })}
+          />
+        </SidebarSection>
+      )}
+
+      {/* Tools — toggle admin-only, but Google connect/disconnect for everyone */}
+      <SidebarSection title="Connections">
         {TOOL_DEFS.map(({ key, label, icon, desc, service }) => {
           const connected = service === "gmail" ? gmailUser : service === "calendar" ? calendarUser : null;
           const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : null;
+          // Non-admins only see Google service tools
+          if (!isAdmin && !service) return null;
           return (
             <div key={key} className="sidebar-tool-row">
               <div className="sidebar-tool-info">
@@ -315,30 +339,34 @@ export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarU
                   {!service && <span className="sidebar-tool-desc">{desc}</span>}
                 </div>
               </div>
-              <label className="sidebar-toggle">
-                <input type="checkbox" checked={config.tools[key]} onChange={(e) => updateTool(key, e.target.checked)} />
-                <span className="sidebar-toggle-track" />
-              </label>
+              {isAdmin && (
+                <label className="sidebar-toggle">
+                  <input type="checkbox" checked={config.tools[key]} onChange={(e) => updateTool(key, e.target.checked)} />
+                  <span className="sidebar-toggle-track" />
+                </label>
+              )}
             </div>
           );
         })}
       </SidebarSection>
 
-      {/* Skills */}
-      <SidebarSection title="Skills" defaultOpen={false}>
-        {(config.skills ?? []).filter(s => s.enabled).length > 0 && (
-          <div style={{ marginBottom: 8 }}>
-            {(config.skills ?? []).filter(s => s.enabled).map(s => (
-              <div key={s.id} className="sidebar-automation-row" style={{ marginBottom: 4 }}>
-                <span className="sidebar-automation-name">{s.name}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        <button className="sidebar-add-skill-btn" onClick={() => setShowSkills(true)}>
-          {(config.skills ?? []).length > 0 ? "Manage Skills" : "+ Add skill"}
-        </button>
-      </SidebarSection>
+      {/* Skills — admin only */}
+      {isAdmin && (
+        <SidebarSection title="Skills" defaultOpen={false}>
+          {(config.skills ?? []).filter(s => s.enabled).length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              {(config.skills ?? []).filter(s => s.enabled).map(s => (
+                <div key={s.id} className="sidebar-automation-row" style={{ marginBottom: 4 }}>
+                  <span className="sidebar-automation-name">{s.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <button className="sidebar-add-skill-btn" onClick={() => setShowSkills(true)}>
+            {(config.skills ?? []).length > 0 ? "Manage Skills" : "+ Add skill"}
+          </button>
+        </SidebarSection>
+      )}
 
       {showSkills && (
         <SkillsModal
@@ -348,26 +376,30 @@ export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarU
         />
       )}
 
-      {/* API Access */}
-      <SidebarSection title="API Access" defaultOpen={false}>
-        <SecretRow label="Server URL" value={BASE} onCopy={copy} copied={copied} visible />
-        {apiKey && <SecretRow label="API Key" value={apiKey} onCopy={copy} copied={copied} />}
-        {gmailToken && <SecretRow label="Gmail Token" value={gmailToken} onCopy={copy} copied={copied} />}
-        {calendarToken && <SecretRow label="Calendar Token" value={calendarToken} onCopy={copy} copied={copied} />}
-        <div className="api-code-block" style={{ marginTop: 12 }}>
-          <pre>{curlExample}</pre>
-          <button className="api-copy-btn api-copy-code" onClick={() => copy(curlExample)}>{copied ? "✓" : "Copy"}</button>
-        </div>
-      </SidebarSection>
+      {/* API Access — admin only */}
+      {isAdmin && (
+        <SidebarSection title="API Access" defaultOpen={false}>
+          <SecretRow label="Server URL" value={BASE} onCopy={copy} copied={copied} visible />
+          {apiKey && <SecretRow label="API Key" value={apiKey} onCopy={copy} copied={copied} />}
+          {gmailToken && <SecretRow label="Gmail Token" value={gmailToken} onCopy={copy} copied={copied} />}
+          {calendarToken && <SecretRow label="Calendar Token" value={calendarToken} onCopy={copy} copied={copied} />}
+          <div className="api-code-block" style={{ marginTop: 12 }}>
+            <pre>{curlExample}</pre>
+            <button className="api-copy-btn api-copy-code" onClick={() => copy(curlExample)}>{copied ? "✓" : "Copy"}</button>
+          </div>
+        </SidebarSection>
+      )}
 
-      {/* Footer */}
-      <div className="sidebar-footer">
-        {publishStatus === "done" && <span className="sidebar-publish-success">✓ Published</span>}
-        {publishStatus === "error" && <span className="sidebar-publish-error">Publish failed</span>}
-        <button className="sidebar-publish-btn" onClick={handlePublish} disabled={publishing}>
-          {publishing ? "Publishing…" : "Publish Changes"}
-        </button>
-      </div>
+      {/* Footer — publish admin only */}
+      {isAdmin && (
+        <div className="sidebar-footer">
+          {publishStatus === "done" && <span className="sidebar-publish-success">✓ Published</span>}
+          {publishStatus === "error" && <span className="sidebar-publish-error">Publish failed</span>}
+          <button className="sidebar-publish-btn" onClick={handlePublish} disabled={publishing}>
+            {publishing ? "Publishing…" : "Publish Changes"}
+          </button>
+        </div>
+      )}
     </aside>
   );
 }
