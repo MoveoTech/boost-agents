@@ -7,7 +7,6 @@ const TOOLS: { key: keyof AgentConfig["tools"]; label: string; description: stri
   { key: "fetchUrl", label: "Web Fetch", description: "GET any URL and read its content" },
   { key: "httpRequest", label: "HTTP Request", description: "POST/PUT/PATCH to REST APIs with JSON body" },
   { key: "googleSearch", label: "Google Search", description: "Search the web via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
-  { key: "codeExecution", label: "Code Execution", description: "Run Python code via Gemini built-in", warning: "Cannot be combined with Web Fetch or HTTP Request" },
   { key: "gmail", label: "Gmail", description: "Send, search, and read emails from the user's connected Google account" },
   { key: "googleCalendar", label: "Google Calendar", description: "List, create, and view calendar events from the user's connected Google account" },
 ];
