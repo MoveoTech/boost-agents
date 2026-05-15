@@ -4,15 +4,15 @@ const BASE = import.meta.env.VITE_API_URL ?? "";
 const TOKEN_KEY = "auth_token";
 
 export function getToken(): string | null {
-  return sessionStorage.getItem(TOKEN_KEY);
+  return localStorage.getItem(TOKEN_KEY);
 }
 
 export function saveToken(token: string) {
-  sessionStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken() {
-  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
 }
 
 export async function whoami(): Promise<{ isAdmin: boolean; email: string | null }> {

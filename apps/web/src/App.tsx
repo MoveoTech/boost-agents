@@ -25,17 +25,17 @@ export default function App() {
     const stored = localStorage.getItem("agent_config");
     try { return stored ? JSON.parse(stored) : null; } catch { return null; }
   });
-  const [gmailUser, setGmailUser] = useState<string | null>(() => sessionStorage.getItem("gmail_user"));
-  const [calendarUser, setCalendarUser] = useState<string | null>(() => sessionStorage.getItem("calendar_user"));
-  const [gmailToken, setGmailToken] = useState<string | null>(() => sessionStorage.getItem("gmail_token"));
-  const [calendarToken, setCalendarToken] = useState<string | null>(() => sessionStorage.getItem("calendar_token"));
+  const [gmailUser, setGmailUser] = useState<string | null>(() => localStorage.getItem("gmail_user"));
+  const [calendarUser, setCalendarUser] = useState<string | null>(() => localStorage.getItem("calendar_user"));
+  const [gmailToken, setGmailToken] = useState<string | null>(() => localStorage.getItem("gmail_token"));
+  const [calendarToken, setCalendarToken] = useState<string | null>(() => localStorage.getItem("calendar_token"));
 
   const autoFetchTokens = useCallback((email: string) => {
     fetchGoogleToken(email, "gmail").then((t) => {
-      if (t) { sessionStorage.setItem("gmail_token", t); sessionStorage.setItem("gmail_user", email); setGmailToken(t); setGmailUser(email); }
+      if (t) { localStorage.setItem("gmail_token", t); localStorage.setItem("gmail_user", email); setGmailToken(t); setGmailUser(email); }
     }).catch(() => {});
     fetchGoogleToken(email, "calendar").then((t) => {
-      if (t) { sessionStorage.setItem("calendar_token", t); sessionStorage.setItem("calendar_user", email); setCalendarToken(t); setCalendarUser(email); }
+      if (t) { localStorage.setItem("calendar_token", t); localStorage.setItem("calendar_user", email); setCalendarToken(t); setCalendarUser(email); }
     }).catch(() => {});
   }, []);
 
@@ -62,13 +62,13 @@ export default function App() {
     const service = params.get("google_service");
     if (params.get("google_connected") === "true" && email && service) {
       if (service === "gmail") {
-        sessionStorage.setItem("gmail_user", email);
+        localStorage.setItem("gmail_user", email);
         setGmailUser(email);
-        fetchGoogleToken(email, "gmail").then((t) => { if (t) { sessionStorage.setItem("gmail_token", t); setGmailToken(t); } });
+        fetchGoogleToken(email, "gmail").then((t) => { if (t) { localStorage.setItem("gmail_token", t); setGmailToken(t); } });
       } else if (service === "calendar") {
-        sessionStorage.setItem("calendar_user", email);
+        localStorage.setItem("calendar_user", email);
         setCalendarUser(email);
-        fetchGoogleToken(email, "calendar").then((t) => { if (t) { sessionStorage.setItem("calendar_token", t); setCalendarToken(t); } });
+        fetchGoogleToken(email, "calendar").then((t) => { if (t) { localStorage.setItem("calendar_token", t); setCalendarToken(t); } });
       }
       window.history.replaceState({}, "", window.location.pathname);
     }
@@ -147,8 +147,8 @@ export default function App() {
         calendarUser={calendarUser}
         gmailToken={gmailToken}
         calendarToken={calendarToken}
-        onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); sessionStorage.removeItem("gmail_token"); setGmailUser(null); setGmailToken(null); }}
-        onCalendarDisconnect={() => { sessionStorage.removeItem("calendar_user"); sessionStorage.removeItem("calendar_token"); setCalendarUser(null); setCalendarToken(null); }}
+        onGmailDisconnect={() => { localStorage.removeItem("gmail_user"); localStorage.removeItem("gmail_token"); setGmailUser(null); setGmailToken(null); }}
+        onCalendarDisconnect={() => { localStorage.removeItem("calendar_user"); localStorage.removeItem("calendar_token"); setCalendarUser(null); setCalendarToken(null); }}
         className={mobileTab !== "settings" ? "mobile-hidden" : ""}
       />
 
