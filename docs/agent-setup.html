@@ -192,6 +192,9 @@
     <a href="#google-oauth">Google OAuth setup</a>
     <a href="#google-verification">Google verification</a>
 
+    <div class="nav-section-label">Integrations</div>
+    <a href="#slack">Slack bot setup</a>
+
     <div class="nav-section-label">Reference</div>
     <a href="#env-vars">All env variables</a>
     <a href="#models">Available models</a>
@@ -485,6 +488,76 @@
       <div>Google typically responds within 2–6 weeks. Test users continue to work during this time.</div>
     </div>
 
+    <!-- SLACK -->
+    <h2 id="slack">Slack bot setup</h2>
+    <p>Each agent can have its own Slack bot. Users mention the bot in a channel and it responds in-thread with full access to Gmail, Calendar, and all other configured tools — exactly the same capabilities as the web chat.</p>
+
+    <div class="callout callout-info">
+      <span class="callout-icon">ℹ</span>
+      <div>Each agent repo gets its own Slack app. The bot's Slack email is matched against the user's connected Google account to load their Gmail and Calendar access automatically.</div>
+    </div>
+
+    <h3>Step 1 — Create a Slack app</h3>
+    <ol>
+      <li>Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → <strong>Create New App → From scratch</strong></li>
+      <li>Give it a name (e.g. <em>HR Agent</em>) and pick your workspace</li>
+    </ol>
+
+    <h3>Step 2 — Add bot scopes</h3>
+    <p>Under <strong>OAuth &amp; Permissions → Bot Token Scopes</strong>, add:</p>
+    <table>
+      <thead><tr><th>Scope</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>chat:write</td><td>Post messages to channels</td></tr>
+        <tr><td>channels:read</td><td>List public channels</td></tr>
+        <tr><td>groups:read</td><td>List private channels (optional)</td></tr>
+        <tr><td>users:read</td><td>Look up user info by ID</td></tr>
+        <tr><td>users:read.email</td><td>Fetch the user's email to load their Gmail/Calendar connection</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Step 3 — Install the app</h3>
+    <p>Under <strong>OAuth &amp; Permissions</strong> → click <strong>Install to Workspace</strong>. Copy the <strong>Bot User OAuth Token</strong> (<code>xoxb-...</code>).</p>
+
+    <h3>Step 4 — Enable Event Subscriptions</h3>
+    <ol>
+      <li>Under <strong>Event Subscriptions</strong>, toggle <strong>Enable Events</strong> on</li>
+      <li>Set the Request URL to <code>https://your-agent-url/slack/events</code> — Slack will verify it automatically once your agent is deployed</li>
+      <li>Under <strong>Subscribe to bot events</strong>, add <code>app_mention</code></li>
+      <li>Save changes and reinstall the app if prompted</li>
+    </ol>
+
+    <h3>Step 5 — Add repo secrets</h3>
+    <p>In the agent repo → Settings → Secrets → Actions, add:</p>
+    <table>
+      <thead><tr><th>Secret</th><th>Where to get it</th></tr></thead>
+      <tbody>
+        <tr><td>SLACK_BOT_TOKEN</td><td>OAuth &amp; Permissions → Bot User OAuth Token (<code>xoxb-...</code>)</td></tr>
+        <tr><td>SLACK_SIGNING_SECRET</td><td>Basic Information → App Credentials → Signing Secret</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Step 6 — Enable Slack in the agent sidebar</h3>
+    <p>Log in to the agent, go to <strong>Tools</strong>, toggle <strong>Slack</strong> on, and click <strong>Publish Changes</strong>.</p>
+
+    <h3>Step 7 — Invite the bot to channels</h3>
+    <p>In Slack, type <code>/invite @YourBotName</code> in each channel you want it to respond in.</p>
+
+    <h3>Using the bot</h3>
+    <p>Mention the bot anywhere it's been invited:</p>
+    <pre><code>@HRAgent send an email to john@acme.com summarising today's agenda
+@HRAgent what meetings do I have this afternoon?
+@HRAgent schedule a 1:1 with sarah@acme.com next Tuesday at 10am</code></pre>
+    <p>The bot replies in-thread. It uses the Slack user's email to find their connected Gmail and Calendar — so each user gets their own personalised access.</p>
+
+    <div class="callout callout-warn">
+      <span class="callout-icon">⚠</span>
+      <div>Gmail and Calendar only work for users who have connected their Google account via the agent's web UI. If a user hasn't connected, the bot will tell them to do so.</div>
+    </div>
+
+    <h3>One bot per agent</h3>
+    <p>Each agent repo has its own Slack app. If you have three agents (HR, Sales, Finance), you create three Slack apps — each pointing to its own agent URL and installed in the workspace. They appear as separate bots in Slack.</p>
+
     <!-- ENV VARS -->
     <h2 id="env-vars">All environment variables</h2>
     <p>Set as GitHub repo secrets — passed to Cloud Run automatically by the deploy workflow.</p>
@@ -503,6 +576,8 @@
         <tr><td>OAUTH_SERVICE_URL</td><td><span class="badge badge-auto">Org secret</span></td><td>URL of the central oauth-service.</td></tr>
         <tr><td>OAUTH_SERVICE_KEY</td><td><span class="badge badge-auto">Org secret</span></td><td>Signing key shared with the oauth-service for JWT verification.</td></tr>
         <tr><td>AUTOMATION_SECRET</td><td><span class="badge badge-auto">Org secret</span></td><td>Secures automation webhook calls from Cloud Scheduler.</td></tr>
+        <tr><td>SLACK_BOT_TOKEN</td><td><span class="badge badge-optional">Optional</span></td><td>Slack Bot User OAuth Token (<code>xoxb-...</code>). Required for Slack tools and bot mentions.</td></tr>
+        <tr><td>SLACK_SIGNING_SECRET</td><td><span class="badge badge-optional">Optional</span></td><td>Slack app signing secret. Required to verify incoming Slack events.</td></tr>
       </tbody>
     </table>
 
@@ -540,6 +615,7 @@
         <tr><td>Google Search</td><td>Search the web via Gemini built-in</td><td>GEMINI_API_KEY</td></tr>
         <tr><td>Gmail</td><td>Send emails on the user's behalf</td><td>User connects their Gmail account</td></tr>
         <tr><td>Google Calendar</td><td>List events, create events, check availability</td><td>User connects their Calendar account</td></tr>
+        <tr><td>Slack</td><td>Send messages to channels, list channels, respond to @mentions</td><td>SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET repo secrets</td></tr>
       </tbody>
     </table>
 
