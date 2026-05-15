@@ -30,7 +30,6 @@
     a { color: var(--primary); text-decoration: none; }
     a:hover { text-decoration: underline; }
 
-    /* Layout */
     .layout { display: flex; min-height: 100vh; }
     .nav {
       width: 240px;
@@ -70,7 +69,6 @@
       transition: all 0.1s;
     }
     .nav a:hover { color: var(--text); background: var(--bg); text-decoration: none; }
-    .nav a.active { color: var(--primary); border-left-color: var(--primary); background: var(--primary-light); font-weight: 500; }
 
     .content {
       flex: 1;
@@ -78,19 +76,15 @@
       padding: 48px 48px 80px;
     }
 
-    /* Typography */
     h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
-    h2 { font-size: 20px; font-weight: 700; margin: 48px 0 16px; padding-top: 48px; border-top: 1px solid var(--border); letter-spacing: -0.01em; }
+    h2 { font-size: 20px; font-weight: 700; margin: 48px 0 16px; padding-top: 48px; border-top: 1px solid var(--border); letter-spacing: -0.01em; scroll-margin-top: 24px; }
     h2:first-of-type { border-top: none; padding-top: 0; margin-top: 24px; }
-    h3 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; }
+    h3 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; scroll-margin-top: 24px; }
     p { margin-bottom: 12px; font-size: 15px; }
     ul, ol { padding-left: 20px; margin-bottom: 12px; }
     li { font-size: 15px; margin-bottom: 4px; }
-
-    /* Subtitle */
     .subtitle { font-size: 16px; color: var(--muted); margin-bottom: 32px; }
 
-    /* Badges / tags */
     .badge {
       display: inline-block;
       font-size: 11px;
@@ -103,7 +97,6 @@
     .badge-optional { background: #f3f4f6; color: #374151; }
     .badge-auto { background: var(--green-light); color: var(--green); }
 
-    /* Callouts */
     .callout {
       border-radius: 8px;
       padding: 14px 16px;
@@ -120,14 +113,12 @@
     .callout-success { background: var(--green-light); border: 1px solid #a7f3d0; }
     .callout-success .callout-icon { color: var(--green); }
 
-    /* Table */
     table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 16px 0; }
     th { background: var(--bg); text-align: left; padding: 10px 12px; font-weight: 600; border: 1px solid var(--border); }
     td { padding: 10px 12px; border: 1px solid var(--border); vertical-align: top; }
     td:first-child { font-family: "SF Mono", "Fira Code", monospace; font-size: 13px; white-space: nowrap; }
     tr:hover td { background: #fafafa; }
 
-    /* Code */
     code {
       font-family: "SF Mono", "Fira Code", Consolas, monospace;
       font-size: 13px;
@@ -149,13 +140,8 @@
     }
     pre code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; }
 
-    /* Steps */
     .steps { counter-reset: step; }
-    .step {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 28px;
-    }
+    .step { display: flex; gap: 16px; margin-bottom: 28px; }
     .step-num {
       counter-increment: step;
       width: 28px;
@@ -173,7 +159,6 @@
     .step-body { flex: 1; padding-top: 3px; }
     .step-body strong { display: block; font-size: 15px; margin-bottom: 4px; }
 
-    /* Scope list */
     .scope-list { list-style: none; padding: 0; }
     .scope-list li {
       display: flex;
@@ -184,16 +169,12 @@
       font-size: 14px;
     }
     .scope-list li:last-child { border-bottom: none; }
-    .scope-name { font-family: monospace; font-size: 12px; color: var(--primary); min-width: 280px; }
-
-    /* Section anchors */
-    h2[id], h3[id] { scroll-margin-top: 24px; }
+    .scope-name { font-family: monospace; font-size: 12px; color: var(--primary); min-width: 220px; }
   </style>
 </head>
 <body>
 
 <div class="layout">
-  <!-- Sidebar nav -->
   <nav class="nav">
     <div class="nav-logo">
       <span class="nav-logo-icon">✦</span>
@@ -218,19 +199,14 @@
     <a href="#api">API access</a>
   </nav>
 
-  <!-- Main content -->
   <main class="content">
     <h1>Boost Agents Setup Guide</h1>
     <p class="subtitle">Everything you need to create, configure, and deliver an AI agent to a client.</p>
 
     <!-- OVERVIEW -->
     <h2 id="overview">Overview</h2>
-    <p>Each agent is a GitHub repo created from the <code>MoveoTech/boost-agents</code> template. Pushing to <code>main</code> automatically provisions a GCP project and deploys two Cloud Run services:</p>
-    <ul>
-      <li><strong>Server</strong> — Express API + AI agent (Gemini, Claude, or OpenAI)</li>
-      <li><strong>Web</strong> — React chat UI with admin sidebar</li>
-    </ul>
-    <p>Users log in with Google. Admins (set via <code>ADMIN_EMAILS</code> secret) see a configuration sidebar. Regular users see the chat and their personal Google connections.</p>
+    <p>Each agent is a GitHub repo created from the <code>MoveoTech/boost-agents</code> template. Pushing to <code>main</code> automatically provisions a GCP project and deploys a single Cloud Run service that serves both the API and the web UI from one URL.</p>
+    <p>Users log in with Google. Admins (set via <code>ADMIN_EMAILS</code> secret) see a full configuration sidebar. Regular users see the chat and their personal Google connections. Sessions persist across tabs and browser restarts for 7 days.</p>
 
     <div class="callout callout-info">
       <span class="callout-icon">ℹ</span>
@@ -251,14 +227,14 @@
         <div class="step-num">2</div>
         <div class="step-body">
           <strong>Name it</strong>
-          Use the pattern <code>boost-&lt;client-name&gt;-&lt;use-case&gt;</code>, e.g. <code>boost-acme-hr-agent</code>. The GCP project will be named after the repo automatically.
+          Use the pattern <code>boost-&lt;client&gt;-&lt;use-case&gt;</code>, e.g. <code>boost-acme-hr-agent</code>. The GCP project is named after the repo automatically.
         </div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
         <div class="step-body">
           <strong>Set owner to MoveoTech</strong>
-          Make sure the owner is <strong>MoveoTech</strong> (not your personal account) so org secrets are inherited.
+          Make sure the owner is <strong>MoveoTech</strong> (not your personal account) so org secrets are inherited automatically.
         </div>
       </div>
     </div>
@@ -280,12 +256,17 @@
         <tr>
           <td>API_KEY</td>
           <td><span class="badge badge-required">Required</span></td>
-          <td>Any strong random string — used as the admin API key for programmatic access</td>
+          <td>Any strong random string — used as the admin API key for programmatic access via <code>x-api-key</code> header</td>
         </tr>
         <tr>
           <td>ADMIN_EMAILS</td>
           <td><span class="badge badge-required">Required</span></td>
           <td>Comma-separated emails of admins, e.g. <code>you@moveoboost.com,client@acme.com</code>. These users see the full config sidebar.</td>
+        </tr>
+        <tr>
+          <td>COOKIE_SECRET</td>
+          <td><span class="badge badge-required">Required</span></td>
+          <td>Any long random string (32+ chars). Used to sign session JWTs. Without it the server falls back to an insecure default.</td>
         </tr>
         <tr>
           <td>GH_PAT</td>
@@ -324,12 +305,12 @@
     <h2 id="deploy">3. Deploy</h2>
     <p>Push anything to <code>main</code> to trigger the deploy. The first run takes ~5–8 minutes and will:</p>
     <ol>
-      <li>Create a new GCP project named <code>boost-&lt;repo-name&gt;-v7</code></li>
+      <li>Create a GCP project named <code>boost-&lt;repo-name&gt;-v7</code></li>
       <li>Enable all required APIs (Cloud Run, Artifact Registry, Cloud Scheduler, etc.)</li>
-      <li>Build and push Docker images</li>
-      <li>Deploy the server and web app to Cloud Run</li>
+      <li>Build the web app and bundle it into the server image</li>
+      <li>Deploy a single Cloud Run service that serves both the UI and API</li>
     </ol>
-    <p>The URLs are printed at the end of the GitHub Action run under <strong>Print URLs</strong>. Share the <strong>Web URL</strong> with users.</p>
+    <p>The agent URL is printed at the end of the Action run under <strong>Print URL</strong>. This single URL serves everything — share it directly with users.</p>
 
     <div class="callout callout-warn">
       <span class="callout-icon">⚠</span>
@@ -338,31 +319,28 @@
 
     <!-- CONFIGURE -->
     <h2 id="configure">4. Configure the agent</h2>
-    <p>Open the web URL and sign in with your Google account. As an admin you'll see the configuration sidebar on the right.</p>
+    <p>Open the agent URL and sign in with your Google account. As an admin you'll see the configuration sidebar on the right.</p>
 
-    <h3>Identity</h3>
-    <p>Set the agent's name and upload an avatar. This is what users see at the top of the sidebar.</p>
+    <h3>Model</h3>
+    <p>Each user picks their own model — changes save personally to their browser and don't affect other users. Available models depend on which API keys are set as repo secrets. Admins can click <strong>Publish Changes</strong> to set a new global default for users who haven't picked their own.</p>
 
-    <h3>My Preferences</h3>
-    <p>Personal settings that only affect your session — not other users. Choose a model and add personal instructions.</p>
-
-    <h3>Model (global default)</h3>
-    <p>The model all users default to. Users can override this in their own "My Preferences" section. Available models depend on which API keys are set as repo secrets.</p>
-
-    <h3>Instructions (system prompt)</h3>
-    <p>The agent's base behavior — its role, capabilities, tone, and constraints. This applies to all users unless they add personal instructions on top.</p>
+    <h3>Instructions</h3>
+    <p>The agent's system prompt. Like the model, changes are personal by default. Admins can publish to set the global baseline. Users can personalise on top of whatever the admin has set.</p>
 
     <h3>Tools</h3>
-    <p>Enable or disable what the agent can do. Google tools (Gmail, Calendar) require each user to connect their account individually via the Connect link.</p>
+    <p>Admins control which tools are globally available (toggles). Google tools (Gmail, Calendar) are automatically active as soon as a user connects their account — no extra toggle needed.</p>
+
+    <h3>Connections</h3>
+    <p>Every user connects their own Google account via the Connect link. Once connected, Gmail and Calendar tools work immediately and stay connected across sessions.</p>
 
     <h3>Skills</h3>
-    <p>Reusable knowledge blocks appended to the system prompt. Use for SOPs, product documentation, or any reference content the agent should always have access to.</p>
+    <p>Knowledge blocks appended to the system prompt. The agent uses them automatically when relevant — think SOPs, product documentation, FAQs. Enable/disable per skill without redeploying.</p>
 
     <h3>Automations</h3>
-    <p>Scheduled tasks that run on a cron schedule. Each automation has a name, schedule, and prompt. The agent runs the prompt for every connected user at the scheduled time.</p>
+    <p>Scheduled tasks powered by Cloud Scheduler. Each automation has a name, cron schedule, and a prompt. At the scheduled time the agent runs the prompt for every connected user. Each automation shows a tag with who created it.</p>
 
     <h3>Publish Changes</h3>
-    <p>Commits the global config to GitHub, which triggers a redeploy. Use this to make changes permanent across future deploys. <strong>Model and instructions take effect immediately</strong> without publishing — publishing only ensures they survive a redeploy.</p>
+    <p>Commits the global config (model default, instructions, tool toggles, skills) to GitHub, making it the permanent baseline for all new users and future deploys. Changes take effect immediately in the current session regardless of whether you publish.</p>
 
     <!-- CLIENT DELIVERY -->
     <h2 id="client-delivery">Delivering to a client</h2>
@@ -371,60 +349,60 @@
         <div class="step-num">1</div>
         <div class="step-body">
           <strong>Create and deploy the repo</strong>
-          Follow steps 1–3 above. Add the client's admin email to <code>ADMIN_EMAILS</code>.
+          Follow steps 1–3 above. Add the client's admin email to <code>ADMIN_EMAILS</code> alongside your own.
         </div>
       </div>
       <div class="step">
         <div class="step-num">2</div>
         <div class="step-body">
           <strong>Add client users as OAuth test users</strong>
-          Until Google verification is complete, external emails must be added manually. See the <a href="#google-oauth">Google OAuth setup</a> section below.
+          Until Google verification is complete, add each user's Gmail manually. See <a href="#google-oauth">Google OAuth setup</a> below.
         </div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
         <div class="step-body">
           <strong>Configure the agent</strong>
-          Log in, set the system prompt, enable the relevant tools, add skills. Use "Publish Changes" to lock in the config.
+          Log in, write the system prompt, enable tools, add skills. Click <strong>Publish Changes</strong> to lock in the config permanently.
         </div>
       </div>
       <div class="step">
         <div class="step-num">4</div>
         <div class="step-body">
-          <strong>Send the web URL to the client</strong>
-          Users sign in with Google. They see the chat and can connect their own Gmail/Calendar. Admins see the full sidebar.
+          <strong>Send the URL to the client</strong>
+          One URL — serves the full web UI. Users sign in with Google, connect their Gmail/Calendar, and start chatting.
         </div>
       </div>
     </div>
 
     <!-- GOOGLE OAUTH -->
     <h2 id="google-oauth">Google OAuth setup</h2>
-    <p>The OAuth app lives in <strong>GCP project <code>boost-agents-496211</code></strong>. This is the central project — one app shared by all agents.</p>
+    <p>The OAuth app lives in GCP project <code>boost-agents-496211</code> — one app shared by all agents.</p>
 
     <h3>Adding test users (before verification)</h3>
-    <p>During testing / before Google verification, you must add each user's Gmail address manually:</p>
+    <p>In Testing mode, only explicitly added emails can connect Gmail/Calendar:</p>
     <ol>
       <li>Go to <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a></li>
       <li>Select project <strong>boost-agents-496211</strong></li>
-      <li>Navigate to <strong>APIs & Services → OAuth consent screen</strong></li>
+      <li>Navigate to <strong>APIs &amp; Services → OAuth consent screen</strong></li>
       <li>Scroll to <strong>Test users</strong> → click <strong>+ Add users</strong></li>
       <li>Enter the client's Gmail address and save</li>
     </ol>
     <div class="callout callout-warn">
       <span class="callout-icon">⚠</span>
-      <div>Maximum 100 test users. Sufficient for pilots — once you need more, proceed with Google verification.</div>
+      <div>Maximum 100 test users. Fine for pilots — once you need more, proceed with Google verification.</div>
     </div>
 
     <!-- GOOGLE VERIFICATION -->
     <h2 id="google-verification">Google verification</h2>
-    <p>Required to allow any Google account (outside test users) to connect Gmail and Calendar. This is a one-time process for the central OAuth app.</p>
+    <p>Allows any Google account to connect Gmail and Calendar without being added as a test user. One-time process for the central OAuth app.</p>
 
-    <h3>Prerequisites — prepare these first</h3>
+    <h3>Prerequisites</h3>
     <ul>
-      <li><strong>Public privacy policy URL</strong> — e.g. <code>moveoboost.com/privacy</code>. Must be live and explain what data is accessed and why.</li>
+      <li><strong>Public privacy policy URL</strong> — e.g. <code>moveoboost.com/privacy</code>. Must explain what data is accessed and why.</li>
       <li><strong>Public homepage URL</strong> — your product page</li>
       <li><strong>App logo</strong> — 120×120px PNG minimum</li>
-      <li><strong>Domain verified in Google Search Console</strong> — go to <a href="https://search.google.com/search-console" target="_blank">search.google.com/search-console</a>, add <code>moveoboost.com</code>, verify via DNS TXT record</li>
+      <li><strong>Domain verified in Google Search Console</strong> — <a href="https://search.google.com/search-console" target="_blank">search.google.com/search-console</a>, add <code>moveoboost.com</code>, verify via DNS TXT record</li>
     </ul>
 
     <h3>Steps in GCP Console</h3>
@@ -433,7 +411,7 @@
         <div class="step-num">1</div>
         <div class="step-body">
           <strong>Open the consent screen</strong>
-          Go to <code>boost-agents-496211</code> → APIs & Services → OAuth consent screen. Confirm it's set to <strong>External</strong>.
+          Go to <code>boost-agents-496211</code> → APIs &amp; Services → OAuth consent screen. Confirm it's set to <strong>External</strong>.
         </div>
       </div>
       <div class="step">
@@ -443,7 +421,7 @@
           <ul>
             <li>App name: <code>Boost Agents</code></li>
             <li>User support email: <code>boazt@moveoboost.com</code></li>
-            <li>App logo: upload 120×120px PNG</li>
+            <li>App logo: 120×120px PNG</li>
             <li>Homepage: <code>https://moveoboost.com</code></li>
             <li>Privacy policy: <code>https://moveoboost.com/privacy</code></li>
             <li>Authorized domain: <code>moveoboost.com</code></li>
@@ -453,22 +431,21 @@
       <div class="step">
         <div class="step-num">3</div>
         <div class="step-body">
-          <strong>Add scopes</strong>
-          Add exactly these (no more):
+          <strong>Add scopes</strong> — add exactly these, no more:
           <ul class="scope-list" style="margin-top: 8px;">
-            <li><span class="scope-name">…/auth/userinfo.email</span> Know who the user is</li>
+            <li><span class="scope-name">…/auth/userinfo.email</span> Know who the user is (login)</li>
             <li><span class="scope-name">…/auth/gmail.send</span> Send emails on the user's behalf</li>
-            <li><span class="scope-name">…/auth/gmail.readonly</span> Read emails to answer questions</li>
             <li><span class="scope-name">…/auth/calendar.readonly</span> Read calendar events</li>
             <li><span class="scope-name">…/auth/calendar.events</span> Create and update calendar events</li>
           </ul>
+          <p style="margin-top:8px; font-size:13px; color: var(--muted);">Note: <code>gmail.readonly</code> and <code>gmail.metadata</code> are restricted scopes requiring a costly security audit — they are intentionally excluded.</p>
         </div>
       </div>
       <div class="step">
         <div class="step-num">4</div>
         <div class="step-body">
           <strong>Submit for verification</strong>
-          Click <strong>Submit for verification</strong>. Google will ask you to justify each scope — use the text below.
+          Click <strong>Submit for verification</strong>. Google will ask you to justify each scope.
         </div>
       </div>
     </div>
@@ -481,63 +458,60 @@
       <tbody>
         <tr>
           <td>gmail.send</td>
-          <td>The agent sends emails on behalf of the user when instructed in the chat (e.g. "send a summary to my team"). The user explicitly requests each send action.</td>
-        </tr>
-        <tr>
-          <td>gmail.readonly</td>
-          <td>The agent reads emails to answer user questions and provide context (e.g. "summarize my unread emails from today"). No emails are stored or shared.</td>
+          <td>The agent sends emails on behalf of the user when explicitly instructed in the chat (e.g. "send a summary to my team"). The user triggers each send action.</td>
         </tr>
         <tr>
           <td>calendar.readonly</td>
-          <td>The agent reads calendar events to answer scheduling questions (e.g. "what do I have tomorrow?"). No data is stored or shared.</td>
+          <td>The agent reads calendar events to answer scheduling questions (e.g. "what do I have tomorrow?"). No data is stored or shared with third parties.</td>
         </tr>
         <tr>
           <td>calendar.events</td>
-          <td>The agent creates calendar events when the user explicitly requests it (e.g. "schedule a meeting with John next Tuesday at 3pm"). Events are only created on user instruction.</td>
+          <td>The agent creates calendar events when the user explicitly requests it (e.g. "schedule a meeting with John next Tuesday at 3pm"). Events are only created on direct user instruction.</td>
         </tr>
       </tbody>
     </table>
 
     <h3>Demo video</h3>
-    <p>Record a short screen capture (Loom works well) showing the full OAuth flow:</p>
+    <p>Record a short Loom showing the full OAuth flow:</p>
     <ol>
       <li>User clicks "Connect Gmail" in the agent sidebar</li>
       <li>Google consent screen appears with the scopes listed</li>
-      <li>User approves</li>
-      <li>User asks the agent to use Gmail (e.g. "search my inbox for unread emails")</li>
-      <li>Agent responds with the results</li>
+      <li>User approves and is redirected back to the agent</li>
+      <li>User asks the agent to send an email — agent does it</li>
     </ol>
 
     <div class="callout callout-info">
       <span class="callout-icon">ℹ</span>
-      <div>Google typically responds within 2–6 weeks. Test users continue to work during this time, so clients can still connect while you wait.</div>
+      <div>Google typically responds within 2–6 weeks. Test users continue to work during this time.</div>
     </div>
 
     <!-- ENV VARS -->
     <h2 id="env-vars">All environment variables</h2>
-    <p>Set as GitHub repo secrets — the deploy workflow passes them to Cloud Run automatically.</p>
+    <p>Set as GitHub repo secrets — passed to Cloud Run automatically by the deploy workflow.</p>
     <table>
       <thead>
-        <tr><th>Variable</th><th>Description</th></tr>
+        <tr><th>Variable</th><th>Required</th><th>Description</th></tr>
       </thead>
       <tbody>
-        <tr><td>GEMINI_API_KEY</td><td>Google AI Studio API key. Required for Gemini models.</td></tr>
-        <tr><td>API_KEY</td><td>Admin API key for programmatic access (x-api-key header).</td></tr>
-        <tr><td>ADMIN_EMAILS</td><td>Comma-separated emails with admin access to the config sidebar.</td></tr>
-        <tr><td>ANTHROPIC_API_KEY</td><td>Anthropic API key. Required for Claude models.</td></tr>
-        <tr><td>OPENAI_API_KEY</td><td>OpenAI API key. Required for GPT and o1 models.</td></tr>
-        <tr><td>GH_PAT</td><td>GitHub PAT used to commit config changes. Org secret — inherited automatically.</td></tr>
-        <tr><td>OAUTH_SERVICE_URL</td><td>URL of the central oauth-service. Org secret — inherited automatically.</td></tr>
-        <tr><td>OAUTH_SERVICE_KEY</td><td>Signing key shared with the oauth-service for JWT verification. Org secret.</td></tr>
-        <tr><td>AUTOMATION_SECRET</td><td>Secret header used to secure automation webhook calls from Cloud Scheduler. Org secret.</td></tr>
+        <tr><td>GEMINI_API_KEY</td><td><span class="badge badge-required">Required</span></td><td>Google AI Studio API key. Required for Gemini models.</td></tr>
+        <tr><td>API_KEY</td><td><span class="badge badge-required">Required</span></td><td>Admin API key for programmatic access (<code>x-api-key</code> header).</td></tr>
+        <tr><td>ADMIN_EMAILS</td><td><span class="badge badge-required">Required</span></td><td>Comma-separated emails with admin sidebar access.</td></tr>
+        <tr><td>COOKIE_SECRET</td><td><span class="badge badge-required">Required</span></td><td>Long random string used to sign session JWTs securely.</td></tr>
+        <tr><td>ANTHROPIC_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>Anthropic API key. Required for Claude models.</td></tr>
+        <tr><td>OPENAI_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>OpenAI API key. Required for GPT and o1 models.</td></tr>
+        <tr><td>GH_PAT</td><td><span class="badge badge-auto">Org secret</span></td><td>GitHub PAT used to commit config changes via "Publish Changes".</td></tr>
+        <tr><td>OAUTH_SERVICE_URL</td><td><span class="badge badge-auto">Org secret</span></td><td>URL of the central oauth-service.</td></tr>
+        <tr><td>OAUTH_SERVICE_KEY</td><td><span class="badge badge-auto">Org secret</span></td><td>Signing key shared with the oauth-service for JWT verification.</td></tr>
+        <tr><td>AUTOMATION_SECRET</td><td><span class="badge badge-auto">Org secret</span></td><td>Secures automation webhook calls from Cloud Scheduler.</td></tr>
       </tbody>
     </table>
 
     <!-- MODELS -->
     <h2 id="models">Available models</h2>
+    <p>Each user can pick their own model in the sidebar. The global default is set by the admin via Publish Changes.</p>
     <table>
       <thead>
-        <tr><th>Model</th><th>Provider</th><th>Required secret</th><th>Notes</th></tr>
+        <tr><th>Model ID</th><th>Provider</th><th>Required secret</th><th>Notes</th></tr>
       </thead>
       <tbody>
         <tr><td>gemini-2.5-flash</td><td>Gemini</td><td>GEMINI_API_KEY</td><td>Default. Fast and capable.</td></tr>
@@ -555,6 +529,7 @@
 
     <!-- TOOLS -->
     <h2 id="tools">Available tools</h2>
+    <p>Admins enable/disable tools globally. Google tools activate automatically when a user connects their account.</p>
     <table>
       <thead>
         <tr><th>Tool</th><th>What it does</th><th>Requires</th></tr>
@@ -562,35 +537,31 @@
       <tbody>
         <tr><td>Web Fetch</td><td>GET any URL and read its content</td><td>Nothing</td></tr>
         <tr><td>HTTP Request</td><td>POST/PUT/PATCH to REST APIs with a JSON body</td><td>Nothing</td></tr>
-        <tr><td>Google Search</td><td>Search the web (Gemini built-in, search mode only)</td><td>GEMINI_API_KEY</td></tr>
-        <tr><td>Gmail</td><td>Send emails, search inbox, read messages</td><td>User connects their Gmail account</td></tr>
+        <tr><td>Google Search</td><td>Search the web via Gemini built-in</td><td>GEMINI_API_KEY</td></tr>
+        <tr><td>Gmail</td><td>Send emails on the user's behalf</td><td>User connects their Gmail account</td></tr>
         <tr><td>Google Calendar</td><td>List events, create events, check availability</td><td>User connects their Calendar account</td></tr>
       </tbody>
     </table>
 
     <!-- API -->
     <h2 id="api">API access</h2>
-    <p>The agent exposes a REST API for programmatic use. Authenticate with the <code>x-api-key</code> header.</p>
+    <p>The agent exposes a REST API. Authenticate with the <code>x-api-key</code> header (value = <code>API_KEY</code> secret).</p>
 
     <h3>Send a message</h3>
     <pre><code>curl -X POST https://your-agent-url/api/chat \
   -H "Content-Type: application/json" \
   -H "x-api-key: YOUR_API_KEY" \
-  -d '{
-    "message": "Summarize the latest emails in my inbox",
-    "history": [],
-    "gmailToken": "GMAIL_JWT_TOKEN"
-  }'</code></pre>
+  -d '{"message": "Send a welcome email to john@acme.com", "history": [], "gmailToken": "GMAIL_JWT"}'</code></pre>
 
-    <h3>Get a Gmail token for a connected user</h3>
+    <h3>Get a Gmail/Calendar token for a connected user</h3>
     <pre><code>curl "https://your-agent-url/api/google-token?email=user@example.com&service=gmail" \
   -H "x-api-key: YOUR_API_KEY"</code></pre>
 
     <h3>Response format</h3>
     <pre><code>{
-  "reply": "Here are your latest emails…",
+  "reply": "Email sent to john@acme.com.",
   "toolUses": [
-    { "name": "gmail_search", "input": "…", "output": "…" }
+    { "name": "gmail_send", "input": "...", "output": "..." }
   ]
 }</code></pre>
 
