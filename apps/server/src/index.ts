@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import path from "path";
 import { chat } from "./agent";
-import { slackSendMessage } from "./slack";
+import { slackSendMessage, slackGetUserEmail } from "./slack";
 import { agentConfig } from "./config";
 import { commitConfig } from "./configure";
 import type { AgentConfig } from "./config";
@@ -152,7 +152,7 @@ app.post("/slack/events", async (req, res) => {
   const payload = req.body as {
     type: string;
     challenge?: string;
-    event?: { type: string; text: string; channel: string; ts: string; thread_ts?: string; bot_id?: string };
+    event?: { type: string; text: string; channel: string; ts: string; thread_ts?: string; bot_id?: string; user?: string };
   };
 
   // Slack URL verification handshake
@@ -173,8 +173,11 @@ app.post("/slack/events", async (req, res) => {
   const text = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
   const threadTs = event.thread_ts ?? event.ts;
 
+  // Resolve the Slack user's email to load their Gmail/Calendar connections
+  const userEmail = event.user ? await slackGetUserEmail(slackToken, event.user).catch(() => undefined) : undefined;
+
   try {
-    const result = await chat(text, [], "tools");
+    const result = await chat(text, [], "tools", undefined, userEmail, userEmail);
     await slackSendMessage(slackToken, event.channel, result.reply, threadTs);
   } catch (err) {
     await slackSendMessage(slackToken, event.channel, `Sorry, something went wrong: ${(err as Error).message}`, threadTs).catch(() => {});

@@ -20,6 +20,15 @@ export async function slackSendMessage(token: string, channel: string, text: str
   return `Message sent to ${channel}.`;
 }
 
+export async function slackGetUserEmail(token: string, slackUserId: string): Promise<string | undefined> {
+  try {
+    const data = await slackCall(`users.info?user=${slackUserId}`, token) as {
+      user?: { profile?: { email?: string } };
+    };
+    return data.user?.profile?.email;
+  } catch { return undefined; }
+}
+
 export async function slackListChannels(token: string): Promise<string> {
   const data = await slackCall(`conversations.list?limit=200&exclude_archived=true`, token) as {
     ok: boolean;
