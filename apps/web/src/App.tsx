@@ -10,6 +10,7 @@ export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken());
   const [isAdmin, setIsAdmin] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [mobileTab, setMobileTab] = useState<"chat" | "settings">("chat");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(() => {
@@ -107,7 +108,7 @@ export default function App() {
 
   return (
     <div className="app app-admin">
-      <div className="chat-area">
+      <div className={`chat-area${mobileTab !== "chat" ? " mobile-hidden" : ""}`}>
         <header className="header">
           <div className="header-title">
             <span className="header-icon">✦</span>
@@ -130,7 +131,17 @@ export default function App() {
         calendarToken={calendarToken}
         onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); sessionStorage.removeItem("gmail_token"); setGmailUser(null); setGmailToken(null); }}
         onCalendarDisconnect={() => { sessionStorage.removeItem("calendar_user"); sessionStorage.removeItem("calendar_token"); setCalendarUser(null); setCalendarToken(null); }}
+        className={mobileTab !== "settings" ? "mobile-hidden" : ""}
       />
+
+      <nav className="mobile-tab-bar">
+        <button className={`mobile-tab-btn${mobileTab === "chat" ? " active" : ""}`} onClick={() => setMobileTab("chat")}>
+          Chat
+        </button>
+        <button className={`mobile-tab-btn${mobileTab === "settings" ? " active" : ""}`} onClick={() => setMobileTab("settings")}>
+          Settings
+        </button>
+      </nav>
     </div>
   );
 }

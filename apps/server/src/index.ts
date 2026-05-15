@@ -16,6 +16,7 @@ const app = express();
 const COOKIE_SECRET = process.env.COOKIE_SECRET ?? "dev-secret";
 const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD;
 const API_KEY = process.env.API_KEY;
+const ADMIN_EMAILS = new Set((process.env.ADMIN_EMAILS ?? "").split(",").map(e => e.trim()).filter(Boolean));
 const COOKIE_NAME = "session";
 const IS_PROD = process.env.NODE_ENV === "production";
 
@@ -136,9 +137,10 @@ app.post("/api/auth/identity/complete", (req, res) => {
   try {
     const payload = jwt.verify(identityToken, oauthKey) as { email: string; type: string };
     if (payload.type !== "identity") throw new Error("Invalid token type");
-    const token = jwt.sign({ ok: true, admin: false, email: payload.email }, COOKIE_SECRET, { expiresIn: "7d" });
+    const isAdmin = ADMIN_EMAILS.size === 0 || ADMIN_EMAILS.has(payload.email);
+    const token = jwt.sign({ ok: true, admin: isAdmin, email: payload.email }, COOKIE_SECRET, { expiresIn: "7d" });
     res.cookie(COOKIE_NAME, token, { httpOnly: true, secure: IS_PROD, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true, token, isAdmin: false, email: payload.email });
+    res.json({ ok: true, token, isAdmin, email: payload.email });
   } catch {
     res.status(401).json({ error: "Invalid or expired identity token" });
   }

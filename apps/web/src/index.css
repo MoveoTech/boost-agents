@@ -76,6 +76,87 @@ body {
   border-left: 1px solid var(--border);
 }
 
+/* ── Mobile tab bar ─────────────────────────────────── */
+
+.mobile-tab-bar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  body {
+    height: 100dvh;
+  }
+
+  .app,
+  .app.app-admin {
+    flex-direction: column;
+    max-width: none;
+  }
+
+  .chat-area {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Hide whichever panel isn't active */
+  .app .chat-area.mobile-hidden { display: none; }
+  .app .agent-sidebar.mobile-hidden { display: none; }
+
+  .agent-sidebar {
+    width: 100%;
+    flex: 1;
+    border-left: none;
+    overflow-y: auto;
+  }
+
+  .mobile-tab-bar {
+    display: flex;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .mobile-tab-btn {
+    flex: 1;
+    padding: 12px;
+    background: none;
+    border: none;
+    border-top: 2px solid transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .mobile-tab-btn.active {
+    color: var(--primary);
+    border-top-color: var(--primary);
+  }
+
+  /* Header tweaks */
+  .header {
+    padding: 12px 14px;
+  }
+
+  .header h1 {
+    font-size: 16px;
+  }
+
+  /* Input bar full width */
+  .input-bar {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+
+  /* Login box */
+  .login-box {
+    margin: 16px;
+    padding: 28px 20px;
+  }
+}
+
 .sidebar-loading {
   padding: 24px;
   font-size: 14px;

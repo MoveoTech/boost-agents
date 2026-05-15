@@ -74,9 +74,10 @@ interface Props {
   calendarToken: string | null;
   onGmailDisconnect: () => void;
   onCalendarDisconnect: () => void;
+  className?: string;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect, className }: Props) {
   const [config, setConfig] = useState<AgentConfig | null>(agentConfig);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [apiKey, setApiKey] = useState("");
@@ -170,7 +171,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   -d '{"message": "Hello!", "history": []}'`;
 
   return (
-    <aside className="agent-sidebar">
+    <aside className={`agent-sidebar${className ? ` ${className}` : ""}`}>
       {/* Identity — editable for admins, display-only for users */}
       <div className="sidebar-identity">
         <div className="sidebar-avatar-wrap">

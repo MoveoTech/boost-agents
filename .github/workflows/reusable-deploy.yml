@@ -23,6 +23,8 @@ on:
         required: false
       OPENAI_API_KEY:
         required: false
+      ADMIN_EMAILS:
+        required: false
 
 jobs:
   provision-and-deploy:
@@ -127,6 +129,7 @@ jobs:
             AUTOMATION_SECRET=${{ secrets.AUTOMATION_SECRET }}
             ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       # 5. BUILD & DEPLOY WEB
