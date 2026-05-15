@@ -18,7 +18,7 @@ const app = express();
 const COOKIE_SECRET = process.env.COOKIE_SECRET ?? "dev-secret";
 const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD;
 const API_KEY = process.env.API_KEY;
-const ADMIN_EMAILS = new Set((process.env.ADMIN_EMAILS ?? "").split(",").map(e => e.trim()).filter(Boolean));
+const ADMIN_EMAILS = new Set((process.env.ADMIN_EMAILS ?? "").split(/[,;]/).map(e => e.trim()).filter(Boolean));
 const COOKIE_NAME = "session";
 const IS_PROD = process.env.NODE_ENV === "production";
 
