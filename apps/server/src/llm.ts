@@ -155,7 +155,7 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
     const choice = response.choices[0];
     if (choice.finish_reason === "tool_calls" && choice.message.tool_calls) {
       msgs.push(choice.message);
-      for (const call of choice.message.tool_calls) {
+      for (const call of choice.message.tool_calls as OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[]) {
         const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
         const output = await execute(call.function.name, args);
         toolUses.push({ name: call.function.name, input: call.function.arguments, output: output.slice(0, 500) });
