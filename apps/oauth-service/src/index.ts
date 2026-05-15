@@ -17,7 +17,6 @@ const db = new Firestore({ projectId: GCP_PROJECT_ID });
 const SERVICE_SCOPES: Record<string, string> = {
   gmail: [
     "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.metadata",
     "https://www.googleapis.com/auth/userinfo.email",
   ].join(" "),
   calendar: [

@@ -1,7 +1,7 @@
 import type { Content } from "@google/generative-ai";
 import { chatWithModel, type ModelConfig, type ToolDecl } from "./llm";
 import { fetchUrl, httpRequest } from "./tools";
-import { gmailSend, gmailSearch } from "./gmail";
+import { gmailSend } from "./gmail";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
@@ -33,16 +33,6 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
         body:    { type: "string", description: "Email body (plain text)" },
       },
       required: ["to", "subject", "body"],
-    },
-  },
-  gmail_search: {
-    name: "gmail_search", description: "Search the user's Gmail. Returns sender, subject, date and a short snippet. Supports Gmail operators (from:, subject:, after:, etc.).",
-    parameters: {
-      properties: {
-        query:      { type: "string", description: "Gmail search query" },
-        maxResults: { type: "number", description: "Max results (default 10)" },
-      },
-      required: ["query"],
     },
   },
   calendar_list_events: {
@@ -94,7 +84,7 @@ function buildTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
-  if (gmailUser    && agentConfig.tools.gmail)         tools.push(ALL_TOOLS.gmail_send, ALL_TOOLS.gmail_search);
+  if (gmailUser    && agentConfig.tools.gmail)         tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser && agentConfig.tools.googleCalendar) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   return tools;
 }
@@ -109,13 +99,11 @@ async function execute(name: string, args: Record<string, unknown>, gmailUser?: 
     case "http_request":
       return httpRequest(args.url as string, args.method as string, args.body);
 
-    case "gmail_send":
-    case "gmail_search": {
+    case "gmail_send": {
       if (!gmailUser) return "User has not connected Gmail. Ask them to connect first.";
       const token = await getUserAccessToken("gmail", gmailUser);
       if (!token) return "Could not retrieve Gmail access token. The user may need to reconnect.";
-      if (name === "gmail_send") return gmailSend(token, args.to as string, args.subject as string, args.body as string);
-      return gmailSearch(token, args.query as string, args.maxResults as number | undefined);
+      return gmailSend(token, args.to as string, args.subject as string, args.body as string);
     }
 
     case "calendar_list_events":
