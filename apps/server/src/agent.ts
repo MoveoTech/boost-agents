@@ -94,15 +94,12 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   return `${base}${skillsBlock}${additionBlock}`;
 }
 
-function buildTools(gmailUser?: string, calendarUser?: string, toolPreferences?: Record<string, boolean>): ToolDecl[] {
-  const prefs = toolPreferences ?? {};
-  const enabled = (key: keyof typeof agentConfig.tools) =>
-    key in prefs ? prefs[key] : agentConfig.tools[key];
+function buildTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
-  if (enabled("fetchUrl"))    tools.push(ALL_TOOLS.fetch_url);
-  if (enabled("httpRequest")) tools.push(ALL_TOOLS.http_request);
-  if (gmailUser    && enabled("gmail"))         tools.push(ALL_TOOLS.gmail_send, ALL_TOOLS.gmail_search, ALL_TOOLS.gmail_read);
-  if (calendarUser && enabled("googleCalendar")) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
+  if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
+  if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
+  if (gmailUser    && agentConfig.tools.gmail)         tools.push(ALL_TOOLS.gmail_send, ALL_TOOLS.gmail_search, ALL_TOOLS.gmail_read);
+  if (calendarUser && agentConfig.tools.googleCalendar) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   return tools;
 }
 
@@ -166,11 +163,9 @@ export async function chat(
   gmailUser?: string,
   calendarUser?: string,
   modelOverride?: ModelConfig,
-  toolPreferences?: Record<string, boolean>,
-  systemPromptAddition?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
-  const builtPrompt = buildSystemPrompt(systemPrompt, systemPromptAddition);
+  const builtPrompt = buildSystemPrompt(systemPrompt);
 
   // Search mode: use Gemini built-in Google Search (no function tools)
   if (mode === "search" && agentConfig.tools.googleSearch) {
@@ -187,7 +182,7 @@ export async function chat(
     return { reply: result.response.text(), toolUses: [] };
   }
 
-  const tools = buildTools(gmailUser, calendarUser, toolPreferences);
+  const tools = buildTools(gmailUser, calendarUser);
   return chatWithModel(
     model,
     builtPrompt,

@@ -143,8 +143,6 @@ export async function sendMessage(
   gmailToken?: string,
   calendarToken?: string,
   model?: { provider: string; modelId: string },
-  toolPreferences?: Record<string, boolean>,
-  systemPromptAddition?: string,
 ): Promise<ChatResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
@@ -153,7 +151,7 @@ export async function sendMessage(
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, history, mode, systemPrompt, gmailToken, calendarToken, model, toolPreferences, systemPromptAddition }),
+    body: JSON.stringify({ message, history, mode, systemPrompt, gmailToken, calendarToken, model }),
   });
 
   if (!res.ok) {

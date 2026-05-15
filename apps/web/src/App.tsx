@@ -99,7 +99,8 @@ export default function App() {
 
     try {
       const model = userSettings.model ?? agentConfig?.model;
-      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailToken ?? undefined, calendarToken ?? undefined, model, userSettings.tools as Record<string, boolean> | undefined, userSettings.systemPromptAddition);
+      const systemPrompt = userSettings.systemPrompt ?? agentConfig?.systemPrompt;
+      const result = await sendMessage(text, history, "tools", systemPrompt, gmailToken ?? undefined, calendarToken ?? undefined, model);
       setMessages((prev) =>
         prev.map((m) => m.pending ? { ...m, text: result.reply, toolUses: result.toolUses, pending: false } : m)
       );
@@ -116,6 +117,10 @@ export default function App() {
 
   const title = agentConfig?.ui?.title ?? agentConfig?.name ?? "Boost Agent";
   const placeholder = agentConfig?.ui?.placeholder;
+  const effectiveModel = userSettings.model ?? agentConfig?.model;
+  const modelLabel = effectiveModel?.modelId
+    ? (effectiveModel.modelId.replace("gemini-", "Gemini ").replace("claude-", "Claude ").replace("gpt-", "GPT-").replace("-20251001", ""))
+    : "Gemini 2.5 Flash";
 
   return (
     <div className="app app-admin">
@@ -125,7 +130,7 @@ export default function App() {
             <span className="header-icon">✦</span>
             <h1>{title}</h1>
           </div>
-          <span className="model-badge">Gemini 2.5 Flash</span>
+          <span className="model-badge">{modelLabel}</span>
         </header>
         <ChatWindow messages={messages} />
         <InputBar onSend={handleSend} disabled={loading} placeholder={placeholder} />

@@ -42,8 +42,7 @@ export interface Automation {
 
 export interface UserSettings {
   model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
-  tools?: Partial<AgentConfig["tools"]>;
-  systemPromptAddition?: string;
+  systemPrompt?: string;
 }
 
 export interface AgentConfig {

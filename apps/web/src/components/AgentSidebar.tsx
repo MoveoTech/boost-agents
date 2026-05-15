@@ -80,7 +80,13 @@ interface Props {
 }
 
 export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect, className }: Props) {
-  const [config, setConfig] = useState<AgentConfig | null>(agentConfig);
+  const merged = agentConfig ? {
+    ...agentConfig,
+    ...(userSettings.model ? { model: userSettings.model } : {}),
+    ...(userSettings.systemPrompt !== undefined ? { systemPrompt: userSettings.systemPrompt } : {}),
+  } : agentConfig;
+
+  const [config, setConfig] = useState<AgentConfig | null>(merged);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [avatarUrl, setAvatarUrl] = useState(() => localStorage.getItem(AVATAR_KEY) ?? "");
@@ -94,18 +100,34 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   const [providers, setProviders] = useState({ gemini: true, claude: false, openai: false });
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setConfig(agentConfig); }, [agentConfig]);
+  useEffect(() => {
+    if (!agentConfig) return;
+    setConfig({
+      ...agentConfig,
+      ...(userSettings.model ? { model: userSettings.model } : {}),
+      ...(userSettings.systemPrompt !== undefined ? { systemPrompt: userSettings.systemPrompt } : {}),
+    });
+  }, [agentConfig]);
   useEffect(() => { listAutomations().then(setAutomations).catch(() => {}); }, []);
   useEffect(() => { getApiKey().then(setApiKey).catch(() => {}); }, []);
   useEffect(() => { getProviders().then(setProviders).catch(() => {}); }, []);
 
   if (!config) return <div className="sidebar-loading">Loading…</div>;
 
+  // Global config update (admin only — tool toggles, name, skills, etc.)
   const update = (patch: Partial<AgentConfig>) => {
     const next = { ...config, ...patch };
     setConfig(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     onSave(next);
+  };
+
+  // Personal update — saves to userSettings (localStorage per user), not global config
+  const updatePersonal = (patch: { model?: AgentConfig["model"]; systemPrompt?: string }) => {
+    const next = { ...config, ...patch };
+    setConfig(next);
+    const newSettings = { ...userSettings, ...patch };
+    onUserSettingsChange(newSettings);
   };
 
   const updateTool = (key: keyof AgentConfig["tools"], val: boolean) =>
@@ -285,90 +307,53 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
         </SidebarSection>
       )}
 
-      {/* Model — admin only */}
-      {isAdmin && (
-        <SidebarSection title="Model">
-          <select
-            className="configure-input"
-            value={`${config.model?.provider ?? "gemini"}:${config.model?.modelId ?? "gemini-2.5-flash"}`}
-            onChange={(e) => {
-              const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
-              update({ model: { provider, modelId: rest.join(":") } });
-            }}
-          >
-            {(["gemini", "claude", "openai"] as const).map((p) => (
-              <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude (Anthropic)" : "OpenAI"}>
-                {MODELS.filter((m) => m.provider === p).map((m) => (
-                  <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
-                    {m.label}{!providers[p] ? " — API key not set" : ""}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </SidebarSection>
-      )}
-
-      {/* Instructions — admin only */}
-      {isAdmin && (
-        <SidebarSection title="Instructions">
-          <textarea
-            className="configure-textarea sidebar-instructions"
-            rows={6}
-            placeholder="Define your agent's operating framework. Who is it? What can it do?"
-            value={config.systemPrompt}
-            onChange={(e) => update({ systemPrompt: e.target.value })}
-          />
-        </SidebarSection>
-      )}
-
-      {/* My Preferences — personal overrides, visible to everyone */}
-      <SidebarSection title="My Preferences">
-        <div className="sidebar-pref-label">Model</div>
+      {/* Model — visible to everyone, saves to personal settings */}
+      <SidebarSection title="Model">
         <select
           className="configure-input"
-          value={userSettings.model ? `${userSettings.model.provider}:${userSettings.model.modelId}` : ""}
+          value={`${config.model?.provider ?? "gemini"}:${config.model?.modelId ?? "gemini-2.5-flash"}`}
           onChange={(e) => {
-            const val = e.target.value;
-            if (!val) { onUserSettingsChange({ ...userSettings, model: undefined }); return; }
-            const [provider, ...rest] = val.split(":") as [AgentConfig["model"]["provider"], ...string[]];
-            onUserSettingsChange({ ...userSettings, model: { provider, modelId: rest.join(":") } });
+            const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
+            updatePersonal({ model: { provider, modelId: rest.join(":") } });
           }}
         >
-          <option value="">Default ({agentConfig?.model?.modelId ?? "gemini-2.5-flash"})</option>
           {(["gemini", "claude", "openai"] as const).map((p) => (
-            <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude" : "OpenAI"}>
+            <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude (Anthropic)" : "OpenAI"}>
               {MODELS.filter((m) => m.provider === p).map((m) => (
                 <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
-                  {m.label}{!providers[p] ? " — key not set" : ""}
+                  {m.label}{!providers[p] ? " — API key not set" : ""}
                 </option>
               ))}
             </optgroup>
           ))}
         </select>
-
-        <div className="sidebar-pref-label" style={{ marginTop: 10 }}>Personal instructions</div>
-        <textarea
-          className="configure-textarea"
-          rows={3}
-          placeholder="Add instructions that apply only to you…"
-          value={userSettings.systemPromptAddition ?? ""}
-          onChange={(e) => onUserSettingsChange({ ...userSettings, systemPromptAddition: e.target.value })}
-        />
-
-        {userSettings.model || userSettings.systemPromptAddition ? (
-          <button
-            className="automation-cancel-btn"
-            style={{ marginTop: 6, fontSize: 12 }}
-            onClick={() => onUserSettingsChange({ ...userSettings, model: undefined, systemPromptAddition: "" })}
-          >
-            Reset to defaults
+        {userSettings.model && (
+          <button className="automation-cancel-btn" style={{ marginTop: 6, fontSize: 12 }}
+            onClick={() => updatePersonal({ model: undefined })}>
+            Reset to default
           </button>
-        ) : null}
+        )}
       </SidebarSection>
 
-      {/* Tools — toggle admin-only, but Google connect/disconnect for everyone */}
-      <SidebarSection title="Connections">
+      {/* Instructions — visible to everyone, saves to personal settings */}
+      <SidebarSection title="Instructions">
+        <textarea
+          className="configure-textarea sidebar-instructions"
+          rows={6}
+          placeholder="Define your agent's behavior…"
+          value={config.systemPrompt}
+          onChange={(e) => updatePersonal({ systemPrompt: e.target.value })}
+        />
+        {userSettings.systemPrompt !== undefined && !isAdmin && (
+          <button className="automation-cancel-btn" style={{ marginTop: 6, fontSize: 12 }}
+            onClick={() => updatePersonal({ systemPrompt: undefined })}>
+            Reset to default
+          </button>
+        )}
+      </SidebarSection>
+
+      {/* Tools — toggle admin-only, Google connect/disconnect for everyone */}
+      <SidebarSection title={isAdmin ? "Tools" : "Connections"}>
         {TOOL_DEFS.map(({ key, label, icon, desc, service }) => {
           const connected = service === "gmail" ? gmailUser : service === "calendar" ? calendarUser : null;
           const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : null;
