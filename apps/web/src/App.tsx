@@ -3,7 +3,7 @@ import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
 import AgentSidebar from "./components/AgentSidebar";
-import { sendMessage, getToken, getConfig, whoami, fetchGoogleToken, identityComplete } from "./api/client";
+import { sendMessage, getConfig, whoami, fetchGoogleToken, identityComplete } from "./api/client";
 import type { DisplayMessage, HistoryItem, AgentConfig, UserSettings } from "./types";
 
 function loadUserSettings(email: string): UserSettings {
@@ -14,7 +14,7 @@ function saveUserSettings(email: string, s: UserSettings) {
 }
 
 export default function App() {
-  const [authed, setAuthed] = useState(() => !!getToken());
+  const [authed, setAuthed] = useState<boolean | null>(null); // null = checking cookie
   const [isAdmin, setIsAdmin] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings>({});
@@ -39,53 +39,55 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  // Handle Google identity callback (?identity_token=xxx)
+  // On mount: handle any OAuth callbacks then check session cookie
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+
+    // Google identity login callback
     const identityToken = params.get("identity_token");
     if (identityToken) {
       window.history.replaceState({}, "", window.location.pathname);
-      identityComplete(identityToken).then(({ isAdmin: a, email }) => {
-        setIsAdmin(a);
-        setUserEmail(email);
-        setUserSettings(loadUserSettings(email));
-        setAuthed(true);
-        autoFetchTokens(email);
-      }).catch(() => {});
+      identityComplete(identityToken)
+        .then(() => checkSession())
+        .catch(() => setAuthed(false));
+      return;
     }
-  }, [autoFetchTokens]);
 
-  // Handle Google service callback (?google_connected=true)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const email = params.get("google_email");
-    const service = params.get("google_service");
-    if (params.get("google_connected") === "true" && email && service) {
-      if (service === "gmail") {
-        localStorage.setItem("gmail_user", email);
-        setGmailUser(email);
-        fetchGoogleToken(email, "gmail").then((t) => { if (t) { localStorage.setItem("gmail_token", t); setGmailToken(t); } });
-      } else if (service === "calendar") {
-        localStorage.setItem("calendar_user", email);
-        setCalendarUser(email);
-        fetchGoogleToken(email, "calendar").then((t) => { if (t) { localStorage.setItem("calendar_token", t); setCalendarToken(t); } });
-      }
+    // Google service (Gmail/Calendar) connect callback
+    const googleEmail = params.get("google_email");
+    const googleService = params.get("google_service");
+    if (params.get("google_connected") === "true" && googleEmail && googleService) {
       window.history.replaceState({}, "", window.location.pathname);
+      if (googleService === "gmail") {
+        localStorage.setItem("gmail_user", googleEmail);
+        setGmailUser(googleEmail);
+        fetchGoogleToken(googleEmail, "gmail").then((t) => { if (t) { localStorage.setItem("gmail_token", t); setGmailToken(t); } });
+      } else if (googleService === "calendar") {
+        localStorage.setItem("calendar_user", googleEmail);
+        setCalendarUser(googleEmail);
+        fetchGoogleToken(googleEmail, "calendar").then((t) => { if (t) { localStorage.setItem("calendar_token", t); setCalendarToken(t); } });
+      }
     }
+
+    checkSession();
   }, []);
 
-  useEffect(() => {
-    if (!authed) return;
-    getConfig().then((c) => setAgentConfig(c)).catch(() => {});
-    whoami().then(({ isAdmin: a, email }) => {
-      setIsAdmin(a);
-      if (email) {
-        setUserEmail(email);
-        setUserSettings(loadUserSettings(email));
-        if (!gmailUser && !calendarUser) autoFetchTokens(email);
+  const checkSession = useCallback(() => {
+    whoami().then(({ isAdmin: a, email, authenticated }) => {
+      setAuthed(authenticated);
+      if (authenticated) {
+        setIsAdmin(a);
+        if (email) {
+          setUserEmail(email);
+          setUserSettings(loadUserSettings(email));
+          if (!localStorage.getItem("gmail_user") && !localStorage.getItem("calendar_user")) {
+            autoFetchTokens(email);
+          }
+        }
+        getConfig().then(setAgentConfig).catch(() => {});
       }
-    }).catch(() => {});
-  }, [authed]);
+    }).catch(() => setAuthed(false));
+  }, [autoFetchTokens]);
 
   const handleSend = useCallback(async (text: string) => {
     const userMsg: DisplayMessage = { id: crypto.randomUUID(), role: "user", text };
@@ -113,7 +115,8 @@ export default function App() {
     }
   }, [messages, agentConfig, gmailToken, calendarToken]);
 
-  if (!authed) return <LoginPage onLogin={(adminFlag, email) => { setIsAdmin(adminFlag); if (email) setUserEmail(email); setAuthed(true); }} />;
+  if (authed === null) return null; // checking cookie — render nothing briefly
+  if (!authed) return <LoginPage />;
 
   const title = agentConfig?.ui?.title ?? agentConfig?.name ?? "Boost Agent";
   const placeholder = agentConfig?.ui?.placeholder;

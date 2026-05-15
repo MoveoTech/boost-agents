@@ -1,36 +1,13 @@
 import type { ChatResponse, HistoryItem, AgentConfig, Automation } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
-const TOKEN_KEY = "auth_token";
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
+// All requests rely on the HttpOnly session cookie set by the server.
+// No tokens are stored client-side — the browser sends the cookie automatically.
 
-export function saveToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
-
-export async function whoami(): Promise<{ isAdmin: boolean; email: string | null }> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/api/whoami`, { headers });
-  return res.ok ? res.json() : { isAdmin: false, email: null };
-}
-
-export async function getApiKey(): Promise<string> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/api/admin/key`, { headers });
-  if (!res.ok) return "";
-  const { apiKey } = await res.json();
-  return apiKey;
+export async function whoami(): Promise<{ isAdmin: boolean; email: string | null; authenticated: boolean }> {
+  const res = await fetch(`${BASE}/api/whoami`);
+  return res.ok ? res.json() : { isAdmin: false, email: null, authenticated: false };
 }
 
 export async function identityComplete(identityToken: string): Promise<{ isAdmin: boolean; email: string }> {
@@ -40,92 +17,61 @@ export async function identityComplete(identityToken: string): Promise<{ isAdmin
     body: JSON.stringify({ identityToken }),
   });
   if (!res.ok) throw new Error("Identity verification failed");
-  const { token, isAdmin, email } = await res.json();
-  if (token) saveToken(token);
+  const { isAdmin, email } = await res.json();
+  // Server sets HttpOnly cookie in the response — no client-side storage needed
   return { isAdmin: !!isAdmin, email };
 }
 
-export async function login(password: string): Promise<{ isAdmin: boolean }> {
-  const res = await fetch(`${BASE}/api/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
-  });
-
-  if (!res.ok) throw new Error("Invalid password");
-
-  const { token, isAdmin } = await res.json();
-  if (token) saveToken(token);
-  return { isAdmin: !!isAdmin };
+export async function getApiKey(): Promise<string> {
+  const res = await fetch(`${BASE}/api/admin/key`);
+  if (!res.ok) return "";
+  const { apiKey } = await res.json();
+  return apiKey;
 }
 
 export async function listAutomations(): Promise<Automation[]> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/api/automations`, { headers });
+  const res = await fetch(`${BASE}/api/automations`);
   return res.ok ? res.json() : [];
 }
 
 export async function saveAutomation(automation: Automation): Promise<void> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   await fetch(`${BASE}/api/automations`, {
     method: "POST",
-    headers,
-    body: JSON.stringify({ automation, agentUrl: BASE }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ automation, agentUrl: BASE || window.location.origin }),
   });
 }
 
 export async function getProviders(): Promise<{ gemini: boolean; claude: boolean; openai: boolean }> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/api/providers`, { headers });
+  const res = await fetch(`${BASE}/api/providers`);
   return res.ok ? res.json() : { gemini: true, claude: false, openai: false };
 }
 
 export async function fetchGoogleToken(email: string, service: "gmail" | "calendar"): Promise<string | null> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/api/google-token?email=${encodeURIComponent(email)}&service=${service}`, { headers });
+  const res = await fetch(`${BASE}/api/google-token?email=${encodeURIComponent(email)}&service=${service}`);
   if (!res.ok) return null;
-  const { token: googleToken } = await res.json();
-  return googleToken;
+  const { token } = await res.json();
+  return token;
 }
 
 export async function triggerAutomation(id: string): Promise<void> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  await fetch(`${BASE}/api/automations/${id}/run`, { method: "POST", headers });
+  await fetch(`${BASE}/api/automations/${id}/run`, { method: "POST" });
 }
 
 export async function removeAutomation(id: string): Promise<void> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  await fetch(`${BASE}/api/automations/${id}`, { method: "DELETE", headers });
+  await fetch(`${BASE}/api/automations/${id}`, { method: "DELETE" });
 }
 
 export async function getConfig(): Promise<AgentConfig> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/api/config`, { headers });
+  const res = await fetch(`${BASE}/api/config`);
   if (!res.ok) throw new Error("Failed to load config");
   return res.json();
 }
 
 export async function saveConfig(config: AgentConfig): Promise<{ commitUrl: string }> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`${BASE}/api/configure`, {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
   });
   if (!res.ok) {
@@ -144,20 +90,14 @@ export async function sendMessage(
   calendarToken?: string,
   model?: { provider: string; modelId: string },
 ): Promise<ChatResponse> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, history, mode, systemPrompt, gmailToken, calendarToken, model }),
   });
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "Request failed" }));
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
-
   return res.json();
 }

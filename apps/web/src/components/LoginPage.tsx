@@ -1,10 +1,6 @@
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
 
-interface Props {
-  onLogin: (isAdmin: boolean, email?: string) => void;
-}
-
-export default function LoginPage({ onLogin: _onLogin }: Props) {
+export default function LoginPage() {
   const googleLoginUrl = `${BASE}/api/auth/identity/start?returnUrl=${encodeURIComponent(window.location.origin)}`;
 
   return (

@@ -34,7 +34,7 @@ app.get("/health", (_req, res) => {
 
 app.get("/api/whoami", (req, res) => {
   if (!ACCESS_PASSWORD && !API_KEY) {
-    res.json({ isAdmin: true, email: null });
+    res.json({ isAdmin: true, email: null, authenticated: true });
     return;
   }
   const bearer = req.headers.authorization?.startsWith("Bearer ")
@@ -43,9 +43,9 @@ app.get("/api/whoami", (req, res) => {
   const tokenToVerify = bearer ?? req.cookies[COOKIE_NAME];
   try {
     const payload = jwt.verify(tokenToVerify, COOKIE_SECRET) as { admin?: boolean; email?: string };
-    res.json({ isAdmin: !!payload.admin, email: payload.email ?? null });
+    res.json({ isAdmin: !!payload.admin, email: payload.email ?? null, authenticated: true });
   } catch {
-    res.json({ isAdmin: false, email: null });
+    res.json({ isAdmin: false, email: null, authenticated: false });
   }
 });
 
