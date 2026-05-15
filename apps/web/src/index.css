@@ -319,13 +319,23 @@ body {
 }
 
 .sidebar-automation-name {
-  display: block;
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.sidebar-automation-owner {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--primary);
+  background: #eff6ff;
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .sidebar-automation-schedule {

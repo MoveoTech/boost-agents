@@ -219,7 +219,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
           action={
             <button className="sidebar-add-btn" onClick={() => {
               setCustomCron(false);
-              setNewAuto({ id: crypto.randomUUID(), name: "", schedule: "0 9 * * *", prompt: "", enabled: true });
+              setNewAuto({ id: crypto.randomUUID(), name: "", schedule: "0 9 * * *", prompt: "", enabled: true, createdBy: userEmail ?? undefined });
             }}>+ Add</button>
           }
         >
@@ -229,7 +229,14 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
           {automations.map((a) => (
             <div key={a.id} className="sidebar-automation-row">
               <div className="sidebar-automation-info">
-                <span className="sidebar-automation-name">{a.name || "Unnamed"}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="sidebar-automation-name">{a.name || "Unnamed"}</span>
+                  {a.createdBy && (
+                    <span className="sidebar-automation-owner" title={a.createdBy}>
+                      {a.createdBy.split("@")[0]}
+                    </span>
+                  )}
+                </div>
                 <span className="sidebar-automation-schedule">
                   {SCHEDULES.find((s) => s.cron === a.schedule)?.label ?? a.schedule}
                 </span>

@@ -189,6 +189,15 @@ app.get("/api/automations", async (_req, res) => {
 app.post("/api/automations", async (req, res) => {
   try {
     const { automation, agentUrl } = req.body as { automation: Automation; agentUrl: string };
+    // Stamp createdBy from the session JWT if not already set
+    if (!automation.createdBy) {
+      const bearer = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null;
+      const tok = bearer ?? req.cookies[COOKIE_NAME];
+      try {
+        const p = jwt.verify(tok, COOKIE_SECRET) as { email?: string };
+        if (p.email) automation.createdBy = p.email;
+      } catch { /* no email in token */ }
+    }
     await upsertAutomation(automation, agentUrl);
     res.json({ ok: true });
   } catch (err) {

@@ -37,6 +37,7 @@ export interface Automation {
   schedule: string;
   prompt: string;
   enabled: boolean;
+  createdBy?: string;
 }
 
 export interface AgentConfig {
