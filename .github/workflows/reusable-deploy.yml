@@ -29,6 +29,8 @@ on:
         required: false
       SLACK_BOT_TOKEN:
         required: false
+      SLACK_SIGNING_SECRET:
+        required: false
 
 jobs:
   provision-and-deploy:
@@ -162,6 +164,7 @@ jobs:
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
             ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}
             SLACK_BOT_TOKEN=${{ secrets.SLACK_BOT_TOKEN }}
+            SLACK_SIGNING_SECRET=${{ secrets.SLACK_SIGNING_SECRET }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       - name: Print URL

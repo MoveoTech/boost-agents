@@ -15,8 +15,8 @@ async function slackCall(endpoint: string, token: string, body?: Record<string, 
   return data;
 }
 
-export async function slackSendMessage(token: string, channel: string, text: string): Promise<string> {
-  await slackCall("chat.postMessage", token, { channel, text });
+export async function slackSendMessage(token: string, channel: string, text: string, threadTs?: string): Promise<string> {
+  await slackCall("chat.postMessage", token, { channel, text, ...(threadTs ? { thread_ts: threadTs } : {}) });
   return `Message sent to ${channel}.`;
 }
 

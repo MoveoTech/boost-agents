@@ -2,8 +2,10 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import path from "path";
 import { chat } from "./agent";
+import { slackSendMessage } from "./slack";
 import { agentConfig } from "./config";
 import { commitConfig } from "./configure";
 import type { AgentConfig } from "./config";
@@ -21,7 +23,9 @@ const COOKIE_NAME = "session";
 const IS_PROD = process.env.NODE_ENV === "production";
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({
+  verify: (req: any, _res, buf) => { req.rawBody = buf; },
+}));
 app.use(cookieParser(COOKIE_SECRET));
 
 // Serve web app static files when running as a single service
@@ -114,6 +118,66 @@ app.post("/api/run-automation", async (req, res) => {
     res.json({ ok: true, results });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Slack Events API — receives mentions and responds via the agent
+app.post("/slack/events", async (req, res) => {
+  const signingSecret = process.env.SLACK_SIGNING_SECRET ?? "";
+  const signature = req.headers["x-slack-signature"] as string ?? "";
+  const timestamp = req.headers["x-slack-request-timestamp"] as string ?? "0";
+  const rawBody = (req as any).rawBody?.toString() ?? "";
+
+  // Reject stale requests (>5 min old) to prevent replay attacks
+  if (Math.abs(Date.now() / 1000 - parseInt(timestamp)) > 300) {
+    res.status(401).json({ error: "Request too old" });
+    return;
+  }
+
+  // Verify Slack signature
+  const hmac = crypto.createHmac("sha256", signingSecret)
+    .update(`v0:${timestamp}:${rawBody}`)
+    .digest("hex");
+  const expected = `v0=${hmac}`;
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+      res.status(401).json({ error: "Invalid signature" });
+      return;
+    }
+  } catch {
+    res.status(401).json({ error: "Invalid signature" });
+    return;
+  }
+
+  const payload = req.body as {
+    type: string;
+    challenge?: string;
+    event?: { type: string; text: string; channel: string; ts: string; thread_ts?: string; bot_id?: string };
+  };
+
+  // Slack URL verification handshake
+  if (payload.type === "url_verification") {
+    res.json({ challenge: payload.challenge });
+    return;
+  }
+
+  // Respond immediately — Slack requires <3s
+  res.json({ ok: true });
+
+  const event = payload.event;
+  if (event?.type !== "app_mention" || event.bot_id) return; // ignore bot messages
+
+  const slackToken = process.env.SLACK_BOT_TOKEN;
+  if (!slackToken) return;
+
+  const text = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
+  const threadTs = event.thread_ts ?? event.ts;
+
+  try {
+    const result = await chat(text, [], "tools");
+    await slackSendMessage(slackToken, event.channel, result.reply, threadTs);
+  } catch (err) {
+    await slackSendMessage(slackToken, event.channel, `Sorry, something went wrong: ${(err as Error).message}`, threadTs).catch(() => {});
   }
 });
 
