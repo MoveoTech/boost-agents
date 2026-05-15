@@ -84,8 +84,11 @@ function buildTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
-  if (gmailUser    && agentConfig.tools.gmail)         tools.push(ALL_TOOLS.gmail_send);
-  if (calendarUser && agentConfig.tools.googleCalendar) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
+  // Connected services are always active when the user has linked their account.
+  // The admin toggle controls whether the Connect button is shown in the UI, not
+  // whether the tool is used once connected.
+  if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
+  if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   return tools;
 }
 

@@ -381,7 +381,12 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
               </div>
               {isAdmin && (
                 <label className="sidebar-toggle">
-                  <input type="checkbox" checked={config.tools[key]} onChange={(e) => updateTool(key, e.target.checked)} />
+                  {/* Connected services are always on when linked — toggle only controls UI visibility */}
+                  <input type="checkbox"
+                    checked={service ? !!connected || config.tools[key] : config.tools[key]}
+                    onChange={(e) => { if (!service || !connected) updateTool(key, e.target.checked); }}
+                    readOnly={!!(service && connected)}
+                  />
                   <span className="sidebar-toggle-track" />
                 </label>
               )}
