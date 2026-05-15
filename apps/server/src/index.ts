@@ -123,6 +123,19 @@ app.post("/api/run-automation", async (req, res) => {
 
 // Slack Events API — receives mentions and responds via the agent
 app.post("/slack/events", async (req, res) => {
+  const payload = req.body as {
+    type: string;
+    challenge?: string;
+    event?: { type: string; text: string; channel: string; ts: string; thread_ts?: string; bot_id?: string; user?: string };
+  };
+
+  // Respond to URL verification challenge immediately — no signature needed
+  if (payload.type === "url_verification") {
+    res.json({ challenge: payload.challenge });
+    return;
+  }
+
+  // Verify Slack signature for all other events
   const signingSecret = process.env.SLACK_SIGNING_SECRET ?? "";
   const signature = req.headers["x-slack-signature"] as string ?? "";
   const timestamp = req.headers["x-slack-request-timestamp"] as string ?? "0";
@@ -134,7 +147,6 @@ app.post("/slack/events", async (req, res) => {
     return;
   }
 
-  // Verify Slack signature
   const hmac = crypto.createHmac("sha256", signingSecret)
     .update(`v0:${timestamp}:${rawBody}`)
     .digest("hex");
@@ -146,18 +158,6 @@ app.post("/slack/events", async (req, res) => {
     }
   } catch {
     res.status(401).json({ error: "Invalid signature" });
-    return;
-  }
-
-  const payload = req.body as {
-    type: string;
-    challenge?: string;
-    event?: { type: string; text: string; channel: string; ts: string; thread_ts?: string; bot_id?: string; user?: string };
-  };
-
-  // Slack URL verification handshake
-  if (payload.type === "url_verification") {
-    res.json({ challenge: payload.challenge });
     return;
   }
 
