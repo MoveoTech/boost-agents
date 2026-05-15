@@ -47,11 +47,13 @@ export async function getProviders(): Promise<{ gemini: boolean; claude: boolean
   return res.ok ? res.json() : { gemini: true, claude: false, openai: false };
 }
 
-export async function fetchGoogleToken(email: string, service: "gmail" | "calendar"): Promise<string | null> {
-  const res = await fetch(`${BASE}/api/google-token?email=${encodeURIComponent(email)}&service=${service}`);
-  if (!res.ok) return null;
-  const { token } = await res.json();
-  return token;
+export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean }> {
+  const res = await fetch(`${BASE}/api/connections`);
+  return res.ok ? res.json() : { gmail: false, calendar: false };
+}
+
+export async function disconnectService(service: "gmail" | "calendar"): Promise<void> {
+  await fetch(`${BASE}/api/connections/${service}`, { method: "DELETE" });
 }
 
 export async function triggerAutomation(id: string): Promise<void> {
@@ -86,14 +88,12 @@ export async function sendMessage(
   history: HistoryItem[],
   mode: "search" | "tools" = "tools",
   systemPrompt?: string,
-  gmailToken?: string,
-  calendarToken?: string,
   model?: { provider: string; modelId: string },
 ): Promise<ChatResponse> {
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, mode, systemPrompt, gmailToken, calendarToken, model }),
+    body: JSON.stringify({ message, history, mode, systemPrompt, model }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "Request failed" }));

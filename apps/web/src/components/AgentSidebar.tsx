@@ -70,16 +70,14 @@ interface Props {
   onSave: (config: AgentConfig) => void;
   userSettings: UserSettings;
   onUserSettingsChange: (s: UserSettings) => void;
-  gmailUser: string | null;
-  calendarUser: string | null;
-  gmailToken: string | null;
-  calendarToken: string | null;
+  gmailConnected: boolean;
+  calendarConnected: boolean;
   onGmailDisconnect: () => void;
   onCalendarDisconnect: () => void;
   className?: string;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect, className }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, onGmailDisconnect, onCalendarDisconnect, className }: Props) {
   const merged = agentConfig ? {
     ...agentConfig,
     ...(userSettings.model ? { model: userSettings.model } : {}),
@@ -355,9 +353,8 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       {/* Tools — toggle admin-only, Google connect/disconnect for everyone */}
       <SidebarSection title={isAdmin ? "Tools" : "Connections"}>
         {TOOL_DEFS.map(({ key, label, icon, desc, service }) => {
-          const connected = service === "gmail" ? gmailUser : service === "calendar" ? calendarUser : null;
+          const connected = service === "gmail" ? gmailConnected : service === "calendar" ? calendarConnected : false;
           const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : null;
-          // Non-admins only see Google service tools
           if (!isAdmin && !service) return null;
           return (
             <div key={key} className="sidebar-tool-row">
@@ -368,7 +365,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                   {service && (
                     <span className="sidebar-tool-connection">
                       {connected
-                        ? <><span className="sidebar-tool-connected">●</span> {connected.split("@")[0]}</>
+                        ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
                         : <a className="sidebar-tool-connect-link" href={`${BASE}/api/auth/google/start?service=${service}&returnUrl=${encodeURIComponent(window.location.origin)}`}>Connect</a>
                       }
                       {connected && onDisconnect && (
@@ -381,9 +378,8 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
               </div>
               {isAdmin && (
                 <label className="sidebar-toggle">
-                  {/* Connected services are always on when linked — toggle only controls UI visibility */}
                   <input type="checkbox"
-                    checked={service ? !!connected || config.tools[key] : config.tools[key]}
+                    checked={service ? connected || config.tools[key] : config.tools[key]}
                     onChange={(e) => { if (!service || !connected) updateTool(key, e.target.checked); }}
                     readOnly={!!(service && connected)}
                   />
@@ -424,10 +420,8 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       {/* API Access — admin only */}
       {isAdmin && (
         <SidebarSection title="API Access" defaultOpen={false}>
-          <SecretRow label="Server URL" value={BASE} onCopy={copy} copied={copied} visible />
+          <SecretRow label="Server URL" value={BASE || window.location.origin} onCopy={copy} copied={copied} visible />
           {apiKey && <SecretRow label="API Key" value={apiKey} onCopy={copy} copied={copied} />}
-          {gmailToken && <SecretRow label="Gmail Token" value={gmailToken} onCopy={copy} copied={copied} />}
-          {calendarToken && <SecretRow label="Calendar Token" value={calendarToken} onCopy={copy} copied={copied} />}
           <div className="api-code-block" style={{ marginTop: 12 }}>
             <pre>{curlExample}</pre>
             <button className="api-copy-btn api-copy-code" onClick={() => copy(curlExample)}>{copied ? "✓" : "Copy"}</button>

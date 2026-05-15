@@ -257,6 +257,55 @@ app.get("/api/config", (_req, res) => {
   res.json(agentConfig);
 });
 
+// Extracts the authenticated user's email from the session cookie or Bearer token
+function getSessionEmail(req: express.Request): string | undefined {
+  const bearer = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7) : null;
+  const tok = bearer ?? req.cookies[COOKIE_NAME];
+  try { return (jwt.verify(tok, COOKIE_SECRET) as { email?: string }).email ?? undefined; }
+  catch { return undefined; }
+}
+
+// Returns which Google services the current user has connected
+app.get("/api/connections", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.json({ gmail: false, calendar: false }); return; }
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) {
+    res.json({ gmail: false, calendar: false }); return;
+  }
+  try {
+    const r = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
+      headers: { "x-api-key": oauthServiceKey },
+    });
+    const { users } = await r.json() as { users: { email: string; gmail: boolean; calendar: boolean }[] };
+    const user = users.find((u) => u.email === email);
+    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar });
+  } catch { res.json({ gmail: false, calendar: false }); }
+});
+
+// Disconnect a Google service for the current user
+app.delete("/api/connections/:service", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { service } = req.params;
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) {
+    res.status(500).json({ error: "Not configured" }); return;
+  }
+  try {
+    await fetch(`${oauthServiceUrl}/api/users/${agentId}/${service}/${encodeURIComponent(email)}`, {
+      method: "DELETE",
+      headers: { "x-api-key": oauthServiceKey },
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 function requireAdmin(req: any, res: any, next: any) {
   const bearer = req.headers.authorization?.startsWith("Bearer ")
     ? req.headers.authorization.slice(7)
@@ -285,24 +334,16 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools", systemPrompt, gmailToken, calendarToken, model } = req.body as {
+  const { message, history = [], mode = "tools", systemPrompt, model } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
     systemPrompt?: string;
-    gmailToken?: string;
-    calendarToken?: string;
     model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
   };
 
-  const oauthKey = process.env.OAUTH_SERVICE_KEY ?? "";
-  const resolveToken = (token?: string) => {
-    if (!token) return undefined;
-    try { return (jwt.verify(token, oauthKey) as { email: string }).email; }
-    catch { return undefined; }
-  };
-  const gmailUser = resolveToken(gmailToken);
-  const calendarUser = resolveToken(calendarToken);
+  // Use the session email server-side — no tokens needed from the client
+  const sessionEmail = getSessionEmail(req);
 
   if (!message?.trim()) {
     res.status(400).json({ error: "message is required" });
@@ -310,14 +351,11 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const result = await chat(message.trim(), history, mode, systemPrompt, gmailUser, calendarUser, model);
+    const result = await chat(message.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model);
     res.json(result);
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      error: "Agent error",
-      details: (err as Error).message,
-    });
+    res.status(500).json({ error: "Agent error", details: (err as Error).message });
   }
 });
 

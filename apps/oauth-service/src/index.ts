@@ -201,6 +201,21 @@ app.get("/api/user-token/:agentId/:service/:userId", async (req, res) => {
   }
 });
 
+// Disconnects a user from a service
+app.delete("/api/users/:agentId/:service/:userId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const { agentId, service, userId } = req.params;
+  try {
+    await db.collection(`${service}_tokens`).doc(agentId).collection("users").doc(userId).delete();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // Returns all users connected for any service in this agent
 app.get("/api/users/:agentId", async (req, res) => {
   if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
