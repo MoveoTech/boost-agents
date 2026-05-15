@@ -66,6 +66,13 @@ export async function saveAutomation(automation: Automation): Promise<void> {
   });
 }
 
+export async function triggerAutomation(id: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  await fetch(`${BASE}/api/automations/${id}/run`, { method: "POST", headers });
+}
+
 export async function removeAutomation(id: string): Promise<void> {
   const headers: Record<string, string> = {};
   const token = getToken();

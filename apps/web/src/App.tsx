@@ -2,16 +2,13 @@ import { useState, useCallback, useEffect } from "react";
 import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
-import ConfigurePanel from "./components/ConfigurePanel";
+import AgentSidebar from "./components/AgentSidebar";
 import { sendMessage, getToken, getConfig, whoami } from "./api/client";
 import type { DisplayMessage, HistoryItem, AgentConfig } from "./types";
-
-type View = "builder" | "chat";
 
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken());
   const [isAdmin, setIsAdmin] = useState(false);
-  const [view, setView] = useState<View>("builder");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(() => {
@@ -28,32 +25,18 @@ export default function App() {
   useEffect(() => {
     if (!authed) return;
     getConfig().then((c) => setAgentConfig(c)).catch(() => {});
-    whoami().then(({ isAdmin: a }) => {
-      setIsAdmin(a);
-      setView(a ? "builder" : "chat");
-    }).catch(() => setView("chat"));
+    whoami().then(({ isAdmin: a }) => setIsAdmin(a)).catch(() => {});
   }, [authed]);
 
-  // Handle OAuth callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const email = params.get("google_email");
     const service = params.get("google_service");
     if (params.get("google_connected") === "true" && email && service) {
-      if (service === "gmail") {
-        sessionStorage.setItem("gmail_user", email);
-        setGmailUser(email);
-      } else if (service === "calendar") {
-        sessionStorage.setItem("calendar_user", email);
-        setCalendarUser(email);
-      }
+      if (service === "gmail") { sessionStorage.setItem("gmail_user", email); setGmailUser(email); }
+      else if (service === "calendar") { sessionStorage.setItem("calendar_user", email); setCalendarUser(email); }
       window.history.replaceState({}, "", window.location.pathname);
     }
-  }, []);
-
-  const handleLogin = useCallback((adminFlag: boolean) => {
-    setIsAdmin(adminFlag);
-    setAuthed(true);
   }, []);
 
   const handleSend = useCallback(async (text: string) => {
@@ -78,69 +61,38 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [messages, agentConfig, gmailUser]);
+  }, [messages, agentConfig, gmailUser, calendarUser]);
 
-  if (!authed) return <LoginPage onLogin={handleLogin} />;
+  if (!authed) return <LoginPage onLogin={(adminFlag) => { setIsAdmin(adminFlag); setAuthed(true); }} />;
 
-  const title = agentConfig?.ui.title ?? "Boost Agent";
-  const chatEnabled = agentConfig?.access?.chatEnabled ?? true;
-  const gmailEnabled = agentConfig?.tools?.gmail ?? false;
+  const title = agentConfig?.ui?.title ?? agentConfig?.name ?? "Boost Agent";
+  const placeholder = agentConfig?.ui?.placeholder;
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="header-title">
-          <span className="header-icon">✦</span>
-          <h1>{title}</h1>
-        </div>
-        <div className="header-actions">
-          {isAdmin ? (
-            <>
-              <button className={`view-tab ${view === "builder" ? "active" : ""}`} onClick={() => setView("builder")}>
-                Builder
-              </button>
-              {chatEnabled && (
-                <button className={`view-tab ${view === "chat" ? "active" : ""}`} onClick={() => setView("chat")}>
-                  Chat
-                </button>
-              )}
-            </>
-          ) : (
-            <span className="model-badge">Gemini 2.5 Flash</span>
-          )}
-        </div>
-      </header>
+    <div className={`app ${isAdmin ? "app-admin" : ""}`}>
+      {/* Chat area */}
+      <div className="chat-area">
+        <header className="header">
+          <div className="header-title">
+            <span className="header-icon">✦</span>
+            <h1>{title}</h1>
+          </div>
+          <span className="model-badge">Gemini 2.5 Flash</span>
+        </header>
+        <ChatWindow messages={messages} />
+        <InputBar onSend={handleSend} disabled={loading} placeholder={placeholder} />
+      </div>
 
-      {view === "builder" ? (
-        <ConfigurePanel
+      {/* Sidebar — admin only */}
+      {isAdmin && (
+        <AgentSidebar
+          agentConfig={agentConfig}
           onSave={(c) => setAgentConfig(c)}
           gmailUser={gmailUser}
           calendarUser={calendarUser}
           onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); setGmailUser(null); }}
           onCalendarDisconnect={() => { sessionStorage.removeItem("calendar_user"); setCalendarUser(null); }}
         />
-      ) : !chatEnabled ? (
-        <div className="empty-state">
-          <span className="empty-title">API Only</span>
-          <span className="empty-sub">This agent is not available via chat. Use the API to interact with it.</span>
-        </div>
-      ) : (
-        <>
-          {gmailEnabled && gmailUser && (
-            <div className="gmail-connected">
-              Gmail: {gmailUser} &nbsp;
-              <button onClick={() => { sessionStorage.removeItem("gmail_user"); setGmailUser(null); }}>
-                Disconnect
-              </button>
-            </div>
-          )}
-          <ChatWindow messages={messages} />
-          <InputBar
-            onSend={handleSend}
-            disabled={loading}
-            placeholder={agentConfig?.ui.placeholder}
-          />
-        </>
       )}
     </div>
   );

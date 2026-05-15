@@ -94,6 +94,16 @@ export async function upsertAutomation(automation: Automation, agentUrl: string)
   });
 }
 
+export async function runAutomationNow(automationId: string): Promise<void> {
+  const token = await gcpToken();
+  const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automationId)}`;
+  const res = await fetch(`https://cloudscheduler.googleapis.com/v1/${fullName}:run`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Failed to trigger job: ${res.status}`);
+}
+
 export async function deleteAutomation(automationId: string): Promise<void> {
   const token = await gcpToken();
   const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automationId)}`;

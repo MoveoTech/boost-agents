@@ -7,7 +7,7 @@ import { chat } from "./agent";
 import { agentConfig } from "./config";
 import { commitConfig } from "./configure";
 import type { AgentConfig } from "./config";
-import { listAutomations, upsertAutomation, deleteAutomation } from "./automations";
+import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow } from "./automations";
 import type { Automation } from "./automations";
 import type { Content } from "@google/generative-ai";
 
@@ -164,6 +164,15 @@ app.post("/api/automations", async (req, res) => {
 app.delete("/api/automations/:id", async (req, res) => {
   try {
     await deleteAutomation(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/automations/:id/run", requireAdmin, async (req, res) => {
+  try {
+    await runAutomationNow(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
