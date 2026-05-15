@@ -100,14 +100,22 @@ jobs:
           workload_identity_provider: 'projects/${{ steps.info.outputs.num }}/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
           service_account: 'deployer@${{ steps.provision.outputs.project_id }}.iam.gserviceaccount.com'
 
-      # 4. BUILD & DEPLOY
+      # 4. BUILD WEB then BUILD & DEPLOY single image
+      - name: Build Web App
+        run: |
+          cd apps/web
+          npm install
+          VITE_API_URL="" npm run build
+          mkdir -p ../server/public
+          cp -r dist/* ../server/public/
+
       - name: Build and Push Image
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet || true
           docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} ./apps/server
           docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} || echo "Push failed"
 
-      - name: Deploy Server to Cloud Run
+      - name: Deploy to Cloud Run
         id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v2'
         continue-on-error: true
@@ -132,26 +140,5 @@ jobs:
             ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
-      # 5. BUILD & DEPLOY WEB
-      - name: Build & Push Web Image
-        run: |
-          docker build \
-            --build-arg VITE_API_URL=${{ steps.deploy.outputs.url }} \
-            -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}-web:${{ github.sha }} \
-            ./apps/web
-          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}-web:${{ github.sha }} || echo "Push failed"
-
-      - name: Deploy Web to Cloud Run
-        id: 'deploy_web'
-        uses: 'google-github-actions/deploy-cloudrun@v2'
-        continue-on-error: true
-        with:
-          service: ${{ inputs.service_name }}-web
-          region: us-central1
-          image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}-web:${{ github.sha }}
-          flags: '--allow-unauthenticated'
-
-      - name: Print URLs
-        run: |
-          echo "Server: ${{ steps.deploy.outputs.url }}"
-          echo "Web:    ${{ steps.deploy_web.outputs.url }}"
+      - name: Print URL
+        run: echo "Agent: ${{ steps.deploy.outputs.url }}"
