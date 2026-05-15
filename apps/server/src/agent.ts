@@ -148,6 +148,14 @@ const CALENDAR_GET_DECL = {
   },
 };
 
+function buildSystemPrompt(override?: string): string {
+  const base = override ?? agentConfig.systemPrompt;
+  const enabledSkills = agentConfig.skills?.filter((s) => s.enabled) ?? [];
+  if (!enabledSkills.length) return base;
+  const skillsBlock = enabledSkills.map((s) => `## ${s.name}\n${s.content}`).join("\n\n");
+  return `${base}\n\n---\n\n${skillsBlock}`;
+}
+
 function buildTools(mode: "search" | "tools", gmailUser?: string, calendarUser?: string): Tool[] {
   // Gemini cannot combine built-in tools and function declarations in one request
   if (mode === "search") {
@@ -183,7 +191,7 @@ export async function chat(message: string, history: Content[], mode: "search" |
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     tools: buildTools(mode, gmailUser, calendarUser),
-    systemInstruction: systemPrompt ?? agentConfig.systemPrompt,
+    systemInstruction: buildSystemPrompt(systemPrompt),
   });
 
   const session = model.startChat({ history });

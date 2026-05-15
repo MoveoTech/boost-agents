@@ -24,6 +24,13 @@ export interface ChatResponse {
   error?: string;
 }
 
+export interface Skill {
+  id: string;
+  name: string;
+  content: string;
+  enabled: boolean;
+}
+
 export interface Automation {
   id: string;
   name: string;
@@ -51,4 +58,5 @@ export interface AgentConfig {
     title: string;
     placeholder: string;
   };
+  skills: Skill[];
 }

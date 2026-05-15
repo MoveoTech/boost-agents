@@ -32,6 +32,10 @@ app.get("/health", (_req, res) => {
 });
 
 app.get("/api/whoami", (req, res) => {
+  if (!ACCESS_PASSWORD && !API_KEY) {
+    res.json({ isAdmin: true });
+    return;
+  }
   const bearer = req.headers.authorization?.startsWith("Bearer ")
     ? req.headers.authorization.slice(7)
     : null;

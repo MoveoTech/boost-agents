@@ -1,6 +1,14 @@
+export interface Skill {
+  id: string;
+  name: string;
+  content: string;
+  enabled: boolean;
+}
+
 export interface AgentConfig {
   name: string;
   systemPrompt: string;
+  skills: Skill[];
   tools: {
     fetchUrl: boolean;
     httpRequest: boolean;
@@ -22,6 +30,7 @@ export interface AgentConfig {
 export const agentConfig: AgentConfig = {
   name: "Boost Agent",
   systemPrompt: "You are a helpful AI assistant. Be concise, accurate, and friendly.",
+  skills: [],
   tools: {
     fetchUrl: true,
     httpRequest: true,

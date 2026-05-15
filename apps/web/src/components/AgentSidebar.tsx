@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import SidebarSection from "./SidebarSection";
+import SkillsModal from "./SkillsModal";
 import { saveConfig, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation } from "../api/client";
-import type { AgentConfig, Automation } from "../types";
+import type { AgentConfig, Automation, Skill } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
 const STORAGE_KEY = "agent_config";
@@ -51,6 +52,7 @@ export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarU
   const [customCron, setCustomCron] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showSkills, setShowSkills] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setConfig(agentConfig); }, [agentConfig]);
@@ -267,8 +269,27 @@ export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarU
 
       {/* Skills */}
       <SidebarSection title="Skills" defaultOpen={false}>
-        <button className="sidebar-add-skill-btn">+ Add skill</button>
+        {(config.skills ?? []).filter(s => s.enabled).length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            {(config.skills ?? []).filter(s => s.enabled).map(s => (
+              <div key={s.id} className="sidebar-automation-row" style={{ marginBottom: 4 }}>
+                <span className="sidebar-automation-name">{s.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <button className="sidebar-add-skill-btn" onClick={() => setShowSkills(true)}>
+          {(config.skills ?? []).length > 0 ? "Manage Skills" : "+ Add skill"}
+        </button>
       </SidebarSection>
+
+      {showSkills && (
+        <SkillsModal
+          skills={config.skills ?? []}
+          onSave={(skills: Skill[]) => { update({ skills }); setShowSkills(false); }}
+          onClose={() => setShowSkills(false)}
+        />
+      )}
 
       {/* API Access */}
       <SidebarSection title="API Access" defaultOpen={false}>
