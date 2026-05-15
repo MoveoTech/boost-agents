@@ -27,6 +27,8 @@ on:
         required: false
       COOKIE_SECRET:
         required: false
+      SLACK_BOT_TOKEN:
+        required: false
 
 jobs:
   provision-and-deploy:
@@ -159,6 +161,7 @@ jobs:
             ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
             ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}
+            SLACK_BOT_TOKEN=${{ secrets.SLACK_BOT_TOKEN }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       - name: Print URL

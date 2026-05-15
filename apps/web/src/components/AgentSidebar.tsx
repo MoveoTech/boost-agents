@@ -42,8 +42,9 @@ const TOOL_DEFS = [
   { key: "fetchUrl" as const, label: "Web Fetch", icon: "🌐", desc: "GET any URL" },
   { key: "httpRequest" as const, label: "HTTP Request", icon: "🔗", desc: "POST/PUT to REST APIs" },
   { key: "googleSearch" as const, label: "Google Search", icon: "🔍", desc: "Gemini built-in web search" },
-  { key: "gmail" as const, label: "Gmail", icon: "📧", desc: "Send, search, read emails", service: "gmail" as const },
+  { key: "gmail" as const, label: "Gmail", icon: "📧", desc: "Send emails", service: "gmail" as const },
   { key: "googleCalendar" as const, label: "Google Calendar", icon: "📅", desc: "List, create calendar events", service: "calendar" as const },
+  { key: "slack" as const, label: "Slack", icon: "💬", desc: "Send messages to channels — requires SLACK_BOT_TOKEN secret" },
 ];
 
 const SCHEDULES = [

@@ -56,6 +56,7 @@ export interface AgentConfig {
     googleSearch: boolean;
     gmail: boolean;
     googleCalendar: boolean;
+    slack: boolean;
   };
   access: {
     chatEnabled: boolean;

@@ -2,6 +2,7 @@ import type { Content } from "@google/generative-ai";
 import { chatWithModel, type ModelConfig, type ToolDecl } from "./llm";
 import { fetchUrl, httpRequest } from "./tools";
 import { gmailSend } from "./gmail";
+import { slackSendMessage, slackListChannels } from "./slack";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
@@ -68,6 +69,20 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
       required: ["emails", "timeMin", "timeMax"],
     },
   },
+  slack_send_message: {
+    name: "slack_send_message", description: "Send a message to a Slack channel.",
+    parameters: {
+      properties: {
+        channel: { type: "string", description: "Channel name (e.g. #general) or channel ID" },
+        message: { type: "string", description: "The message text to send" },
+      },
+      required: ["channel", "message"],
+    },
+  },
+  slack_list_channels: {
+    name: "slack_list_channels", description: "List Slack channels the bot has access to.",
+    parameters: { properties: {}, required: [] },
+  },
 };
 
 function buildSystemPrompt(override?: string, addition?: string): string {
@@ -89,6 +104,7 @@ function buildTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
   // whether the tool is used once connected.
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
+  if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels);
   return tools;
 }
 
@@ -120,6 +136,14 @@ async function execute(name: string, args: Record<string, unknown>, gmailUser?: 
       if (name === "calendar_create_event")      return calendarCreateEvent(token, args.title as string, args.startDateTime as string, args.endDateTime as string, args.description as string | undefined, args.location as string | undefined, args.attendees as string[] | undefined);
       if (name === "calendar_check_availability") return calendarCheckAvailability(token, args.emails as string[], args.timeMin as string, args.timeMax as string);
       return calendarGetEvent(token, args.eventId as string);
+    }
+
+    case "slack_send_message":
+    case "slack_list_channels": {
+      const slackToken = process.env.SLACK_BOT_TOKEN;
+      if (!slackToken) return "Slack is not configured. Ask the admin to add SLACK_BOT_TOKEN.";
+      if (name === "slack_send_message") return slackSendMessage(slackToken, args.channel as string, args.message as string);
+      return slackListChannels(slackToken);
     }
 
     default:

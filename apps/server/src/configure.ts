@@ -16,6 +16,7 @@ function generateConfigFile(config: AgentConfig): string {
     googleSearch: boolean;
     gmail: boolean;
     googleCalendar: boolean;
+    slack: boolean;
   };
   access: {
     chatEnabled: boolean;

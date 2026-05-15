@@ -16,6 +16,7 @@ export interface AgentConfig {
     googleSearch: boolean;
     gmail: boolean;
     googleCalendar: boolean;
+    slack: boolean;
   };
   access: {
     chatEnabled: boolean;
@@ -38,6 +39,7 @@ export const agentConfig: AgentConfig = {
     googleSearch: true,
     gmail: false,
     googleCalendar: false,
+    slack: false,
   },
   access: {
     chatEnabled: true,
