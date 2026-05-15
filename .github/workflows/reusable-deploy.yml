@@ -25,6 +25,8 @@ on:
         required: false
       ADMIN_EMAILS:
         required: false
+      COOKIE_SECRET:
+        required: false
 
 jobs:
   provision-and-deploy:
@@ -127,7 +129,6 @@ jobs:
           env_vars: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             API_KEY=${{ secrets.API_KEY }}
-            ACCESS_PASSWORD=${{ secrets.ACCESS_PASSWORD }}
             COOKIE_SECRET=${{ secrets.COOKIE_SECRET }}
             NODE_ENV=production
             GH_PAT=${{ secrets.GH_PAT }}
