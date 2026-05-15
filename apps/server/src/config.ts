@@ -13,7 +13,6 @@ export interface AgentConfig {
     fetchUrl: boolean;
     httpRequest: boolean;
     googleSearch: boolean;
-    codeExecution: boolean;
     gmail: boolean;
     googleCalendar: boolean;
   };
@@ -35,7 +34,6 @@ export const agentConfig: AgentConfig = {
     fetchUrl: true,
     httpRequest: true,
     googleSearch: true,
-    codeExecution: false,
     gmail: false,
     googleCalendar: false,
   },

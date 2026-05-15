@@ -13,7 +13,6 @@ function generateConfigFile(config: AgentConfig): string {
     fetchUrl: boolean;
     httpRequest: boolean;
     googleSearch: boolean;
-    codeExecution: boolean;
     gmail: boolean;
     googleCalendar: boolean;
   };

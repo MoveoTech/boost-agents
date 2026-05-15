@@ -5,6 +5,25 @@ import { saveConfig, getApiKey, listAutomations, saveAutomation, removeAutomatio
 import type { AgentConfig, Automation, Skill } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
+
+function SecretRow({ label, value, onCopy, copied, visible = false }: { label: string; value: string; onCopy: (v: string) => void; copied: boolean; visible?: boolean }) {
+  const [show, setShow] = useState(false);
+  const displayed = (visible || show) ? value : "•".repeat(Math.min(value.length, 24));
+  return (
+    <div className="sidebar-api-row">
+      <span className="sidebar-api-label">{label}</span>
+      <div className="sidebar-api-value-row">
+        <code className="sidebar-api-value">{displayed}</code>
+        {!visible && (
+          <button className="api-copy-btn" onClick={() => setShow(v => !v)} style={{ marginRight: 4 }}>
+            {show ? "Hide" : "Show"}
+          </button>
+        )}
+        <button className="api-copy-btn" onClick={() => onCopy(value)}>{copied ? "✓" : "Copy"}</button>
+      </div>
+    </div>
+  );
+}
 const STORAGE_KEY = "agent_config";
 const AVATAR_KEY = "agent_avatar";
 
@@ -12,7 +31,6 @@ const TOOL_DEFS = [
   { key: "fetchUrl" as const, label: "Web Fetch", icon: "🌐", desc: "GET any URL" },
   { key: "httpRequest" as const, label: "HTTP Request", icon: "🔗", desc: "POST/PUT to REST APIs" },
   { key: "googleSearch" as const, label: "Google Search", icon: "🔍", desc: "Gemini built-in web search" },
-  { key: "codeExecution" as const, label: "Code Execution", icon: "🐍", desc: "Run Python (Gemini built-in)" },
   { key: "gmail" as const, label: "Gmail", icon: "📧", desc: "Send, search, read emails", service: "gmail" as const },
   { key: "googleCalendar" as const, label: "Google Calendar", icon: "📅", desc: "List, create calendar events", service: "calendar" as const },
 ];
@@ -37,11 +55,13 @@ interface Props {
   onSave: (config: AgentConfig) => void;
   gmailUser: string | null;
   calendarUser: string | null;
+  gmailToken: string | null;
+  calendarToken: string | null;
   onGmailDisconnect: () => void;
   onCalendarDisconnect: () => void;
 }
 
-export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarUser, onGmailDisconnect, onCalendarDisconnect }: Props) {
+export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect }: Props) {
   const [config, setConfig] = useState<AgentConfig | null>(agentConfig);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [apiKey, setApiKey] = useState("");
@@ -293,23 +313,11 @@ export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarU
 
       {/* API Access */}
       <SidebarSection title="API Access" defaultOpen={false}>
-        <div className="sidebar-api-row">
-          <span className="sidebar-api-label">Server URL</span>
-          <div className="sidebar-api-value-row">
-            <code className="sidebar-api-value">{BASE}</code>
-            <button className="api-copy-btn" onClick={() => copy(BASE)}>{copied ? "✓" : "Copy"}</button>
-          </div>
-        </div>
-        {apiKey && (
-          <div className="sidebar-api-row">
-            <span className="sidebar-api-label">API Key</span>
-            <div className="sidebar-api-value-row">
-              <code className="sidebar-api-value">{apiKey}</code>
-              <button className="api-copy-btn" onClick={() => copy(apiKey)}>{copied ? "✓" : "Copy"}</button>
-            </div>
-          </div>
-        )}
-        <div className="api-code-block" style={{ marginTop: 10 }}>
+        <SecretRow label="Server URL" value={BASE} onCopy={copy} copied={copied} visible />
+        {apiKey && <SecretRow label="API Key" value={apiKey} onCopy={copy} copied={copied} />}
+        {gmailToken && <SecretRow label="Gmail Token" value={gmailToken} onCopy={copy} copied={copied} />}
+        {calendarToken && <SecretRow label="Calendar Token" value={calendarToken} onCopy={copy} copied={copied} />}
+        <div className="api-code-block" style={{ marginTop: 12 }}>
           <pre>{curlExample}</pre>
           <button className="api-copy-btn api-copy-code" onClick={() => copy(curlExample)}>{copied ? "✓" : "Copy"}</button>
         </div>

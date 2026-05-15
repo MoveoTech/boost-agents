@@ -795,10 +795,13 @@ body {
 /* ── Input bar ───────────────────────────────────────── */
 
 .input-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px 16px 16px;
   border-top: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
-  padding: 8px 16px 16px;
 }
 
 .input-bar-inner {

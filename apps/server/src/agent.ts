@@ -162,8 +162,6 @@ function buildTools(mode: "search" | "tools", gmailUser?: string, calendarUser?:
     const tools: Tool[] = [];
     // @ts-ignore
     if (agentConfig.tools.googleSearch) tools.push({ googleSearch: {} });
-    // @ts-ignore
-    if (agentConfig.tools.codeExecution) tools.push({ codeExecution: {} });
     return tools;
   }
 

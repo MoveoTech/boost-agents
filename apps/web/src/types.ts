@@ -46,7 +46,6 @@ export interface AgentConfig {
     fetchUrl: boolean;
     httpRequest: boolean;
     googleSearch: boolean;
-    codeExecution: boolean;
     gmail: boolean;
     googleCalendar: boolean;
   };

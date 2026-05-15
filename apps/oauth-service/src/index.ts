@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { Firestore } from "@google-cloud/firestore";
+import jwt from "jsonwebtoken";
 
 const app = express();
 app.use(cors());
@@ -145,6 +146,31 @@ app.get("/api/access-token/:service/:agentId/:userId", async (req, res) => {
     }
 
     res.json({ accessToken: access_token });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Issues a signed API token for a connected user
+// GET /api/user-token/:agentId/:service/:userId
+app.get("/api/user-token/:agentId/:service/:userId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const { agentId, service, userId } = req.params;
+  try {
+    const doc = await db.collection(`${service}_tokens`).doc(agentId).collection("users").doc(userId).get();
+    if (!doc.exists) {
+      res.status(404).json({ error: "User not connected" });
+      return;
+    }
+    const token = jwt.sign(
+      { email: userId, agentId, service },
+      OAUTH_SERVICE_KEY,
+      { expiresIn: "90d" }
+    );
+    res.json({ token });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

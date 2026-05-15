@@ -3,7 +3,7 @@ import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
 import AgentSidebar from "./components/AgentSidebar";
-import { sendMessage, getToken, getConfig, whoami } from "./api/client";
+import { sendMessage, getToken, getConfig, whoami, fetchGoogleToken } from "./api/client";
 import type { DisplayMessage, HistoryItem, AgentConfig } from "./types";
 
 export default function App() {
@@ -15,12 +15,10 @@ export default function App() {
     const stored = localStorage.getItem("agent_config");
     try { return stored ? JSON.parse(stored) : null; } catch { return null; }
   });
-  const [gmailUser, setGmailUser] = useState<string | null>(
-    () => sessionStorage.getItem("gmail_user")
-  );
-  const [calendarUser, setCalendarUser] = useState<string | null>(
-    () => sessionStorage.getItem("calendar_user")
-  );
+  const [gmailUser, setGmailUser] = useState<string | null>(() => sessionStorage.getItem("gmail_user"));
+  const [calendarUser, setCalendarUser] = useState<string | null>(() => sessionStorage.getItem("calendar_user"));
+  const [gmailToken, setGmailToken] = useState<string | null>(() => sessionStorage.getItem("gmail_token"));
+  const [calendarToken, setCalendarToken] = useState<string | null>(() => sessionStorage.getItem("calendar_token"));
 
   useEffect(() => {
     if (!authed) return;
@@ -33,8 +31,15 @@ export default function App() {
     const email = params.get("google_email");
     const service = params.get("google_service");
     if (params.get("google_connected") === "true" && email && service) {
-      if (service === "gmail") { sessionStorage.setItem("gmail_user", email); setGmailUser(email); }
-      else if (service === "calendar") { sessionStorage.setItem("calendar_user", email); setCalendarUser(email); }
+      if (service === "gmail") {
+        sessionStorage.setItem("gmail_user", email);
+        setGmailUser(email);
+        fetchGoogleToken(email, "gmail").then((t) => { if (t) { sessionStorage.setItem("gmail_token", t); setGmailToken(t); } });
+      } else if (service === "calendar") {
+        sessionStorage.setItem("calendar_user", email);
+        setCalendarUser(email);
+        fetchGoogleToken(email, "calendar").then((t) => { if (t) { sessionStorage.setItem("calendar_token", t); setCalendarToken(t); } });
+      }
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -50,7 +55,7 @@ export default function App() {
       .map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
 
     try {
-      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailUser ?? undefined, calendarUser ?? undefined);
+      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailToken ?? undefined, calendarToken ?? undefined);
       setMessages((prev) =>
         prev.map((m) => m.pending ? { ...m, text: result.reply, toolUses: result.toolUses, pending: false } : m)
       );
@@ -90,8 +95,10 @@ export default function App() {
           onSave={(c) => setAgentConfig(c)}
           gmailUser={gmailUser}
           calendarUser={calendarUser}
-          onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); setGmailUser(null); }}
-          onCalendarDisconnect={() => { sessionStorage.removeItem("calendar_user"); setCalendarUser(null); }}
+          gmailToken={gmailToken}
+          calendarToken={calendarToken}
+          onGmailDisconnect={() => { sessionStorage.removeItem("gmail_user"); sessionStorage.removeItem("gmail_token"); setGmailUser(null); setGmailToken(null); }}
+          onCalendarDisconnect={() => { sessionStorage.removeItem("calendar_user"); sessionStorage.removeItem("calendar_token"); setCalendarUser(null); setCalendarToken(null); }}
         />
       )}
     </div>

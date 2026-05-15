@@ -66,6 +66,16 @@ export async function saveAutomation(automation: Automation): Promise<void> {
   });
 }
 
+export async function fetchGoogleToken(email: string, service: "gmail" | "calendar"): Promise<string | null> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/api/google-token?email=${encodeURIComponent(email)}&service=${service}`, { headers });
+  if (!res.ok) return null;
+  const { token: googleToken } = await res.json();
+  return googleToken;
+}
+
 export async function triggerAutomation(id: string): Promise<void> {
   const headers: Record<string, string> = {};
   const token = getToken();
@@ -110,8 +120,8 @@ export async function sendMessage(
   history: HistoryItem[],
   mode: "search" | "tools" = "tools",
   systemPrompt?: string,
-  gmailUser?: string,
-  calendarUser?: string
+  gmailToken?: string,
+  calendarToken?: string
 ): Promise<ChatResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
@@ -120,7 +130,7 @@ export async function sendMessage(
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, history, mode, systemPrompt, gmailUser, calendarUser }),
+    body: JSON.stringify({ message, history, mode, systemPrompt, gmailToken, calendarToken }),
   });
 
   if (!res.ok) {

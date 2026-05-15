@@ -184,6 +184,28 @@ app.post("/api/automations/:id/run", requireAdmin, async (req, res) => {
   }
 });
 
+// Returns a signed API token for the connected Google service user
+app.get("/api/google-token", async (req, res) => {
+  const { email, service } = req.query as { email: string; service: string };
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) {
+    res.status(500).json({ error: "Not configured" });
+    return;
+  }
+  try {
+    const r = await fetch(`${oauthServiceUrl}/api/user-token/${agentId}/${service}/${email}`, {
+      headers: { "x-api-key": oauthServiceKey },
+    });
+    if (!r.ok) { res.status(404).json({ error: "User not connected" }); return; }
+    const { token } = await r.json() as { token: string };
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.get("/api/config", (_req, res) => {
   res.json(agentConfig);
 });
@@ -216,14 +238,23 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools", systemPrompt, gmailUser, calendarUser } = req.body as {
+  const { message, history = [], mode = "tools", systemPrompt, gmailToken, calendarToken } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
     systemPrompt?: string;
-    gmailUser?: string;
-    calendarUser?: string;
+    gmailToken?: string;
+    calendarToken?: string;
   };
+
+  const oauthKey = process.env.OAUTH_SERVICE_KEY ?? "";
+  const resolveToken = (token?: string) => {
+    if (!token) return undefined;
+    try { return (jwt.verify(token, oauthKey) as { email: string }).email; }
+    catch { return undefined; }
+  };
+  const gmailUser = resolveToken(gmailToken);
+  const calendarUser = resolveToken(calendarToken);
 
   if (!message?.trim()) {
     res.status(400).json({ error: "message is required" });
