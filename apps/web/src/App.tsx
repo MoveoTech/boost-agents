@@ -4,12 +4,20 @@ import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
 import AgentSidebar from "./components/AgentSidebar";
 import { sendMessage, getToken, getConfig, whoami, fetchGoogleToken, identityComplete } from "./api/client";
-import type { DisplayMessage, HistoryItem, AgentConfig } from "./types";
+import type { DisplayMessage, HistoryItem, AgentConfig, UserSettings } from "./types";
+
+function loadUserSettings(email: string): UserSettings {
+  try { return JSON.parse(localStorage.getItem(`user_settings_${email}`) ?? "{}"); } catch { return {}; }
+}
+function saveUserSettings(email: string, s: UserSettings) {
+  localStorage.setItem(`user_settings_${email}`, JSON.stringify(s));
+}
 
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken());
   const [isAdmin, setIsAdmin] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userSettings, setUserSettings] = useState<UserSettings>({});
   const [mobileTab, setMobileTab] = useState<"chat" | "settings">("chat");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -40,6 +48,7 @@ export default function App() {
       identityComplete(identityToken).then(({ isAdmin: a, email }) => {
         setIsAdmin(a);
         setUserEmail(email);
+        setUserSettings(loadUserSettings(email));
         setAuthed(true);
         autoFetchTokens(email);
       }).catch(() => {});
@@ -72,6 +81,7 @@ export default function App() {
       setIsAdmin(a);
       if (email) {
         setUserEmail(email);
+        setUserSettings(loadUserSettings(email));
         if (!gmailUser && !calendarUser) autoFetchTokens(email);
       }
     }).catch(() => {});
@@ -88,7 +98,8 @@ export default function App() {
       .map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
 
     try {
-      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailToken ?? undefined, calendarToken ?? undefined, agentConfig?.model);
+      const model = userSettings.model ?? agentConfig?.model;
+      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailToken ?? undefined, calendarToken ?? undefined, model, userSettings.tools as Record<string, boolean> | undefined, userSettings.systemPromptAddition);
       setMessages((prev) =>
         prev.map((m) => m.pending ? { ...m, text: result.reply, toolUses: result.toolUses, pending: false } : m)
       );
@@ -125,6 +136,8 @@ export default function App() {
         userEmail={userEmail}
         agentConfig={agentConfig}
         onSave={(c) => setAgentConfig(c)}
+        userSettings={userSettings}
+        onUserSettingsChange={(s) => { setUserSettings(s); if (userEmail) saveUserSettings(userEmail, s); }}
         gmailUser={gmailUser}
         calendarUser={calendarUser}
         gmailToken={gmailToken}

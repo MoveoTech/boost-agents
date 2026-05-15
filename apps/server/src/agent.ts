@@ -84,20 +84,25 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
   },
 };
 
-function buildSystemPrompt(override?: string): string {
+function buildSystemPrompt(override?: string, addition?: string): string {
   const base = override ?? agentConfig.systemPrompt;
   const enabledSkills = agentConfig.skills?.filter((s) => s.enabled) ?? [];
-  if (!enabledSkills.length) return base;
-  const skillsBlock = enabledSkills.map((s) => `## ${s.name}\n${s.content}`).join("\n\n");
-  return `${base}\n\n---\n\n${skillsBlock}`;
+  const skillsBlock = enabledSkills.length
+    ? `\n\n---\n\n${enabledSkills.map((s) => `## ${s.name}\n${s.content}`).join("\n\n")}`
+    : "";
+  const additionBlock = addition?.trim() ? `\n\n---\n\n${addition.trim()}` : "";
+  return `${base}${skillsBlock}${additionBlock}`;
 }
 
-function buildTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
+function buildTools(gmailUser?: string, calendarUser?: string, toolPreferences?: Record<string, boolean>): ToolDecl[] {
+  const prefs = toolPreferences ?? {};
+  const enabled = (key: keyof typeof agentConfig.tools) =>
+    key in prefs ? prefs[key] : agentConfig.tools[key];
   const tools: ToolDecl[] = [];
-  if (agentConfig.tools.fetchUrl)   tools.push(ALL_TOOLS.fetch_url);
-  if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
-  if (gmailUser)    tools.push(ALL_TOOLS.gmail_send, ALL_TOOLS.gmail_search, ALL_TOOLS.gmail_read);
-  if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
+  if (enabled("fetchUrl"))    tools.push(ALL_TOOLS.fetch_url);
+  if (enabled("httpRequest")) tools.push(ALL_TOOLS.http_request);
+  if (gmailUser    && enabled("gmail"))         tools.push(ALL_TOOLS.gmail_send, ALL_TOOLS.gmail_search, ALL_TOOLS.gmail_read);
+  if (calendarUser && enabled("googleCalendar")) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   return tools;
 }
 
@@ -160,9 +165,12 @@ export async function chat(
   systemPrompt?: string,
   gmailUser?: string,
   calendarUser?: string,
-  modelOverride?: ModelConfig
+  modelOverride?: ModelConfig,
+  toolPreferences?: Record<string, boolean>,
+  systemPromptAddition?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
+  const builtPrompt = buildSystemPrompt(systemPrompt, systemPromptAddition);
 
   // Search mode: use Gemini built-in Google Search (no function tools)
   if (mode === "search" && agentConfig.tools.googleSearch) {
@@ -172,17 +180,17 @@ export async function chat(
       model: "gemini-2.5-flash",
       // @ts-ignore
       tools: [{ googleSearch: {} }],
-      systemInstruction: buildSystemPrompt(systemPrompt),
+      systemInstruction: builtPrompt,
     });
     const session = m.startChat({ history });
     const result = await session.sendMessage(message);
     return { reply: result.response.text(), toolUses: [] };
   }
 
-  const tools = buildTools(gmailUser, calendarUser);
+  const tools = buildTools(gmailUser, calendarUser, toolPreferences);
   return chatWithModel(
     model,
-    buildSystemPrompt(systemPrompt),
+    builtPrompt,
     history,
     message,
     tools,

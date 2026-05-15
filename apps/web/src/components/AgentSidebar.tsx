@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import SidebarSection from "./SidebarSection";
 import SkillsModal from "./SkillsModal";
 import { saveConfig, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders } from "../api/client";
-import type { AgentConfig, Automation, Skill } from "../types";
+import type { AgentConfig, Automation, Skill, UserSettings } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
 
@@ -68,6 +68,8 @@ interface Props {
   userEmail: string | null;
   agentConfig: AgentConfig | null;
   onSave: (config: AgentConfig) => void;
+  userSettings: UserSettings;
+  onUserSettingsChange: (s: UserSettings) => void;
   gmailUser: string | null;
   calendarUser: string | null;
   gmailToken: string | null;
@@ -77,7 +79,7 @@ interface Props {
   className?: string;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect, className }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailUser, calendarUser, gmailToken, calendarToken, onGmailDisconnect, onCalendarDisconnect, className }: Props) {
   const [config, setConfig] = useState<AgentConfig | null>(agentConfig);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [apiKey, setApiKey] = useState("");
@@ -319,6 +321,51 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
           />
         </SidebarSection>
       )}
+
+      {/* My Preferences — personal overrides, visible to everyone */}
+      <SidebarSection title="My Preferences">
+        <div className="sidebar-pref-label">Model</div>
+        <select
+          className="configure-input"
+          value={userSettings.model ? `${userSettings.model.provider}:${userSettings.model.modelId}` : ""}
+          onChange={(e) => {
+            const val = e.target.value;
+            if (!val) { onUserSettingsChange({ ...userSettings, model: undefined }); return; }
+            const [provider, ...rest] = val.split(":") as [AgentConfig["model"]["provider"], ...string[]];
+            onUserSettingsChange({ ...userSettings, model: { provider, modelId: rest.join(":") } });
+          }}
+        >
+          <option value="">Default ({agentConfig?.model?.modelId ?? "gemini-2.5-flash"})</option>
+          {(["gemini", "claude", "openai"] as const).map((p) => (
+            <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude" : "OpenAI"}>
+              {MODELS.filter((m) => m.provider === p).map((m) => (
+                <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
+                  {m.label}{!providers[p] ? " — key not set" : ""}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+
+        <div className="sidebar-pref-label" style={{ marginTop: 10 }}>Personal instructions</div>
+        <textarea
+          className="configure-textarea"
+          rows={3}
+          placeholder="Add instructions that apply only to you…"
+          value={userSettings.systemPromptAddition ?? ""}
+          onChange={(e) => onUserSettingsChange({ ...userSettings, systemPromptAddition: e.target.value })}
+        />
+
+        {userSettings.model || userSettings.systemPromptAddition ? (
+          <button
+            className="automation-cancel-btn"
+            style={{ marginTop: 6, fontSize: 12 }}
+            onClick={() => onUserSettingsChange({ ...userSettings, model: undefined, systemPromptAddition: "" })}
+          >
+            Reset to defaults
+          </button>
+        ) : null}
+      </SidebarSection>
 
       {/* Tools — toggle admin-only, but Google connect/disconnect for everyone */}
       <SidebarSection title="Connections">

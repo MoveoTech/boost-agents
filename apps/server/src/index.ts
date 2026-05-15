@@ -285,7 +285,7 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools", systemPrompt, gmailToken, calendarToken, model } = req.body as {
+  const { message, history = [], mode = "tools", systemPrompt, gmailToken, calendarToken, model, toolPreferences, systemPromptAddition } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
@@ -293,6 +293,8 @@ app.post("/api/chat", async (req, res) => {
     gmailToken?: string;
     calendarToken?: string;
     model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
+    toolPreferences?: Record<string, boolean>;
+    systemPromptAddition?: string;
   };
 
   const oauthKey = process.env.OAUTH_SERVICE_KEY ?? "";
@@ -310,7 +312,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const result = await chat(message.trim(), history, mode, systemPrompt, gmailUser, calendarUser, model);
+    const result = await chat(message.trim(), history, mode, systemPrompt, gmailUser, calendarUser, model, toolPreferences, systemPromptAddition);
     res.json(result);
   } catch (err) {
     console.error(err);
