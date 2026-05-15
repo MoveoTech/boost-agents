@@ -142,4 +142,5 @@ jobs:
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       - name: Print URL
-        run: echo "Agent: ${{ steps.deploy.outputs.url }}"
+        run: |
+          echo "Agent: ${{ steps.deploy.outputs.url }}"
