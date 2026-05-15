@@ -43,6 +43,7 @@ export interface Automation {
 export interface UserSettings {
   model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
   systemPrompt?: string;
+  avatar?: string;
 }
 
 export interface AgentConfig {

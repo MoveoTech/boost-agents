@@ -47,6 +47,19 @@ export async function getProviders(): Promise<{ gemini: boolean; claude: boolean
   return res.ok ? res.json() : { gemini: true, claude: false, openai: false };
 }
 
+export async function getUserSettings(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/api/user-settings`);
+  return res.ok ? res.json() : {};
+}
+
+export async function saveUserSettings(settings: Record<string, unknown>): Promise<void> {
+  await fetch(`${BASE}/api/user-settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+}
+
 export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean }> {
   const res = await fetch(`${BASE}/api/connections`);
   return res.ok ? res.json() : { gmail: false, calendar: false };

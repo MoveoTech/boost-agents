@@ -3,15 +3,8 @@ import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
 import AgentSidebar from "./components/AgentSidebar";
-import { sendMessage, getConfig, whoami, getConnections, disconnectService, identityComplete } from "./api/client";
+import { sendMessage, getConfig, whoami, getConnections, disconnectService, identityComplete, getUserSettings, saveUserSettings } from "./api/client";
 import type { DisplayMessage, HistoryItem, AgentConfig, UserSettings } from "./types";
-
-function loadUserSettings(email: string): UserSettings {
-  try { return JSON.parse(localStorage.getItem(`user_settings_${email}`) ?? "{}"); } catch { return {}; }
-}
-function saveUserSettings(email: string, s: UserSettings) {
-  localStorage.setItem(`user_settings_${email}`, JSON.stringify(s));
-}
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
@@ -30,15 +23,13 @@ export default function App() {
       setAuthed(authenticated);
       if (authenticated) {
         setIsAdmin(a);
-        if (email) {
-          setUserEmail(email);
-          setUserSettings(loadUserSettings(email));
-        }
+        if (email) setUserEmail(email);
         getConfig().then(setAgentConfig).catch(() => {});
         getConnections().then(({ gmail, calendar }) => {
           setGmailConnected(gmail);
           setCalendarConnected(calendar);
         }).catch(() => {});
+        getUserSettings().then((s) => setUserSettings(s as UserSettings)).catch(() => {});
       }
     }).catch(() => setAuthed(false));
   }, []);
@@ -53,7 +44,6 @@ export default function App() {
       return;
     }
 
-    // Google service connect callback — just re-check connections from server
     if (params.get("google_connected") === "true") {
       window.history.replaceState({}, "", window.location.pathname);
       getConnections().then(({ gmail, calendar }) => {
@@ -64,6 +54,11 @@ export default function App() {
 
     checkSession();
   }, [checkSession]);
+
+  const handleUserSettingsChange = useCallback((s: UserSettings) => {
+    setUserSettings(s);
+    saveUserSettings(s as Record<string, unknown>).catch(() => {});
+  }, []);
 
   const handleSend = useCallback(async (text: string) => {
     const userMsg: DisplayMessage = { id: crypto.randomUUID(), role: "user", text };
@@ -121,7 +116,7 @@ export default function App() {
         agentConfig={agentConfig}
         onSave={(c) => setAgentConfig(c)}
         userSettings={userSettings}
-        onUserSettingsChange={(s) => { setUserSettings(s); if (userEmail) saveUserSettings(userEmail, s); }}
+        onUserSettingsChange={handleUserSettingsChange}
         gmailConnected={gmailConnected}
         calendarConnected={calendarConnected}
         onGmailDisconnect={() => disconnectService("gmail").then(() => setGmailConnected(false))}

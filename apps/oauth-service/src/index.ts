@@ -201,6 +201,25 @@ app.get("/api/user-token/:agentId/:service/:userId", async (req, res) => {
   }
 });
 
+// Per-user settings (model preference, personal instructions, avatar)
+app.get("/api/user-settings/:agentId/:userId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId } = req.params;
+  try {
+    const doc = await db.collection("user_settings").doc(agentId).collection("users").doc(userId).get();
+    res.json(doc.exists ? doc.data() : {});
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.put("/api/user-settings/:agentId/:userId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId } = req.params;
+  try {
+    await db.collection("user_settings").doc(agentId).collection("users").doc(userId).set(req.body, { merge: true });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // Disconnects a user from a service
 app.delete("/api/users/:agentId/:service/:userId", async (req, res) => {
   if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {

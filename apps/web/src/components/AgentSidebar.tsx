@@ -37,8 +37,6 @@ function SecretRow({ label, value, onCopy, copied, visible = false }: { label: s
     </div>
   );
 }
-const STORAGE_KEY = "agent_config";
-const AVATAR_KEY = "agent_avatar";
 
 const TOOL_DEFS = [
   { key: "fetchUrl" as const, label: "Web Fetch", icon: "🌐", desc: "GET any URL" },
@@ -87,7 +85,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   const [config, setConfig] = useState<AgentConfig | null>(merged);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [apiKey, setApiKey] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState(() => localStorage.getItem(AVATAR_KEY) ?? "");
+  const [avatarUrl, setAvatarUrl] = useState(userSettings.avatar ?? "");
   const [publishing, setPublishing] = useState(false);
   const [publishStatus, setPublishStatus] = useState<"idle" | "done" | "error">("idle");
   const [newAuto, setNewAuto] = useState<Automation | null>(null);
@@ -106,6 +104,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       ...(userSettings.systemPrompt !== undefined ? { systemPrompt: userSettings.systemPrompt } : {}),
     });
   }, [agentConfig]);
+  useEffect(() => { if (userSettings.avatar) setAvatarUrl(userSettings.avatar); }, [userSettings.avatar]);
   useEffect(() => { listAutomations().then(setAutomations).catch(() => {}); }, []);
   useEffect(() => { getApiKey().then(setApiKey).catch(() => {}); }, []);
   useEffect(() => { getProviders().then(setProviders).catch(() => {}); }, []);
@@ -116,11 +115,10 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   const update = (patch: Partial<AgentConfig>) => {
     const next = { ...config, ...patch };
     setConfig(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     onSave(next);
   };
 
-  // Personal update — saves to userSettings (localStorage per user), not global config
+  // Personal update — saves to userSettings (server-side via Firestore), not global config
   const updatePersonal = (patch: { model?: AgentConfig["model"]; systemPrompt?: string }) => {
     const next = { ...config, ...patch };
     setConfig(next);
@@ -148,7 +146,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
     reader.onload = () => {
       const url = reader.result as string;
       setAvatarUrl(url);
-      localStorage.setItem(AVATAR_KEY, url);
+      onUserSettingsChange({ ...userSettings, avatar: url } as UserSettings);
     };
     reader.readAsDataURL(file);
   };

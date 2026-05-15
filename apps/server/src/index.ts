@@ -266,6 +266,39 @@ function getSessionEmail(req: express.Request): string | undefined {
   catch { return undefined; }
 }
 
+// Per-user settings (model, instructions, avatar) — stored in oauth-service Firestore
+app.get("/api/user-settings", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.json({}); return; }
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) { res.json({}); return; }
+  try {
+    const r = await fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(email)}`, {
+      headers: { "x-api-key": oauthServiceKey },
+    });
+    res.json(r.ok ? await r.json() : {});
+  } catch { res.json({}); }
+});
+
+app.put("/api/user-settings", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) { res.status(500).json({ error: "Not configured" }); return; }
+  try {
+    await fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(email)}`, {
+      method: "PUT",
+      headers: { "x-api-key": oauthServiceKey, "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // Returns which Google services the current user has connected
 app.get("/api/connections", async (req, res) => {
   const email = getSessionEmail(req);

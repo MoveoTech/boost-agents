@@ -15,7 +15,6 @@ type Tab = "settings" | "automations" | "api";
 type DeployStatus = "idle" | "deploying" | "done" | "error";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
-const STORAGE_KEY = "agent_config";
 
 interface Props {
   onSave: (config: AgentConfig) => void;
@@ -35,14 +34,7 @@ export default function ConfigurePanel({ onSave, gmailUser, calendarUser, onGmai
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try { setConfig(JSON.parse(stored)); } catch {}
-    }
-    getConfig().then((c) => {
-      setConfig(c);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(c));
-    }).catch(() => {});
+    getConfig().then(setConfig).catch(() => {});
     getApiKey().then(setApiKey).catch(() => {});
   }, []);
 
@@ -60,7 +52,6 @@ export default function ConfigurePanel({ onSave, gmailUser, calendarUser, onGmai
   const handleDeploy = async () => {
     setStatus("deploying");
     setError("");
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
     onSave(config);
     try {
       const { commitUrl: url } = await saveConfig(config);
