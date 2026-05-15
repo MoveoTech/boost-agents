@@ -36,7 +36,27 @@ jobs:
       id-token: 'write'
 
     steps:
-      - uses: actions/checkout@v4
+      # Always build from the template — child repos only provide config.ts + secrets
+      - name: Checkout template source
+        uses: actions/checkout@v4
+        with:
+          repository: MoveoTech/boost-agents
+          ref: main
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Apply child repo config
+        uses: actions/checkout@v4
+        with:
+          path: _child
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Overlay config.ts from child repo
+        run: |
+          if [ -f "_child/apps/server/src/config.ts" ]; then
+            cp _child/apps/server/src/config.ts apps/server/src/config.ts
+            echo "Applied config from ${{ github.repository }}"
+          fi
+          rm -rf _child
 
       # 1. AUTH AS MASTER
       - id: 'auth_master'
