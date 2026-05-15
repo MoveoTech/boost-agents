@@ -42,6 +42,7 @@ export interface Automation {
 export interface AgentConfig {
   name: string;
   systemPrompt: string;
+  model: { provider: "gemini" | "claude" | "openai"; modelId: string };
   tools: {
     fetchUrl: boolean;
     httpRequest: boolean;

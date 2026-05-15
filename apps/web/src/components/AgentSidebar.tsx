@@ -1,10 +1,23 @@
 import { useState, useEffect, useRef } from "react";
 import SidebarSection from "./SidebarSection";
 import SkillsModal from "./SkillsModal";
-import { saveConfig, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation } from "../api/client";
+import { saveConfig, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders } from "../api/client";
 import type { AgentConfig, Automation, Skill } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
+
+const MODELS = [
+  { provider: "gemini", modelId: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { provider: "gemini", modelId: "gemini-2.5-pro",   label: "Gemini 2.5 Pro" },
+  { provider: "gemini", modelId: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+  { provider: "claude", modelId: "claude-opus-4-7",           label: "Claude Opus 4.7" },
+  { provider: "claude", modelId: "claude-sonnet-4-6",         label: "Claude Sonnet 4.6" },
+  { provider: "claude", modelId: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { provider: "openai", modelId: "gpt-4o",      label: "GPT-4o" },
+  { provider: "openai", modelId: "gpt-4o-mini", label: "GPT-4o mini" },
+  { provider: "openai", modelId: "o1",          label: "o1" },
+  { provider: "openai", modelId: "o1-mini",     label: "o1 mini" },
+] as const;
 
 function SecretRow({ label, value, onCopy, copied, visible = false }: { label: string; value: string; onCopy: (v: string) => void; copied: boolean; visible?: boolean }) {
   const [show, setShow] = useState(false);
@@ -73,11 +86,13 @@ export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarU
   const [runningId, setRunningId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
+  const [providers, setProviders] = useState({ gemini: true, claude: false, openai: false });
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setConfig(agentConfig); }, [agentConfig]);
   useEffect(() => { listAutomations().then(setAutomations).catch(() => {}); }, []);
   useEffect(() => { getApiKey().then(setApiKey).catch(() => {}); }, []);
+  useEffect(() => { getProviders().then(setProviders).catch(() => {}); }, []);
 
   if (!config) return <div className="sidebar-loading">Loading…</div>;
 
@@ -240,6 +255,28 @@ export default function AgentSidebar({ agentConfig, onSave, gmailUser, calendarU
             </div>
           </div>
         )}
+      </SidebarSection>
+
+      {/* Model */}
+      <SidebarSection title="Model">
+        <select
+          className="configure-input"
+          value={`${config.model?.provider ?? "gemini"}:${config.model?.modelId ?? "gemini-2.5-flash"}`}
+          onChange={(e) => {
+            const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
+            update({ model: { provider, modelId: rest.join(":") } });
+          }}
+        >
+          {(["gemini", "claude", "openai"] as const).map((p) => (
+            <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude (Anthropic)" : "OpenAI"}>
+              {MODELS.filter((m) => m.provider === p).map((m) => (
+                <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
+                  {m.label}{!providers[p] ? " — API key not set" : ""}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
       </SidebarSection>
 
       {/* Instructions */}

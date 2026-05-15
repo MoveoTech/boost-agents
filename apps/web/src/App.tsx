@@ -55,7 +55,7 @@ export default function App() {
       .map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
 
     try {
-      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailToken ?? undefined, calendarToken ?? undefined);
+      const result = await sendMessage(text, history, "tools", agentConfig?.systemPrompt, gmailToken ?? undefined, calendarToken ?? undefined, agentConfig?.model);
       setMessages((prev) =>
         prev.map((m) => m.pending ? { ...m, text: result.reply, toolUses: result.toolUses, pending: false } : m)
       );

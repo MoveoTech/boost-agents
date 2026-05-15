@@ -8,6 +8,7 @@ export interface Skill {
 export interface AgentConfig {
   name: string;
   systemPrompt: string;
+  model: { provider: "gemini" | "claude" | "openai"; modelId: string };
   skills: Skill[];
   tools: {
     fetchUrl: boolean;
@@ -29,6 +30,7 @@ export interface AgentConfig {
 export const agentConfig: AgentConfig = {
   name: "Boost Agent",
   systemPrompt: "You are a helpful AI assistant. Be concise, accurate, and friendly.",
+  model: { provider: "gemini" as const, modelId: "gemini-2.5-flash" },
   skills: [],
   tools: {
     fetchUrl: true,

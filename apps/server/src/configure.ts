@@ -8,6 +8,7 @@ function generateConfigFile(config: AgentConfig): string {
   return `export interface AgentConfig {
   name: string;
   systemPrompt: string;
+  model: { provider: "gemini" | "claude" | "openai"; modelId: string };
   skills: { id: string; name: string; content: string; enabled: boolean }[];
   tools: {
     fetchUrl: boolean;

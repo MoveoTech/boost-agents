@@ -66,6 +66,14 @@ export async function saveAutomation(automation: Automation): Promise<void> {
   });
 }
 
+export async function getProviders(): Promise<{ gemini: boolean; claude: boolean; openai: boolean }> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/api/providers`, { headers });
+  return res.ok ? res.json() : { gemini: true, claude: false, openai: false };
+}
+
 export async function fetchGoogleToken(email: string, service: "gmail" | "calendar"): Promise<string | null> {
   const headers: Record<string, string> = {};
   const token = getToken();
@@ -121,7 +129,8 @@ export async function sendMessage(
   mode: "search" | "tools" = "tools",
   systemPrompt?: string,
   gmailToken?: string,
-  calendarToken?: string
+  calendarToken?: string,
+  model?: { provider: string; modelId: string }
 ): Promise<ChatResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
@@ -130,7 +139,7 @@ export async function sendMessage(
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, history, mode, systemPrompt, gmailToken, calendarToken }),
+    body: JSON.stringify({ message, history, mode, systemPrompt, gmailToken, calendarToken, model }),
   });
 
   if (!res.ok) {

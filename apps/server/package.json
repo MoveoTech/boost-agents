@@ -8,12 +8,14 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
     "@google/generative-ai": "^0.21.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
-    "jsonwebtoken": "^9.0.3"
+    "jsonwebtoken": "^9.0.3",
+    "openai": "^6.37.0"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

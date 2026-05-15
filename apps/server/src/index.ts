@@ -206,6 +206,14 @@ app.get("/api/google-token", async (req, res) => {
   }
 });
 
+app.get("/api/providers", (_req, res) => {
+  res.json({
+    gemini:  !!process.env.GEMINI_API_KEY,
+    claude:  !!process.env.ANTHROPIC_API_KEY,
+    openai:  !!process.env.OPENAI_API_KEY,
+  });
+});
+
 app.get("/api/config", (_req, res) => {
   res.json(agentConfig);
 });
@@ -238,13 +246,14 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools", systemPrompt, gmailToken, calendarToken } = req.body as {
+  const { message, history = [], mode = "tools", systemPrompt, gmailToken, calendarToken, model } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
     systemPrompt?: string;
     gmailToken?: string;
     calendarToken?: string;
+    model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
   };
 
   const oauthKey = process.env.OAUTH_SERVICE_KEY ?? "";
@@ -262,7 +271,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const result = await chat(message.trim(), history, mode, systemPrompt, gmailUser, calendarUser);
+    const result = await chat(message.trim(), history, mode, systemPrompt, gmailUser, calendarUser, model);
     res.json(result);
   } catch (err) {
     console.error(err);
