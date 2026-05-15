@@ -47,8 +47,9 @@ app.get("/api/whoami", (req, res) => {
 app.post("/api/login", (req, res) => {
   const { password } = req.body as { password?: string };
 
-  const isAdmin = !!API_KEY && password === API_KEY;
-  const isUser = !!ACCESS_PASSWORD && password === ACCESS_PASSWORD;
+  const noAuth = !ACCESS_PASSWORD && !API_KEY;
+  const isAdmin = noAuth || (!!API_KEY && password === API_KEY);
+  const isUser = noAuth || (!!ACCESS_PASSWORD && password === ACCESS_PASSWORD);
 
   if (!isAdmin && !isUser) {
     res.status(401).json({ error: "Invalid password" });

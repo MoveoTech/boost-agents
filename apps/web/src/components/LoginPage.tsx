@@ -40,7 +40,7 @@ export default function LoginPage({ onLogin }: Props) {
           autoFocus
         />
         {error && <p className="login-error">{error}</p>}
-        <button type="submit" disabled={!password || loading}>
+        <button type="submit" disabled={loading}>
           {loading ? "Signing in…" : "Sign in"}
         </button>
       </form>

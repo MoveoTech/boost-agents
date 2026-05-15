@@ -6,10 +6,11 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=server --filter=web",
     "build": "turbo run build",
     "lint": "turbo run lint"
   },
+  "packageManager": "npm@10.8.2",
   "devDependencies": {
     "turbo": "latest"
   }
