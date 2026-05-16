@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import path from "path";
 import { chat, chatStream } from "./agent";
+import { getUserAccessToken } from "./google-auth";
 import { slackSendMessage, slackGetUserEmail } from "./slack";
 import { agentConfig } from "./config";
 import { commitConfig } from "./configure";
@@ -232,6 +233,15 @@ app.post("/api/auth/identity/complete", (req, res) => {
   } catch {
     res.status(401).json({ error: "Invalid or expired identity token" });
   }
+});
+
+app.get("/api/auth/monday/start", (req, res) => {
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !agentId) { res.status(500).json({ error: "OAuth service not configured" }); return; }
+  const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
+  const params = new URLSearchParams({ agentId, agentUrl });
+  res.redirect(`${oauthServiceUrl}/auth/monday/start?${params}`);
 });
 
 app.get("/api/auth/google/start", (req, res) => {
@@ -466,9 +476,9 @@ app.get("/api/connections", async (req, res) => {
     const r = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
       headers: { "x-api-key": oauthServiceKey },
     });
-    const { users } = await r.json() as { users: { email: string; gmail: boolean; calendar: boolean }[] };
+    const { users } = await r.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean }[] };
     const user = users.find((u) => u.email === email);
-    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar });
+    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday });
   } catch { res.json({ gmail: false, calendar: false }); }
 });
 
@@ -598,6 +608,7 @@ app.post("/api/chat", async (req, res) => {
     const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
     const toolUses: { name: string; input: string; output: string }[] = [];
 
+    const mondayTokenStream = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
     try {
       await chatStream(
         effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model,
@@ -612,7 +623,8 @@ app.post("/api/chat", async (req, res) => {
             if (t) t.output = output.slice(0, 500);
             send({ type: "tool_complete", tool: { name, output: output.slice(0, 500) } });
           },
-        }
+        },
+        mondayTokenStream,
       );
       send({ type: "done", toolUses });
       trackUsage(modelId, toolUses.map((t) => t.name), Date.now() - t0);
@@ -625,7 +637,8 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model);
+    const mondayToken = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
+    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken);
     trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
   } catch (err) {

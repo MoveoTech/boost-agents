@@ -33,6 +33,10 @@ on:
         required: false
       MONDAY_API_KEY:
         required: false
+      MONDAY_CLIENT_ID:
+        required: false
+      MONDAY_CLIENT_SECRET:
+        required: false
 
 jobs:
   provision-and-deploy:
@@ -168,6 +172,8 @@ jobs:
             SLACK_BOT_TOKEN=${{ secrets.SLACK_BOT_TOKEN }}
             SLACK_SIGNING_SECRET=${{ secrets.SLACK_SIGNING_SECRET }}
             MONDAY_API_KEY=${{ secrets.MONDAY_API_KEY }}
+            MONDAY_CLIENT_ID=${{ secrets.MONDAY_CLIENT_ID }}
+            MONDAY_CLIENT_SECRET=${{ secrets.MONDAY_CLIENT_SECRET }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       - name: Print URL

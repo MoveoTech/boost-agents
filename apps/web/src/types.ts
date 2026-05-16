@@ -55,24 +55,6 @@ export interface UserSettings {
   avatar?: string;
 }
 
-export interface MCPServerConfig {
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-}
-
-export interface CustomTool {
-  id: string;
-  name: string;
-  description: string;
-  url: string;
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  headers?: Record<string, string>;
-  bodyTemplate?: string;
-  params: Array<{ name: string; description: string; required: boolean }>;
-  enabled: boolean;
-}
 
 export interface AgentConfig {
   name: string;
@@ -85,6 +67,7 @@ export interface AgentConfig {
     gmail: boolean;
     googleCalendar: boolean;
     slack: boolean;
+    monday: boolean;
   };
   access: {
     chatEnabled: boolean;
@@ -96,8 +79,6 @@ export interface AgentConfig {
     starterPrompts?: string[];
   };
   skills: Skill[];
-  mcpServers?: Record<string, MCPServerConfig>;
-  customTools?: CustomTool[];
 }
 
 export interface AnalyticsDayStat {

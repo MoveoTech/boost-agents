@@ -93,12 +93,12 @@ export async function saveUserSettings(settings: Record<string, unknown>): Promi
   });
 }
 
-export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean }> {
+export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean; monday: boolean }> {
   const res = await fetch(`${BASE}/api/connections`);
-  return res.ok ? res.json() : { gmail: false, calendar: false };
+  return res.ok ? res.json() : { gmail: false, calendar: false, monday: false };
 }
 
-export async function disconnectService(service: "gmail" | "calendar"): Promise<void> {
+export async function disconnectService(service: "gmail" | "calendar" | "monday"): Promise<void> {
   await fetch(`${BASE}/api/connections/${service}`, { method: "DELETE" });
 }
 

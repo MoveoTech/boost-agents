@@ -27,6 +27,7 @@ export default function App() {
   const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(null);
   const [gmailConnected, setGmailConnected] = useState(false);
   const [calendarConnected, setCalendarConnected] = useState(false);
+  const [mondayConnected, setMondayConnected] = useState(false);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
@@ -50,7 +51,7 @@ export default function App() {
         setIsAdmin(a);
         if (email) setUserEmail(email);
         getConfig().then(setAgentConfig).catch(() => {});
-        getConnections().then(({ gmail, calendar }) => { setGmailConnected(gmail); setCalendarConnected(calendar); }).catch(() => {});
+        getConnections().then(({ gmail, calendar, monday }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); }).catch(() => {});
         getUserSettings().then((s) => setUserSettings(s as UserSettings)).catch(() => {});
         listChats().then(setChatSessions).catch(() => {});
       }
@@ -65,9 +66,9 @@ export default function App() {
       identityComplete(identityToken).then(() => checkSession()).catch(() => setAuthed(false));
       return;
     }
-    if (params.get("google_connected") === "true") {
+    if (params.get("google_connected") === "true" || params.get("monday_connected") === "true") {
       window.history.replaceState({}, "", window.location.pathname);
-      getConnections().then(({ gmail, calendar }) => { setGmailConnected(gmail); setCalendarConnected(calendar); }).catch(() => {});
+      getConnections().then(({ gmail, calendar, monday }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); }).catch(() => {});
     }
     checkSession();
   }, [checkSession]);
@@ -313,8 +314,10 @@ export default function App() {
         onUserSettingsChange={handleUserSettingsChange}
         gmailConnected={gmailConnected}
         calendarConnected={calendarConnected}
+        mondayConnected={mondayConnected}
         onGmailDisconnect={() => disconnectService("gmail").then(() => setGmailConnected(false))}
         onCalendarDisconnect={() => disconnectService("calendar").then(() => setCalendarConnected(false))}
+        onMondayDisconnect={() => disconnectService("monday").then(() => setMondayConnected(false))}
         className={mobileTab !== "settings" ? "mobile-hidden" : ""}
         onFeedback={handleFeedback}
         isResponding={isResponding}

@@ -3,7 +3,7 @@ import SidebarSection from "./SidebarSection";
 import SkillsModal from "./SkillsModal";
 import UsageAnalytics from "./UsageAnalytics";
 import { saveConfig, applyConfigLive, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders } from "../api/client";
-import type { AgentConfig, Automation, Skill, UserSettings, MCPServerConfig, CustomTool } from "../types";
+import type { AgentConfig, Automation, Skill, UserSettings } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
 
@@ -46,6 +46,7 @@ const TOOL_DEFS = [
   { key: "gmail" as const, label: "Gmail", icon: "📧", desc: "Send emails", service: "gmail" as const },
   { key: "googleCalendar" as const, label: "Google Calendar", icon: "📅", desc: "List, create calendar events", service: "calendar" as const },
   { key: "slack" as const, label: "Slack", icon: "💬", desc: "Send messages to channels — requires SLACK_BOT_TOKEN secret" },
+  { key: "monday" as const, label: "Monday.com", icon: "📋", desc: "Read boards, create & update items", service: "monday" as const },
 ];
 
 const SCHEDULES = [
@@ -72,14 +73,16 @@ interface Props {
   onUserSettingsChange: (s: UserSettings) => void;
   gmailConnected: boolean;
   calendarConnected: boolean;
+  mondayConnected: boolean;
   onGmailDisconnect: () => void;
   onCalendarDisconnect: () => void;
+  onMondayDisconnect: () => void;
   className?: string;
   onFeedback?: (messageId: string, rating: 1 | -1) => void;
   isResponding?: boolean;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, onGmailDisconnect, onCalendarDisconnect, className, isResponding }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, className, isResponding }: Props) {
   const merged = agentConfig ? {
     ...agentConfig,
     ...(userSettings.model ? { model: userSettings.model } : {}),
@@ -99,10 +102,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   const [showSkills, setShowSkills] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [providers, setProviders] = useState({ gemini: true, claude: false, openai: false });
-  const [mcpJson, setMcpJson] = useState("");
-  const [mcpError, setMcpError] = useState("");
-  const [showCustomToolForm, setShowCustomToolForm] = useState(false);
-  const [newTool, setNewTool] = useState<Partial<CustomTool>>({ method: "GET", params: [], enabled: true });
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -112,9 +111,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       ...(userSettings.model ? { model: userSettings.model } : {}),
       ...(userSettings.systemPrompt !== undefined ? { systemPrompt: userSettings.systemPrompt } : {}),
     });
-    if (agentConfig.mcpServers && Object.keys(agentConfig.mcpServers).length > 0) {
-      setMcpJson(JSON.stringify(agentConfig.mcpServers, null, 2));
-    }
   }, [agentConfig]);
   useEffect(() => { if (userSettings.avatar) setAvatarUrl(userSettings.avatar); }, [userSettings.avatar]);
   useEffect(() => { listAutomations().then(setAutomations).catch(() => {}); }, []);
@@ -141,36 +137,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
 
   const updateTool = (key: keyof AgentConfig["tools"], val: boolean) =>
     update({ tools: { ...config.tools, [key]: val } });
-
-  const saveMcpServers = () => {
-    try {
-      const parsed = mcpJson.trim() ? JSON.parse(mcpJson) as Record<string, MCPServerConfig> : {};
-      update({ mcpServers: parsed });
-      setMcpError("");
-    } catch { setMcpError("Invalid JSON"); }
-  };
-
-  const addCustomTool = () => {
-    if (!newTool.name || !newTool.url) return;
-    const tool: CustomTool = {
-      id: crypto.randomUUID(),
-      name: newTool.name!,
-      description: newTool.description ?? "",
-      url: newTool.url!,
-      method: newTool.method as CustomTool["method"] ?? "GET",
-      params: newTool.params ?? [],
-      enabled: true,
-    };
-    update({ customTools: [...(config.customTools ?? []), tool] });
-    setNewTool({ method: "GET", params: [], enabled: true });
-    setShowCustomToolForm(false);
-  };
-
-  const removeCustomTool = (id: string) =>
-    update({ customTools: (config.customTools ?? []).filter((t) => t.id !== id) });
-
-  const toggleCustomTool = (id: string) =>
-    update({ customTools: (config.customTools ?? []).map((t) => t.id === id ? { ...t, enabled: !t.enabled } : t) });
 
   const handlePublish = async () => {
     setPublishing(true);
@@ -432,8 +398,11 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       {/* Tools — toggle admin-only, Google connect/disconnect for everyone */}
       <SidebarSection title={isAdmin ? "Tools" : "Connections"}>
         {TOOL_DEFS.map(({ key, label, icon, desc, service }) => {
-          const connected = service === "gmail" ? gmailConnected : service === "calendar" ? calendarConnected : false;
-          const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : null;
+          const connected = service === "gmail" ? gmailConnected : service === "calendar" ? calendarConnected : service === "monday" ? mondayConnected : false;
+          const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : service === "monday" ? onMondayDisconnect : null;
+          const connectHref = service === "monday"
+            ? `${BASE}/api/auth/monday/start?returnUrl=${encodeURIComponent(window.location.origin)}`
+            : `${BASE}/api/auth/google/start?service=${service}&returnUrl=${encodeURIComponent(window.location.origin)}`;
           if (!isAdmin && !service) return null;
           return (
             <div key={key} className="sidebar-tool-row">
@@ -445,7 +414,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                     <span className="sidebar-tool-connection">
                       {connected
                         ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
-                        : <a className="sidebar-tool-connect-link" href={`${BASE}/api/auth/google/start?service=${service}&returnUrl=${encodeURIComponent(window.location.origin)}`}>Connect</a>
+                        : <a className="sidebar-tool-connect-link" href={connectHref}>Connect</a>
                       }
                       {connected && onDisconnect && (
                         <button className="sidebar-tool-disconnect" onClick={onDisconnect}>Disconnect</button>
@@ -494,80 +463,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
           onSave={(skills: Skill[]) => { update({ skills }); setShowSkills(false); }}
           onClose={() => setShowSkills(false)}
         />
-      )}
-
-      {/* MCP Servers — admin only, Claude/OpenAI only */}
-      {isAdmin && (
-        <SidebarSection title="MCP Servers" defaultOpen={false}>
-          {config.model.provider === "gemini" ? (
-            <div style={{ padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "var(--radius-sm)", fontSize: 13, color: "#92400e" }}>
-              ⚠️ MCP servers are not supported with Gemini. Switch to <strong>Claude</strong> or <strong>OpenAI</strong> in the Model section to use MCP.
-            </div>
-          ) : (
-            <>
-              <p className="mcp-hint">
-                Paste a JSON object of MCP server configs (same format as Claude Desktop).<br />
-                Use <code>$VAR_NAME</code> to reference Cloud Run env vars as secrets.
-              </p>
-              <textarea
-                className="mcp-editor"
-                value={mcpJson}
-                onChange={(e) => { setMcpJson(e.target.value); setMcpError(""); }}
-                placeholder={`{\n  "monday-platform-mcp": {\n    "command": "npx",\n    "args": ["@mondaydotcomorg/monday-api-mcp@latest", "-t", "$MONDAY_API_KEY"]\n  }\n}`}
-                spellCheck={false}
-              />
-              {mcpError && <p className="mcp-error">{mcpError}</p>}
-              <button className="sidebar-save-btn" style={{ marginTop: 4, alignSelf: "flex-end" }} onClick={saveMcpServers}>
-                Save MCP Servers
-              </button>
-            </>
-          )}
-        </SidebarSection>
-      )}
-
-      {/* Custom HTTP Tools — admin only */}
-      {isAdmin && (
-        <SidebarSection title="Custom Tools" defaultOpen={false}>
-          {(config.customTools ?? []).length === 0 && !showCustomToolForm && (
-            <p className="sidebar-empty">No custom tools yet</p>
-          )}
-          {(config.customTools ?? []).map((t) => (
-            <div key={t.id} className="custom-tool-row">
-              <div className="custom-tool-info">
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span className="custom-tool-name">{t.name}</span>
-                  <span className="custom-tool-method">{t.method}</span>
-                </div>
-                <div className="custom-tool-desc">{t.description || t.url}</div>
-              </div>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                <label className="sidebar-toggle">
-                  <input type="checkbox" checked={t.enabled} onChange={() => toggleCustomTool(t.id)} />
-                  <span className="sidebar-toggle-track" />
-                </label>
-                <button className="sidebar-tool-disconnect" onClick={() => removeCustomTool(t.id)}>✕</button>
-              </div>
-            </div>
-          ))}
-          {showCustomToolForm ? (
-            <div className="custom-tool-form">
-              <input className="configure-input" placeholder="Tool name (snake_case)" value={newTool.name ?? ""} onChange={(e) => setNewTool((t) => ({ ...t, name: e.target.value }))} />
-              <input className="configure-input" placeholder="Description for the agent" value={newTool.description ?? ""} onChange={(e) => setNewTool((t) => ({ ...t, description: e.target.value }))} />
-              <div className="custom-tool-form-row">
-                <select value={newTool.method} onChange={(e) => setNewTool((t) => ({ ...t, method: e.target.value as any }))}>
-                  {["GET","POST","PUT","PATCH","DELETE"].map((m) => <option key={m}>{m}</option>)}
-                </select>
-                <input className="configure-input" placeholder="URL (use {{param}} for placeholders)" value={newTool.url ?? ""} onChange={(e) => setNewTool((t) => ({ ...t, url: e.target.value }))} style={{ flex: 1 }} />
-              </div>
-              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                <button className="automation-cancel-btn" onClick={() => setShowCustomToolForm(false)}>Cancel</button>
-                <button className="sidebar-save-btn" onClick={addCustomTool}>Add Tool</button>
-              </div>
-            </div>
-          ) : (
-            <button className="sidebar-add-skill-btn" onClick={() => setShowCustomToolForm(true)}>+ Add HTTP Tool</button>
-          )}
-        </SidebarSection>
       )}
 
       {/* API Access — admin only */}

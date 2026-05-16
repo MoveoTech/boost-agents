@@ -9,6 +9,8 @@ app.use(express.json());
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
+const MONDAY_CLIENT_ID = process.env.MONDAY_CLIENT_ID!;
+const MONDAY_CLIENT_SECRET = process.env.MONDAY_CLIENT_SECRET!;
 const OAUTH_SERVICE_KEY = process.env.OAUTH_SERVICE_KEY!;
 const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID || "boost-agents-496211";
 
@@ -151,15 +153,22 @@ app.get("/api/access-token/:service/:agentId/:userId", async (req, res) => {
       return;
     }
 
-    const { refreshToken } = doc.data() as { refreshToken: string };
+    const data = doc.data() as { refreshToken?: string; accessToken?: string };
 
+    // Monday stores the access token directly (long-lived, no refresh needed)
+    if (data.accessToken) {
+      res.json({ accessToken: data.accessToken });
+      return;
+    }
+
+    // Google services use refresh token flow
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: GOOGLE_CLIENT_ID,
         client_secret: GOOGLE_CLIENT_SECRET,
-        refresh_token: refreshToken,
+        refresh_token: data.refreshToken!,
         grant_type: "refresh_token",
       }),
     });
@@ -198,6 +207,70 @@ app.get("/api/user-token/:agentId/:service/:userId", async (req, res) => {
     res.json({ token });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── Monday OAuth ──────────────────────────────────────────────────────────────
+
+function getMondayRedirectUri(req: express.Request): string {
+  const host = req.headers["x-forwarded-host"] ?? req.headers.host;
+  return `https://${host}/auth/monday/callback`;
+}
+
+app.get("/auth/monday/start", (req, res) => {
+  const { agentId, agentUrl } = req.query as { agentId: string; agentUrl: string };
+  const state = Buffer.from(JSON.stringify({ agentId, agentUrl })).toString("base64url");
+  const params = new URLSearchParams({
+    client_id: MONDAY_CLIENT_ID,
+    redirect_uri: getMondayRedirectUri(req),
+    response_type: "code",
+    scope: "boards:read boards:write updates:write me:read",
+    state,
+  });
+  res.redirect(`https://auth.monday.com/oauth2/authorize?${params}`);
+});
+
+app.get("/auth/monday/callback", async (req, res) => {
+  const { code, state } = req.query as { code: string; state: string };
+  try {
+    const { agentId, agentUrl } = JSON.parse(Buffer.from(state, "base64url").toString());
+
+    const tokenRes = await fetch("https://auth.monday.com/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: MONDAY_CLIENT_ID,
+        client_secret: MONDAY_CLIENT_SECRET,
+        redirect_uri: getMondayRedirectUri(req),
+        grant_type: "authorization_code",
+      }),
+    });
+    const { access_token } = await tokenRes.json() as { access_token: string };
+
+    // Get the user's email from Monday API
+    const meRes = await fetch("https://api.monday.com/v2", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${access_token}` },
+      body: JSON.stringify({ query: "{ me { email } }" }),
+    });
+    const { data } = await meRes.json() as { data: { me: { email: string } } };
+    const email = data.me.email;
+
+    // Store access token directly (Monday tokens are long-lived, no refresh needed)
+    await db.collection("monday_tokens").doc(agentId).collection("users").doc(email).set({
+      accessToken: access_token,
+      email,
+      connectedAt: new Date(),
+    });
+
+    const redirect = new URL(agentUrl);
+    redirect.searchParams.set("monday_connected", "true");
+    redirect.searchParams.set("monday_email", email);
+    res.redirect(redirect.toString());
+  } catch (err) {
+    console.error("Monday OAuth callback error:", err);
+    res.status(500).send("Monday OAuth failed. Please try again.");
   }
 });
 
@@ -301,12 +374,12 @@ app.get("/api/users/:agentId", async (req, res) => {
   }
   const { agentId } = req.params;
   try {
-    const services = ["gmail", "calendar"] as const;
-    const userMap: Record<string, { gmail: boolean; calendar: boolean }> = {};
+    const services = ["gmail", "calendar", "monday"] as const;
+    const userMap: Record<string, { gmail: boolean; calendar: boolean; monday: boolean }> = {};
     for (const service of services) {
       const snapshot = await db.collection(`${service}_tokens`).doc(agentId).collection("users").get();
       snapshot.forEach((doc) => {
-        if (!userMap[doc.id]) userMap[doc.id] = { gmail: false, calendar: false };
+        if (!userMap[doc.id]) userMap[doc.id] = { gmail: false, calendar: false, monday: false };
         userMap[doc.id][service] = true;
       });
     }

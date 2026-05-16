@@ -5,24 +5,6 @@ export interface Skill {
   enabled: boolean;
 }
 
-export interface MCPServerConfig {
-  command?: string;       // stdio transport: e.g. "npx"
-  args?: string[];        // stdio args: e.g. ["-y", "@mondaycom/mcp-server"]
-  env?: Record<string, string>; // env vars; "$VAR" expands from process.env
-  url?: string;           // SSE/HTTP transport for remote MCP servers
-}
-
-export interface CustomTool {
-  id: string;
-  name: string;
-  description: string;
-  url: string;
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  headers?: Record<string, string>;
-  bodyTemplate?: string;  // JSON template, {{param}} replaced by agent
-  params: Array<{ name: string; description: string; required: boolean }>;
-  enabled: boolean;
-}
 
 export interface AgentConfig {
   name: string;
@@ -36,6 +18,7 @@ export interface AgentConfig {
     gmail: boolean;
     googleCalendar: boolean;
     slack: boolean;
+    monday: boolean;
   };
   access: {
     chatEnabled: boolean;
@@ -46,8 +29,6 @@ export interface AgentConfig {
     placeholder: string;
     starterPrompts?: string[];
   };
-  mcpServers?: Record<string, MCPServerConfig>;
-  customTools?: CustomTool[];
 }
 
 export const agentConfig: AgentConfig = {
@@ -61,7 +42,8 @@ export const agentConfig: AgentConfig = {
     googleSearch: true,
     gmail: false,
     googleCalendar: false,
-    slack: false,
+    slack: true,
+    monday: false,
   },
   access: {
     chatEnabled: true,
@@ -72,6 +54,4 @@ export const agentConfig: AgentConfig = {
     placeholder: "Ask me anything...",
     starterPrompts: [],
   },
-  mcpServers: {},
-  customTools: [],
 };

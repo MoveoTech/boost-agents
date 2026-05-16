@@ -3,10 +3,10 @@ import { chatWithModel, chatWithModelStream, type ModelConfig, type ToolDecl, ty
 import { fetchUrl, httpRequest } from "./tools";
 import { gmailSend } from "./gmail";
 import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
+import { mondayListBoards, mondayGetItems, mondayCreateItem, mondayUpdateItem, mondayCreateUpdate, mondaySearchItems } from "./monday";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
-import { buildMCPTools } from "./mcp";
 
 // ── Tool declarations (provider-agnostic) ────────────────────────────────────
 
@@ -93,6 +93,62 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
       required: ["email"],
     },
   },
+  monday_list_boards: {
+    name: "monday_list_boards", description: "List all monday.com boards the user has access to.",
+    parameters: { properties: {}, required: [] },
+  },
+  monday_get_items: {
+    name: "monday_get_items", description: "Get items from a specific monday.com board.",
+    parameters: {
+      properties: {
+        boardId: { type: "string", description: "The board ID" },
+        limit:   { type: "number", description: "Max items to return (default 20)" },
+      },
+      required: ["boardId"],
+    },
+  },
+  monday_create_item: {
+    name: "monday_create_item", description: "Create a new item on a monday.com board.",
+    parameters: {
+      properties: {
+        boardId:      { type: "string", description: "The board ID" },
+        itemName:     { type: "string", description: "Name of the new item" },
+        columnValues: { type: "object", description: "Optional column values as {columnId: value}" },
+      },
+      required: ["boardId", "itemName"],
+    },
+  },
+  monday_update_item: {
+    name: "monday_update_item", description: "Update column values of an existing monday.com item.",
+    parameters: {
+      properties: {
+        boardId:      { type: "string", description: "The board ID" },
+        itemId:       { type: "string", description: "The item ID" },
+        columnValues: { type: "object", description: "Column values to update as {columnId: value}" },
+      },
+      required: ["boardId", "itemId", "columnValues"],
+    },
+  },
+  monday_create_update: {
+    name: "monday_create_update", description: "Post a text update/comment on a monday.com item.",
+    parameters: {
+      properties: {
+        itemId: { type: "string", description: "The item ID" },
+        body:   { type: "string", description: "The update text" },
+      },
+      required: ["itemId", "body"],
+    },
+  },
+  monday_search_items: {
+    name: "monday_search_items", description: "Search for items by name across monday.com boards.",
+    parameters: {
+      properties: {
+        query: { type: "string", description: "Search query" },
+        limit: { type: "number", description: "Max results (default 10)" },
+      },
+      required: ["query"],
+    },
+  },
 };
 
 function buildSystemPrompt(override?: string, addition?: string): string {
@@ -105,32 +161,21 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   return `${base}${skillsBlock}${additionBlock}`;
 }
 
-function buildBuiltinTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
+function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
+  if (agentConfig.tools.monday && mondayToken) tools.push(ALL_TOOLS.monday_list_boards, ALL_TOOLS.monday_get_items, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_search_items);
   return tools;
 }
 
-function buildCustomTools(): ToolDecl[] {
-  return (agentConfig.customTools ?? [])
-    .filter((t) => t.enabled)
-    .map((t) => ({
-      name: `custom__${t.id}`,
-      description: t.description,
-      parameters: {
-        properties: Object.fromEntries(t.params.map((p) => [p.name, { type: "string" as const, description: p.description }])),
-        required: t.params.filter((p) => p.required).map((p) => p.name),
-      },
-    }));
-}
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string): Promise<string | null> {
+async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string): Promise<string | null> {
   switch (name) {
     case "fetch_url":
       return fetchUrl(args.url as string);
@@ -168,24 +213,27 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       return slackListChannels(slackToken);
     }
 
+    case "monday_list_boards":
+    case "monday_get_items":
+    case "monday_create_item":
+    case "monday_update_item":
+    case "monday_create_update":
+    case "monday_search_items": {
+      const token = mondayToken;
+      if (!token) return "Monday is not connected. Ask the user to connect their Monday account.";
+      if (name === "monday_list_boards")  return mondayListBoards(token);
+      if (name === "monday_get_items")    return mondayGetItems(token, args.boardId as string, args.limit as number | undefined);
+      if (name === "monday_create_item")  return mondayCreateItem(token, args.boardId as string, args.itemName as string, args.columnValues as Record<string, string> | undefined);
+      if (name === "monday_update_item")  return mondayUpdateItem(token, args.boardId as string, args.itemId as string, args.columnValues as Record<string, string>);
+      if (name === "monday_create_update") return mondayCreateUpdate(token, args.itemId as string, args.body as string);
+      return mondaySearchItems(token, args.query as string, args.limit as number | undefined);
+    }
+
     default:
       return null; // not a builtin tool
   }
 }
 
-async function executeCustom(name: string, args: Record<string, unknown>): Promise<string | null> {
-  if (!name.startsWith("custom__")) return null;
-  const toolId = name.slice("custom__".length);
-  const def = (agentConfig.customTools ?? []).find((t) => t.id === toolId);
-  if (!def) return `Custom tool "${name}" not found`;
-
-  const url = def.url.replace(/\{\{(\w+)\}\}/g, (_, k) => encodeURIComponent(String(args[k] ?? "")));
-  let body: string | undefined;
-  if (def.bodyTemplate) {
-    body = def.bodyTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => JSON.stringify(args[k] ?? ""));
-  }
-  return httpRequest(url, def.method, body ? JSON.parse(body) : undefined);
-}
 
 // ── Public interface ─────────────────────────────────────────────────────────
 
@@ -209,6 +257,7 @@ async function runChat(
   calendarUser?: string,
   modelOverride?: ModelConfig,
   streamCallbacks?: StreamCallbacks,
+  mondayToken?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
   const builtPrompt = buildSystemPrompt(systemPrompt);
@@ -228,50 +277,18 @@ async function runChat(
     return { reply: result.response.text(), toolUses: [] };
   }
 
-  const builtinTools = buildBuiltinTools(gmailUser, calendarUser);
-  const customTools = buildCustomTools();
-
-  // Connect MCP servers for this request
-  const mcpServers = agentConfig.mcpServers ?? {};
-  const hasMCP = Object.keys(mcpServers).length > 0;
-  let mcpToolSet: Awaited<ReturnType<typeof buildMCPTools>> | null = null;
-  const mcpErrors: string[] = [];
-  if (hasMCP) {
-    const result = await buildMCPTools(mcpServers, mcpErrors);
-    mcpToolSet = result;
-  }
-
-  const allTools = [...builtinTools, ...customTools, ...(mcpToolSet?.tools ?? [])];
-
-  // Append MCP connection errors to the system prompt so the agent can report them
-  const mcpErrorNote = mcpErrors.length
-    ? `\n\n[SYSTEM NOTE] The following MCP servers failed to connect and are unavailable:\n${mcpErrors.map(e => `- ${e}`).join("\n")}`
-    : "";
-  const finalPrompt = builtPrompt + mcpErrorNote;
+  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken);
 
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
-    const builtin = await executeBuiltin(name, args, gmailUser, calendarUser);
-    if (builtin !== null) return builtin;
-
-    const custom = await executeCustom(name, args);
-    if (custom !== null) return custom;
-
-    if (mcpToolSet && name.startsWith("mcp__")) {
-      return mcpToolSet.execute(name, args);
-    }
-
-    return "Tool not implemented";
+    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken);
+    return result ?? "Tool not implemented";
   };
 
-  try {
-    if (streamCallbacks) {
-      const toolUses = await chatWithModelStream(model, finalPrompt, history, message, allTools, executor, streamCallbacks);
-      return { reply: "", toolUses };
-    }
-    return chatWithModel(model, finalPrompt, history, message, allTools, executor);
-  } finally {
-    await mcpToolSet?.close();
+  if (streamCallbacks) {
+    const toolUses = await chatWithModelStream(model, builtPrompt, history, message, allTools, executor, streamCallbacks);
+    return { reply: "", toolUses };
   }
+  return chatWithModel(model, builtPrompt, history, message, allTools, executor);
 }
 
 export async function chat(
@@ -282,8 +299,9 @@ export async function chat(
   gmailUser?: string,
   calendarUser?: string,
   modelOverride?: ModelConfig,
+  mondayToken?: string,
 ): Promise<ChatResult> {
-  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride);
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken);
 }
 
 export async function chatStream(
@@ -295,7 +313,8 @@ export async function chatStream(
   calendarUser?: string,
   modelOverride?: ModelConfig,
   callbacks?: StreamCallbacks,
+  mondayToken?: string,
 ): Promise<ToolUse[]> {
-  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks);
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken);
   return result.toolUses;
 }
