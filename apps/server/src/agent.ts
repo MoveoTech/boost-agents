@@ -168,7 +168,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
-  if (agentConfig.tools.monday && mondayToken) tools.push(ALL_TOOLS.monday_list_boards, ALL_TOOLS.monday_get_items, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_search_items);
+  if (mondayToken) tools.push(ALL_TOOLS.monday_list_boards, ALL_TOOLS.monday_get_items, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_search_items);
   return tools;
 }
 
