@@ -31,8 +31,6 @@ on:
         required: false
       SLACK_SIGNING_SECRET:
         required: false
-      MONDAY_API_KEY:
-        required: false
       MONDAY_CLIENT_ID:
         required: false
       MONDAY_CLIENT_SECRET:
