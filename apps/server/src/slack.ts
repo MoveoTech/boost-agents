@@ -20,6 +20,14 @@ export async function slackSendMessage(token: string, channel: string, text: str
   return `Message sent to ${channel}.`;
 }
 
+export async function slackLookupUserByEmail(token: string, email: string): Promise<string> {
+  const data = await slackCall(`users.lookupByEmail?email=${encodeURIComponent(email)}`, token) as {
+    user?: { id: string; real_name?: string };
+  };
+  if (!data.user) throw new Error(`No Slack user found for ${email}`);
+  return `User found: ID=${data.user.id}, Name=${data.user.real_name ?? "unknown"}. Use <@${data.user.id}> to mention them in a message.`;
+}
+
 export async function slackGetUserEmail(token: string, slackUserId: string): Promise<string | undefined> {
   try {
     const data = await slackCall(`users.info?user=${slackUserId}`, token) as {

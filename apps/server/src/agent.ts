@@ -2,7 +2,7 @@ import type { Content } from "@google/generative-ai";
 import { chatWithModel, type ModelConfig, type ToolDecl } from "./llm";
 import { fetchUrl, httpRequest } from "./tools";
 import { gmailSend } from "./gmail";
-import { slackSendMessage, slackListChannels } from "./slack";
+import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
@@ -83,6 +83,15 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
     name: "slack_list_channels", description: "List Slack channels the bot has access to.",
     parameters: { properties: {}, required: [] },
   },
+  slack_lookup_user: {
+    name: "slack_lookup_user", description: "Look up a Slack user by their email address to get their user ID for mentioning them in messages. Use the returned ID in the format <@USERID> inside a message.",
+    parameters: {
+      properties: {
+        email: { type: "string", description: "The user's email address" },
+      },
+      required: ["email"],
+    },
+  },
 };
 
 function buildSystemPrompt(override?: string, addition?: string): string {
@@ -104,7 +113,7 @@ function buildTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
   // whether the tool is used once connected.
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
-  if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels);
+  if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
   return tools;
 }
 
@@ -139,10 +148,12 @@ async function execute(name: string, args: Record<string, unknown>, gmailUser?: 
     }
 
     case "slack_send_message":
-    case "slack_list_channels": {
+    case "slack_list_channels":
+    case "slack_lookup_user": {
       const slackToken = process.env.SLACK_BOT_TOKEN;
       if (!slackToken) return "Slack is not configured. Ask the admin to add SLACK_BOT_TOKEN.";
       if (name === "slack_send_message") return slackSendMessage(slackToken, args.channel as string, args.message as string);
+      if (name === "slack_lookup_user") return slackLookupUserByEmail(slackToken, args.email as string);
       return slackListChannels(slackToken);
     }
 
