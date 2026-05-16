@@ -123,11 +123,12 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
 
   if (!config) return <div className="sidebar-loading">Loading…</div>;
 
-  // Global config update (admin only — tool toggles, name, skills, etc.)
+  // Global config update — applies immediately to the running server AND updates parent state
   const update = (patch: Partial<AgentConfig>) => {
     const next = { ...config, ...patch };
     setConfig(next);
     onSave(next);
+    applyConfigLive(patch).catch(() => {});
   };
 
   // Personal update — saves to userSettings (server-side via Firestore), not global config
@@ -145,7 +146,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
     try {
       const parsed = mcpJson.trim() ? JSON.parse(mcpJson) as Record<string, MCPServerConfig> : {};
       update({ mcpServers: parsed });
-      applyConfigLive({ mcpServers: parsed }).catch(() => {});
       setMcpError("");
     } catch { setMcpError("Invalid JSON"); }
   };
@@ -496,24 +496,32 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
         />
       )}
 
-      {/* MCP Servers — admin only */}
+      {/* MCP Servers — admin only, Claude/OpenAI only */}
       {isAdmin && (
         <SidebarSection title="MCP Servers" defaultOpen={false}>
-          <p className="mcp-hint">
-            Paste a JSON object of MCP server configs (same format as Claude Desktop).<br />
-            Use <code>$VAR_NAME</code> to reference Cloud Run env vars as secrets.
-          </p>
-          <textarea
-            className="mcp-editor"
-            value={mcpJson}
-            onChange={(e) => { setMcpJson(e.target.value); setMcpError(""); }}
-            placeholder={`{\n  "monday": {\n    "command": "npx",\n    "args": ["-y", "@mondaycom/mcp-server"],\n    "env": { "MONDAY_API_KEY": "$MONDAY_API_KEY" }\n  }\n}`}
-            spellCheck={false}
-          />
-          {mcpError && <p className="mcp-error">{mcpError}</p>}
-          <button className="sidebar-save-btn" style={{ marginTop: 4, alignSelf: "flex-end" }} onClick={saveMcpServers}>
-            Save MCP Servers
-          </button>
+          {config.model.provider === "gemini" ? (
+            <div style={{ padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "var(--radius-sm)", fontSize: 13, color: "#92400e" }}>
+              ⚠️ MCP servers are not supported with Gemini. Switch to <strong>Claude</strong> or <strong>OpenAI</strong> in the Model section to use MCP.
+            </div>
+          ) : (
+            <>
+              <p className="mcp-hint">
+                Paste a JSON object of MCP server configs (same format as Claude Desktop).<br />
+                Use <code>$VAR_NAME</code> to reference Cloud Run env vars as secrets.
+              </p>
+              <textarea
+                className="mcp-editor"
+                value={mcpJson}
+                onChange={(e) => { setMcpJson(e.target.value); setMcpError(""); }}
+                placeholder={`{\n  "monday-platform-mcp": {\n    "command": "npx",\n    "args": ["@mondaydotcomorg/monday-api-mcp@latest", "-t", "$MONDAY_API_KEY"]\n  }\n}`}
+                spellCheck={false}
+              />
+              {mcpError && <p className="mcp-error">{mcpError}</p>}
+              <button className="sidebar-save-btn" style={{ marginTop: 4, alignSelf: "flex-end" }} onClick={saveMcpServers}>
+                Save MCP Servers
+              </button>
+            </>
+          )}
         </SidebarSection>
       )}
 

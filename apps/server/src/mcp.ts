@@ -30,12 +30,23 @@ export async function connectMCPServer(name: string, config: MCPServerConfig): P
     await client.connect(transport);
   } else if (config.command) {
     const resolvedEnv = config.env ? expandEnv(config.env) : {};
+    // Auto-add -y for npx so it never prompts for install confirmation on a server
+    const rawArgs = config.args ?? [];
+    const resolvedArgs = expandArgs(
+      config.command === "npx" && !rawArgs.includes("-y") ? ["-y", ...rawArgs] : rawArgs
+    );
+
     const transport = new StdioClientTransport({
       command: config.command,
-      args: expandArgs(config.args ?? []),
+      args: resolvedArgs,
       env: { ...process.env, ...resolvedEnv } as Record<string, string>,
     });
-    await client.connect(transport);
+
+    // Timeout so a hanging npx install doesn't block the whole chat request
+    await Promise.race([
+      client.connect(transport),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`MCP server "${name}" connection timed out after 30s`)), 30_000)),
+    ]);
   } else {
     throw new Error(`MCP server "${name}" has neither url nor command`);
   }
