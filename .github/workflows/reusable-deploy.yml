@@ -31,6 +31,8 @@ on:
         required: false
       SLACK_SIGNING_SECRET:
         required: false
+      MONDAY_API_KEY:
+        required: false
 
 jobs:
   provision-and-deploy:
@@ -165,6 +167,7 @@ jobs:
             ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}
             SLACK_BOT_TOKEN=${{ secrets.SLACK_BOT_TOKEN }}
             SLACK_SIGNING_SECRET=${{ secrets.SLACK_SIGNING_SECRET }}
+            MONDAY_API_KEY=${{ secrets.MONDAY_API_KEY }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       - name: Print URL
