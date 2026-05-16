@@ -5,6 +5,25 @@ export interface Skill {
   enabled: boolean;
 }
 
+export interface MCPServerConfig {
+  command?: string;       // stdio transport: e.g. "npx"
+  args?: string[];        // stdio args: e.g. ["-y", "@mondaycom/mcp-server"]
+  env?: Record<string, string>; // env vars; "$VAR" expands from process.env
+  url?: string;           // SSE/HTTP transport for remote MCP servers
+}
+
+export interface CustomTool {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  headers?: Record<string, string>;
+  bodyTemplate?: string;  // JSON template, {{param}} replaced by agent
+  params: Array<{ name: string; description: string; required: boolean }>;
+  enabled: boolean;
+}
+
 export interface AgentConfig {
   name: string;
   systemPrompt: string;
@@ -25,7 +44,10 @@ export interface AgentConfig {
   ui: {
     title: string;
     placeholder: string;
+    starterPrompts?: string[];
   };
+  mcpServers?: Record<string, MCPServerConfig>;
+  customTools?: CustomTool[];
 }
 
 export const agentConfig: AgentConfig = {
@@ -48,5 +70,8 @@ export const agentConfig: AgentConfig = {
   ui: {
     title: "Boost Agent",
     placeholder: "Ask me anything...",
+    starterPrompts: [],
   },
+  mcpServers: {},
+  customTools: [],
 };

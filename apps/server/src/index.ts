@@ -4,7 +4,7 @@ import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import path from "path";
-import { chat } from "./agent";
+import { chat, chatStream } from "./agent";
 import { slackSendMessage, slackGetUserEmail } from "./slack";
 import { agentConfig } from "./config";
 import { commitConfig } from "./configure";
@@ -14,6 +14,23 @@ import type { Automation } from "./automations";
 import type { Content } from "@google/generative-ai";
 
 const app = express();
+
+// ── In-memory analytics (resets on restart) ──────────────────────────────────
+interface DayStat { messages: number; toolCalls: number; totalMs: number }
+const dailyStats = new Map<string, DayStat>();
+const toolUsageCounts = new Map<string, number>();
+const modelUsageCounts = new Map<string, number>();
+
+function trackUsage(modelId: string, toolNames: string[], durationMs: number) {
+  const day = new Date().toISOString().slice(0, 10);
+  const s = dailyStats.get(day) ?? { messages: 0, toolCalls: 0, totalMs: 0 };
+  s.messages++;
+  s.toolCalls += toolNames.length;
+  s.totalMs += durationMs;
+  dailyStats.set(day, s);
+  modelUsageCounts.set(modelId, (modelUsageCounts.get(modelId) ?? 0) + 1);
+  toolNames.forEach((t) => toolUsageCounts.set(t, (toolUsageCounts.get(t) ?? 0) + 1));
+}
 
 const COOKIE_SECRET = process.env.COOKIE_SECRET ?? "dev-secret";
 const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD;
@@ -502,26 +519,105 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
   }
 });
 
+// In-memory feedback store (keyed by messageId)
+const feedbackStore = new Map<string, { rating: number; comment?: string }>();
+
+app.post("/api/feedback", (req, res) => {
+  const { messageId, rating, comment } = req.body as { messageId: string; rating: 1 | -1; comment?: string };
+  if (!messageId) { res.status(400).json({ error: "messageId required" }); return; }
+  feedbackStore.set(messageId, { rating, comment });
+  res.json({ ok: true });
+});
+
+app.get("/api/analytics", requireAdmin, (_req, res) => {
+  const days = Array.from(dailyStats.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, s]) => ({
+      date,
+      messages: s.messages,
+      toolCalls: s.toolCalls,
+      avgResponseMs: s.messages ? Math.round(s.totalMs / s.messages) : 0,
+    }));
+  const topTools = Array.from(toolUsageCounts.entries())
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 10)
+    .map(([name, count]) => ({ name, count }));
+  const models = Array.from(modelUsageCounts.entries())
+    .sort(([, a], [, b]) => b - a)
+    .map(([name, count]) => ({ name, count }));
+  const totalMessages = days.reduce((n, d) => n + d.messages, 0);
+  const positiveFeedback = Array.from(feedbackStore.values()).filter((f) => f.rating === 1).length;
+  const negativeFeedback = Array.from(feedbackStore.values()).filter((f) => f.rating === -1).length;
+  res.json({ days, topTools, models, totalMessages, positiveFeedback, negativeFeedback });
+});
+
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools", systemPrompt, model, userEmail: bodyEmail } = req.body as {
+  const {
+    message, history = [], mode = "tools", systemPrompt, model,
+    userEmail: bodyEmail, stream: wantStream = false,
+    attachment,
+  } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
     systemPrompt?: string;
     model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
-    userEmail?: string; // for API key access — identify which user's Gmail/Calendar to use
+    userEmail?: string;
+    stream?: boolean;
+    attachment?: { data: string; mimeType: string; name: string };
   };
 
-  // Session cookie takes priority; fall back to explicit userEmail (for API key callers)
   const sessionEmail = getSessionEmail(req) ?? bodyEmail;
+  const effectiveMessage = attachment
+    ? `${message}\n\n[Attached file: ${attachment.name}]`
+    : message;
 
-  if (!message?.trim()) {
+  if (!effectiveMessage?.trim()) {
     res.status(400).json({ error: "message is required" });
     return;
   }
 
+  const modelId = model?.modelId ?? agentConfig.model?.modelId ?? "gemini-2.5-flash";
+  const t0 = Date.now();
+
+  if (wantStream) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    const toolUses: { name: string; input: string; output: string }[] = [];
+
+    try {
+      await chatStream(
+        effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model,
+        {
+          onToken: (token) => send({ type: "token", content: token }),
+          onToolStart: (name, input) => {
+            toolUses.push({ name, input, output: "" });
+            send({ type: "tool_start", tool: { name, input } });
+          },
+          onToolComplete: (name, output) => {
+            const t = toolUses.find((x) => x.name === name && x.output === "");
+            if (t) t.output = output.slice(0, 500);
+            send({ type: "tool_complete", tool: { name, output: output.slice(0, 500) } });
+          },
+        }
+      );
+      send({ type: "done", toolUses });
+      trackUsage(modelId, toolUses.map((t) => t.name), Date.now() - t0);
+    } catch (err) {
+      send({ type: "error", message: (err as Error).message });
+    } finally {
+      res.end();
+    }
+    return;
+  }
+
   try {
-    const result = await chat(message.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model);
+    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model);
+    trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
   } catch (err) {
     console.error(err);

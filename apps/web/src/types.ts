@@ -4,6 +4,8 @@ export interface DisplayMessage {
   text: string;
   toolUses?: ToolUse[];
   pending?: boolean;
+  feedback?: 1 | -1;
+  attachment?: { name: string; mimeType: string; preview?: string };
 }
 
 export interface ToolUse {
@@ -16,7 +18,6 @@ export interface HistoryItem {
   role: "user" | "model";
   parts: Array<{ text: string }>;
 }
-
 
 export interface ChatResponse {
   reply: string;
@@ -54,6 +55,25 @@ export interface UserSettings {
   avatar?: string;
 }
 
+export interface MCPServerConfig {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+}
+
+export interface CustomTool {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  headers?: Record<string, string>;
+  bodyTemplate?: string;
+  params: Array<{ name: string; description: string; required: boolean }>;
+  enabled: boolean;
+}
+
 export interface AgentConfig {
   name: string;
   systemPrompt: string;
@@ -73,6 +93,25 @@ export interface AgentConfig {
   ui: {
     title: string;
     placeholder: string;
+    starterPrompts?: string[];
   };
   skills: Skill[];
+  mcpServers?: Record<string, MCPServerConfig>;
+  customTools?: CustomTool[];
+}
+
+export interface AnalyticsDayStat {
+  date: string;
+  messages: number;
+  toolCalls: number;
+  avgResponseMs: number;
+}
+
+export interface AnalyticsData {
+  days: AnalyticsDayStat[];
+  topTools: Array<{ name: string; count: number }>;
+  models: Array<{ name: string; count: number }>;
+  totalMessages: number;
+  positiveFeedback: number;
+  negativeFeedback: number;
 }

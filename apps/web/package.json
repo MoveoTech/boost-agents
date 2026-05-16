@@ -8,9 +8,12 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "lottie-react": "^2.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-markdown": "^9.0.1"
+    "react-markdown": "^9.0.1",
+    "react-syntax-highlighter": "^16.1.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",

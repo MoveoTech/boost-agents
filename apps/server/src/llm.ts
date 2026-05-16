@@ -25,6 +25,12 @@ export interface ToolDecl {
 
 type Executor = (name: string, args: Record<string, unknown>) => Promise<string>;
 
+export interface StreamCallbacks {
+  onToken: (token: string) => void;
+  onToolStart: (name: string, input: string) => void;
+  onToolComplete: (name: string, output: string) => void;
+}
+
 // ── Gemini ──────────────────────────────────────────────────────────────────
 
 function toGeminiSchema(p: ToolParam): Record<string, unknown> {
@@ -167,6 +173,137 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
   }
 }
 
+// ── Streaming implementations ────────────────────────────────────────────────
+
+async function chatGeminiStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks): Promise<ToolUse[]> {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  const geminiTools = tools.length ? [{
+    functionDeclarations: tools.map((t) => ({
+      name: t.name, description: t.description,
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: Object.fromEntries(Object.entries(t.parameters.properties).map(([k, v]) => [k, toGeminiSchema(v)])),
+        required: t.parameters.required,
+      },
+    })),
+  }] : [];
+
+  const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
+  const session = model.startChat({ history });
+  const toolUses: ToolUse[] = [];
+
+  const streamRound = async (msg: string | Part[]): Promise<void> => {
+    const result = await session.sendMessageStream(msg as any);
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) cb.onToken(text);
+    }
+    const response = await result.response;
+    const calls = response.functionCalls();
+    if (calls?.length) {
+      const responses: Part[] = await Promise.all(calls.map(async (call) => {
+        cb.onToolStart(call.name, JSON.stringify(call.args));
+        const output = await execute(call.name, call.args as Record<string, unknown>);
+        cb.onToolComplete(call.name, output);
+        toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
+        return { functionResponse: { name: call.name, response: { result: output } } } as Part;
+      }));
+      await streamRound(responses);
+    }
+  };
+
+  await streamRound(message);
+  return toolUses;
+}
+
+async function chatClaudeStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks): Promise<ToolUse[]> {
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const toolUses: ToolUse[] = [];
+
+  const claudeTools = tools.map((t) => ({
+    name: t.name, description: t.description,
+    input_schema: {
+      type: "object" as const,
+      properties: Object.fromEntries(Object.entries(t.parameters.properties).map(([k, v]) => [k, { type: v.type, description: v.description, ...(v.items ? { items: v.items } : {}) }])),
+      required: t.parameters.required,
+    },
+  }));
+
+  const msgs: Anthropic.MessageParam[] = [
+    ...history.map((h) => ({ role: h.role === "model" ? "assistant" : "user" as "user" | "assistant", content: h.parts.map((p: { text?: string }) => p.text ?? "").join("") })).filter((m) => m.content),
+    { role: "user", content: message },
+  ];
+
+  while (true) {
+    const stream = await client.messages.stream({
+      model: modelId, max_tokens: 8192, system: systemPrompt,
+      tools: claudeTools.length ? claudeTools : undefined,
+      messages: msgs,
+    });
+
+    stream.on("text", (text) => cb.onToken(text));
+    const response = await stream.finalMessage();
+
+    if (response.stop_reason === "tool_use") {
+      const useBlocks = response.content.filter((b) => b.type === "tool_use") as Anthropic.ToolUseBlock[];
+      const results: Anthropic.ToolResultBlockParam[] = [];
+      for (const block of useBlocks) {
+        cb.onToolStart(block.name, JSON.stringify(block.input));
+        const output = await execute(block.name, block.input as Record<string, unknown>);
+        cb.onToolComplete(block.name, output);
+        toolUses.push({ name: block.name, input: JSON.stringify(block.input), output: output.slice(0, 500) });
+        results.push({ type: "tool_result", tool_use_id: block.id, content: output });
+      }
+      msgs.push({ role: "assistant", content: response.content });
+      msgs.push({ role: "user", content: results });
+    } else {
+      break;
+    }
+  }
+  return toolUses;
+}
+
+async function chatOpenAIStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks): Promise<ToolUse[]> {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const toolUses: ToolUse[] = [];
+
+  const openAITools: OpenAI.ChatCompletionTool[] = tools.map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: { type: "object", properties: Object.fromEntries(Object.entries(t.parameters.properties).map(([k, v]) => [k, { type: v.type, description: v.description, ...(v.items ? { items: v.items } : {}) }])), required: t.parameters.required } },
+  }));
+
+  const msgs: OpenAI.ChatCompletionMessageParam[] = [
+    { role: "system", content: systemPrompt },
+    ...history.map((h) => ({ role: h.role === "model" ? "assistant" : "user" as "user" | "assistant", content: h.parts.map((p: { text?: string }) => p.text ?? "").join("") })).filter((m) => m.content),
+    { role: "user", content: message },
+  ];
+
+  while (true) {
+    const stream = client.chat.completions.stream({ model: modelId, tools: openAITools.length ? openAITools : undefined, messages: msgs });
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content ?? "";
+      if (text) cb.onToken(text);
+    }
+    const final = await stream.finalChatCompletion();
+    const choice = final.choices[0];
+
+    if (choice.finish_reason === "tool_calls" && choice.message.tool_calls) {
+      msgs.push(choice.message);
+      for (const call of choice.message.tool_calls as OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[]) {
+        const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+        cb.onToolStart(call.function.name, call.function.arguments);
+        const output = await execute(call.function.name, args);
+        cb.onToolComplete(call.function.name, output);
+        toolUses.push({ name: call.function.name, input: call.function.arguments, output: output.slice(0, 500) });
+        msgs.push({ role: "tool", tool_call_id: call.id, content: output });
+      }
+    } else {
+      break;
+    }
+  }
+  return toolUses;
+}
+
 // ── Router ───────────────────────────────────────────────────────────────────
 
 export async function chatWithModel(
@@ -181,6 +318,23 @@ export async function chatWithModel(
     case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute);
     case "claude":  return chatClaude(model.modelId, systemPrompt, history, message, tools, execute);
     case "openai":  return chatOpenAI(model.modelId, systemPrompt, history, message, tools, execute);
+    default: throw new Error(`Unknown provider: ${model.provider}`);
+  }
+}
+
+export async function chatWithModelStream(
+  model: ModelConfig,
+  systemPrompt: string,
+  history: Content[],
+  message: string,
+  tools: ToolDecl[],
+  execute: Executor,
+  callbacks: StreamCallbacks,
+): Promise<ToolUse[]> {
+  switch (model.provider) {
+    case "gemini": return chatGeminiStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks);
+    case "claude": return chatClaudeStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks);
+    case "openai": return chatOpenAIStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks);
     default: throw new Error(`Unknown provider: ${model.provider}`);
   }
 }

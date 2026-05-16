@@ -1,11 +1,12 @@
 import type { Content } from "@google/generative-ai";
-import { chatWithModel, type ModelConfig, type ToolDecl } from "./llm";
+import { chatWithModel, chatWithModelStream, type ModelConfig, type ToolDecl, type StreamCallbacks } from "./llm";
 import { fetchUrl, httpRequest } from "./tools";
 import { gmailSend } from "./gmail";
 import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
+import { buildMCPTools } from "./mcp";
 
 // ── Tool declarations (provider-agnostic) ────────────────────────────────────
 
@@ -104,22 +105,32 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   return `${base}${skillsBlock}${additionBlock}`;
 }
 
-function buildTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
+function buildBuiltinTools(gmailUser?: string, calendarUser?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
-  // Connected services are always active when the user has linked their account.
-  // The admin toggle controls whether the Connect button is shown in the UI, not
-  // whether the tool is used once connected.
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
   return tools;
 }
 
+function buildCustomTools(): ToolDecl[] {
+  return (agentConfig.customTools ?? [])
+    .filter((t) => t.enabled)
+    .map((t) => ({
+      name: `custom__${t.id}`,
+      description: t.description,
+      parameters: {
+        properties: Object.fromEntries(t.params.map((p) => [p.name, { type: "string" as const, description: p.description }])),
+        required: t.params.filter((p) => p.required).map((p) => p.name),
+      },
+    }));
+}
+
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function execute(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string): Promise<string> {
+async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string): Promise<string | null> {
   switch (name) {
     case "fetch_url":
       return fetchUrl(args.url as string);
@@ -158,8 +169,22 @@ async function execute(name: string, args: Record<string, unknown>, gmailUser?: 
     }
 
     default:
-      return "Tool not implemented";
+      return null; // not a builtin tool
   }
+}
+
+async function executeCustom(name: string, args: Record<string, unknown>): Promise<string | null> {
+  if (!name.startsWith("custom__")) return null;
+  const toolId = name.slice("custom__".length);
+  const def = (agentConfig.customTools ?? []).find((t) => t.id === toolId);
+  if (!def) return `Custom tool "${name}" not found`;
+
+  const url = def.url.replace(/\{\{(\w+)\}\}/g, (_, k) => encodeURIComponent(String(args[k] ?? "")));
+  let body: string | undefined;
+  if (def.bodyTemplate) {
+    body = def.bodyTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => JSON.stringify(args[k] ?? ""));
+  }
+  return httpRequest(url, def.method, body ? JSON.parse(body) : undefined);
 }
 
 // ── Public interface ─────────────────────────────────────────────────────────
@@ -175,14 +200,15 @@ export interface ChatResult {
   toolUses: ToolUse[];
 }
 
-export async function chat(
+async function runChat(
   message: string,
   history: Content[],
-  mode: "search" | "tools" = "tools",
+  mode: "search" | "tools",
   systemPrompt?: string,
   gmailUser?: string,
   calendarUser?: string,
   modelOverride?: ModelConfig,
+  streamCallbacks?: StreamCallbacks,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
   const builtPrompt = buildSystemPrompt(systemPrompt);
@@ -202,13 +228,63 @@ export async function chat(
     return { reply: result.response.text(), toolUses: [] };
   }
 
-  const tools = buildTools(gmailUser, calendarUser);
-  return chatWithModel(
-    model,
-    builtPrompt,
-    history,
-    message,
-    tools,
-    (name, args) => execute(name, args, gmailUser, calendarUser)
-  );
+  const builtinTools = buildBuiltinTools(gmailUser, calendarUser);
+  const customTools = buildCustomTools();
+
+  // Connect MCP servers for this request
+  const mcpServers = agentConfig.mcpServers ?? {};
+  const hasMCP = Object.keys(mcpServers).length > 0;
+  const mcpToolSet = hasMCP ? await buildMCPTools(mcpServers) : null;
+
+  const allTools = [...builtinTools, ...customTools, ...(mcpToolSet?.tools ?? [])];
+
+  const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
+    const builtin = await executeBuiltin(name, args, gmailUser, calendarUser);
+    if (builtin !== null) return builtin;
+
+    const custom = await executeCustom(name, args);
+    if (custom !== null) return custom;
+
+    if (mcpToolSet && name.startsWith("mcp__")) {
+      return mcpToolSet.execute(name, args);
+    }
+
+    return "Tool not implemented";
+  };
+
+  try {
+    if (streamCallbacks) {
+      const toolUses = await chatWithModelStream(model, builtPrompt, history, message, allTools, executor, streamCallbacks);
+      return { reply: "", toolUses }; // reply accumulated via onToken
+    }
+    return chatWithModel(model, builtPrompt, history, message, allTools, executor);
+  } finally {
+    await mcpToolSet?.close();
+  }
+}
+
+export async function chat(
+  message: string,
+  history: Content[],
+  mode: "search" | "tools" = "tools",
+  systemPrompt?: string,
+  gmailUser?: string,
+  calendarUser?: string,
+  modelOverride?: ModelConfig,
+): Promise<ChatResult> {
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride);
+}
+
+export async function chatStream(
+  message: string,
+  history: Content[],
+  mode: "search" | "tools" = "tools",
+  systemPrompt?: string,
+  gmailUser?: string,
+  calendarUser?: string,
+  modelOverride?: ModelConfig,
+  callbacks?: StreamCallbacks,
+): Promise<ToolUse[]> {
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks);
+  return result.toolUses;
 }

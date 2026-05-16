@@ -1,9 +1,6 @@
-import type { ChatResponse, HistoryItem, AgentConfig, Automation, ChatSession, DisplayMessage } from "../types";
+import type { ChatResponse, HistoryItem, AgentConfig, Automation, ChatSession, DisplayMessage, AnalyticsData } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
-
-// All requests rely on the HttpOnly session cookie set by the server.
-// No tokens are stored client-side — the browser sends the cookie automatically.
 
 export async function whoami(): Promise<{ isAdmin: boolean; email: string | null; authenticated: boolean }> {
   const res = await fetch(`${BASE}/api/whoami`);
@@ -18,7 +15,6 @@ export async function identityComplete(identityToken: string): Promise<{ isAdmin
   });
   if (!res.ok) throw new Error("Identity verification failed");
   const { isAdmin, email } = await res.json();
-  // Server sets HttpOnly cookie in the response — no client-side storage needed
   return { isAdmin: !!isAdmin, email };
 }
 
@@ -133,21 +129,80 @@ export async function saveConfig(config: AgentConfig): Promise<{ commitUrl: stri
   return res.json();
 }
 
+export async function submitFeedback(messageId: string, rating: 1 | -1): Promise<void> {
+  await fetch(`${BASE}/api/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messageId, rating }),
+  });
+}
+
+export async function getAnalytics(): Promise<AnalyticsData> {
+  const res = await fetch(`${BASE}/api/analytics`);
+  if (!res.ok) throw new Error("Failed to load analytics");
+  return res.json();
+}
+
 export async function sendMessage(
   message: string,
   history: HistoryItem[],
   mode: "search" | "tools" = "tools",
   systemPrompt?: string,
   model?: { provider: string; modelId: string },
+  attachment?: { data: string; mimeType: string; name: string },
 ): Promise<ChatResponse> {
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, mode, systemPrompt, model }),
+    body: JSON.stringify({ message, history, mode, systemPrompt, model, attachment }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "Request failed" }));
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+export type StreamEvent =
+  | { type: "token"; content: string }
+  | { type: "tool_start"; tool: { name: string; input: string } }
+  | { type: "tool_complete"; tool: { name: string; output: string } }
+  | { type: "done"; toolUses: Array<{ name: string; input: string; output: string }> }
+  | { type: "error"; message: string };
+
+export async function* streamMessage(
+  message: string,
+  history: HistoryItem[],
+  mode: "search" | "tools" = "tools",
+  systemPrompt?: string,
+  model?: { provider: string; modelId: string },
+  attachment?: { data: string; mimeType: string; name: string },
+): AsyncGenerator<StreamEvent> {
+  const res = await fetch(`${BASE}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, history, mode, systemPrompt, model, attachment, stream: true }),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error("Stream request failed");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith("data: ")) continue;
+      const raw = line.slice(6);
+      if (raw === "[DONE]") return;
+      try { yield JSON.parse(raw) as StreamEvent; } catch { /* skip malformed */ }
+    }
+  }
 }

@@ -5,11 +5,15 @@ const GITHUB_REPO = process.env.GITHUB_REPO;
 const CONFIG_PATH = "apps/server/src/config.ts";
 
 function generateConfigFile(config: AgentConfig): string {
-  return `export interface AgentConfig {
+  return `export interface Skill { id: string; name: string; content: string; enabled: boolean }
+export interface MCPServerConfig { command?: string; args?: string[]; env?: Record<string, string>; url?: string }
+export interface CustomTool { id: string; name: string; description: string; url: string; method: "GET"|"POST"|"PUT"|"PATCH"|"DELETE"; headers?: Record<string,string>; bodyTemplate?: string; params: Array<{name:string;description:string;required:boolean}>; enabled: boolean }
+
+export interface AgentConfig {
   name: string;
   systemPrompt: string;
   model: { provider: "gemini" | "claude" | "openai"; modelId: string };
-  skills: { id: string; name: string; content: string; enabled: boolean }[];
+  skills: Skill[];
   tools: {
     fetchUrl: boolean;
     httpRequest: boolean;
@@ -25,7 +29,10 @@ function generateConfigFile(config: AgentConfig): string {
   ui: {
     title: string;
     placeholder: string;
+    starterPrompts?: string[];
   };
+  mcpServers?: Record<string, MCPServerConfig>;
+  customTools?: CustomTool[];
 }
 
 export const agentConfig: AgentConfig = ${JSON.stringify(config, null, 2)};
