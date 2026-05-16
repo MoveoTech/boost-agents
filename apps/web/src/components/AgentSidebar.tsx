@@ -186,10 +186,15 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   };
 
   const agentName = config.ui?.title ?? config.name ?? "Agent";
-  const curlExample = `curl -X POST ${BASE}/api/chat \\
+  const baseUrl = BASE || window.location.origin;
+  const curlExample = `curl -X POST ${baseUrl}/api/chat \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{"message": "Hello!", "history": []}'`;
+  const curlGmailExample = `curl -X POST ${baseUrl}/api/chat \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: YOUR_API_KEY" \\
+  -d '{"message": "Send an email...", "history": [], "userEmail": "user@example.com"}'`;
 
   return (
     <aside className={`agent-sidebar${className ? ` ${className}` : ""}`}>
@@ -437,11 +442,18 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       {/* API Access — admin only */}
       {isAdmin && (
         <SidebarSection title="API Access" defaultOpen={false}>
-          <SecretRow label="Server URL" value={BASE || window.location.origin} onCopy={copy} copied={copied} visible />
+          <SecretRow label="Server URL" value={baseUrl} onCopy={copy} copied={copied} visible />
           {apiKey && <SecretRow label="API Key" value={apiKey} onCopy={copy} copied={copied} />}
+          {userEmail && <SecretRow label="Your email (for Gmail/Calendar)" value={userEmail} onCopy={copy} copied={copied} visible />}
           <div className="api-code-block" style={{ marginTop: 12 }}>
+            <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Basic request</p>
             <pre>{curlExample}</pre>
             <button className="api-copy-btn api-copy-code" onClick={() => copy(curlExample)}>{copied ? "✓" : "Copy"}</button>
+          </div>
+          <div className="api-code-block" style={{ marginTop: 8 }}>
+            <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>With Gmail/Calendar access</p>
+            <pre>{curlGmailExample}</pre>
+            <button className="api-copy-btn api-copy-code" onClick={() => copy(curlGmailExample)}>{copied ? "✓" : "Copy"}</button>
           </div>
         </SidebarSection>
       )}

@@ -503,16 +503,17 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, history = [], mode = "tools", systemPrompt, model } = req.body as {
+  const { message, history = [], mode = "tools", systemPrompt, model, userEmail: bodyEmail } = req.body as {
     message: string;
     history: Content[];
     mode?: "search" | "tools";
     systemPrompt?: string;
     model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
+    userEmail?: string; // for API key access — identify which user's Gmail/Calendar to use
   };
 
-  // Use the session email server-side — no tokens needed from the client
-  const sessionEmail = getSessionEmail(req);
+  // Session cookie takes priority; fall back to explicit userEmail (for API key callers)
+  const sessionEmail = getSessionEmail(req) ?? bodyEmail;
 
   if (!message?.trim()) {
     res.status(400).json({ error: "message is required" });
