@@ -10,13 +10,16 @@ export interface MCPToolSet {
   close: () => Promise<void>;
 }
 
+function expandVar(v: string): string {
+  return v.startsWith("$") ? (process.env[v.slice(1)] ?? v) : v;
+}
+
 function expandEnv(env: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(env).map(([k, v]) => [
-      k,
-      v.startsWith("$") ? (process.env[v.slice(1)] ?? v) : v,
-    ])
-  );
+  return Object.fromEntries(Object.entries(env).map(([k, v]) => [k, expandVar(v)]));
+}
+
+function expandArgs(args: string[]): string[] {
+  return args.map(expandVar);
 }
 
 export async function connectMCPServer(name: string, config: MCPServerConfig): Promise<MCPToolSet> {
@@ -29,7 +32,7 @@ export async function connectMCPServer(name: string, config: MCPServerConfig): P
     const resolvedEnv = config.env ? expandEnv(config.env) : {};
     const transport = new StdioClientTransport({
       command: config.command,
-      args: config.args ?? [],
+      args: expandArgs(config.args ?? []),
       env: { ...process.env, ...resolvedEnv } as Record<string, string>,
     });
     await client.connect(transport);
