@@ -10,6 +10,33 @@ export interface MCPToolSet {
   close: () => Promise<void>;
 }
 
+// ── Connection cache — one persistent process per config ──────────────────────
+
+interface CachedConnection {
+  toolSet: MCPToolSet;
+  configKey: string;
+  lastUsed: number;
+}
+
+const connectionCache = new Map<string, CachedConnection>();
+
+// Close stale connections after 10 min of inactivity
+setInterval(() => {
+  const staleAt = Date.now() - 10 * 60 * 1000;
+  for (const [key, cached] of connectionCache) {
+    if (cached.lastUsed < staleAt) {
+      cached.toolSet.close().catch(() => {});
+      connectionCache.delete(key);
+    }
+  }
+}, 60_000).unref();
+
+function configKey(name: string, cfg: MCPServerConfig): string {
+  return JSON.stringify({ name, ...cfg });
+}
+
+// ── Env / args expansion ──────────────────────────────────────────────────────
+
 function expandVar(v: string): string {
   return v.startsWith("$") ? (process.env[v.slice(1)] ?? v) : v;
 }
@@ -22,7 +49,9 @@ function expandArgs(args: string[]): string[] {
   return args.map(expandVar);
 }
 
-export async function connectMCPServer(name: string, config: MCPServerConfig): Promise<MCPToolSet> {
+// ── Connect a single MCP server ───────────────────────────────────────────────
+
+async function connectMCPServer(name: string, config: MCPServerConfig): Promise<MCPToolSet> {
   const client = new Client({ name: "boost-agent", version: "1.0.0" });
 
   if (config.url) {
@@ -30,7 +59,8 @@ export async function connectMCPServer(name: string, config: MCPServerConfig): P
     await client.connect(transport);
   } else if (config.command) {
     const resolvedEnv = config.env ? expandEnv(config.env) : {};
-    // Auto-add -y for npx so it never prompts for install confirmation on a server
+
+    // Auto-add -y so npx never prompts for install confirmation on a server
     const rawArgs = config.args ?? [];
     const resolvedArgs = expandArgs(
       config.command === "npx" && !rawArgs.includes("-y") ? ["-y", ...rawArgs] : rawArgs
@@ -42,10 +72,13 @@ export async function connectMCPServer(name: string, config: MCPServerConfig): P
       env: { ...process.env, ...resolvedEnv } as Record<string, string>,
     });
 
-    // Timeout so a hanging npx install doesn't block the whole chat request
+    // First run: allow 90s for npx to download the package
+    // Subsequent runs hit the cache and never need to reconnect
     await Promise.race([
       client.connect(transport),
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`MCP server "${name}" connection timed out after 30s`)), 30_000)),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`MCP server "${name}" timed out — npx may still be downloading the package`)), 90_000)
+      ),
     ]);
   } else {
     throw new Error(`MCP server "${name}" has neither url nor command`);
@@ -80,32 +113,57 @@ export async function connectMCPServer(name: string, config: MCPServerConfig): P
   };
 
   const close = () => client.close();
-
   return { tools, execute, close };
 }
 
-// Connect all configured MCP servers and merge their tools + executors
+// ── Build all MCP tools for a request (uses cache) ───────────────────────────
+
 export async function buildMCPTools(
-  servers: Record<string, MCPServerConfig>
-): Promise<{ tools: ToolDecl[]; execute: (name: string, args: Record<string, unknown>) => Promise<string>; close: () => Promise<void> }> {
-  const toolSets: MCPToolSet[] = [];
+  servers: Record<string, MCPServerConfig>,
+  errors: string[] = []
+): Promise<{
+  tools: ToolDecl[];
+  execute: (name: string, args: Record<string, unknown>) => Promise<string>;
+  close: () => Promise<void>;
+}> {
   const executorMap = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
+  const allTools: ToolDecl[] = [];
 
   await Promise.all(
     Object.entries(servers).map(async ([name, cfg]) => {
-      try {
-        const ts = await connectMCPServer(name, cfg);
-        toolSets.push(ts);
-        for (const t of ts.tools) {
-          executorMap.set(t.name, (args) => ts.execute(t.name, args));
+      const key = configKey(name, cfg);
+      let cached = connectionCache.get(key);
+
+      if (!cached) {
+        try {
+          const toolSet = await connectMCPServer(name, cfg);
+          cached = { toolSet, configKey: key, lastUsed: Date.now() };
+          connectionCache.set(key, cached);
+        } catch (err) {
+          const msg = `MCP server "${name}" failed to connect: ${(err as Error).message}`;
+          console.error("[MCP]", msg);
+          errors.push(msg);
+          return;
         }
-      } catch (err) {
-        console.error(`[MCP] Failed to connect server "${name}":`, (err as Error).message);
+      }
+
+      cached.lastUsed = Date.now();
+
+      for (const t of cached.toolSet.tools) {
+        allTools.push(t);
+        executorMap.set(t.name, (args) => cached!.toolSet.execute(t.name, args));
       }
     })
   );
 
-  const allTools = toolSets.flatMap((ts) => ts.tools);
+  // Invalidate cache entries whose config has changed
+  for (const [key] of connectionCache) {
+    const stillActive = Object.entries(servers).some(([n, c]) => configKey(n, c) === key);
+    if (!stillActive) {
+      connectionCache.get(key)?.toolSet.close().catch(() => {});
+      connectionCache.delete(key);
+    }
+  }
 
   const execute = async (name: string, args: Record<string, unknown>): Promise<string> => {
     const fn = executorMap.get(name);
@@ -113,9 +171,8 @@ export async function buildMCPTools(
     return fn(args);
   };
 
-  const close = async () => {
-    await Promise.all(toolSets.map((ts) => ts.close().catch(() => {})));
-  };
+  // close() is a no-op now — connections stay alive in cache
+  const close = async () => {};
 
   return { tools: allTools, execute, close };
 }

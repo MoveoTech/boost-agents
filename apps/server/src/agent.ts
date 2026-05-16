@@ -234,9 +234,20 @@ async function runChat(
   // Connect MCP servers for this request
   const mcpServers = agentConfig.mcpServers ?? {};
   const hasMCP = Object.keys(mcpServers).length > 0;
-  const mcpToolSet = hasMCP ? await buildMCPTools(mcpServers) : null;
+  let mcpToolSet: Awaited<ReturnType<typeof buildMCPTools>> | null = null;
+  const mcpErrors: string[] = [];
+  if (hasMCP) {
+    const result = await buildMCPTools(mcpServers, mcpErrors);
+    mcpToolSet = result;
+  }
 
   const allTools = [...builtinTools, ...customTools, ...(mcpToolSet?.tools ?? [])];
+
+  // Append MCP connection errors to the system prompt so the agent can report them
+  const mcpErrorNote = mcpErrors.length
+    ? `\n\n[SYSTEM NOTE] The following MCP servers failed to connect and are unavailable:\n${mcpErrors.map(e => `- ${e}`).join("\n")}`
+    : "";
+  const finalPrompt = builtPrompt + mcpErrorNote;
 
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
     const builtin = await executeBuiltin(name, args, gmailUser, calendarUser);
@@ -254,10 +265,10 @@ async function runChat(
 
   try {
     if (streamCallbacks) {
-      const toolUses = await chatWithModelStream(model, builtPrompt, history, message, allTools, executor, streamCallbacks);
-      return { reply: "", toolUses }; // reply accumulated via onToken
+      const toolUses = await chatWithModelStream(model, finalPrompt, history, message, allTools, executor, streamCallbacks);
+      return { reply: "", toolUses };
     }
-    return chatWithModel(model, builtPrompt, history, message, allTools, executor);
+    return chatWithModel(model, finalPrompt, history, message, allTools, executor);
   } finally {
     await mcpToolSet?.close();
   }
