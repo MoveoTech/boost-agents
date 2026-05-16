@@ -1,4 +1,4 @@
-import type { ChatResponse, HistoryItem, AgentConfig, Automation } from "../types";
+import type { ChatResponse, HistoryItem, AgentConfig, Automation, ChatSession, DisplayMessage } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 
@@ -45,6 +45,43 @@ export async function saveAutomation(automation: Automation): Promise<void> {
 export async function getProviders(): Promise<{ gemini: boolean; claude: boolean; openai: boolean }> {
   const res = await fetch(`${BASE}/api/providers`);
   return res.ok ? res.json() : { gemini: true, claude: false, openai: false };
+}
+
+export async function listChats(): Promise<ChatSession[]> {
+  const res = await fetch(`${BASE}/api/chats`);
+  const data = res.ok ? await res.json() : { sessions: [] };
+  return data.sessions ?? [];
+}
+
+export async function createChat(title: string): Promise<string> {
+  const res = await fetch(`${BASE}/api/chats`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  const { id } = await res.json();
+  return id;
+}
+
+export async function loadChat(id: string): Promise<{ messages: DisplayMessage[] } | null> {
+  const res = await fetch(`${BASE}/api/chats/${id}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function saveChat(id: string, messages: DisplayMessage[], title?: string): Promise<void> {
+  const stored = messages
+    .filter((m) => !m.pending)
+    .map(({ id: mid, role, text, toolUses }) => ({ id: mid, role, text, toolUses }));
+  await fetch(`${BASE}/api/chats/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: stored, ...(title ? { title } : {}) }),
+  });
+}
+
+export async function deleteChat(id: string): Promise<void> {
+  await fetch(`${BASE}/api/chats/${id}`, { method: "DELETE" });
 }
 
 export async function getUserSettings(): Promise<Record<string, unknown>> {

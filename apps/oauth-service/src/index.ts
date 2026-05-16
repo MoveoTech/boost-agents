@@ -220,6 +220,64 @@ app.put("/api/user-settings/:agentId/:userId", async (req, res) => {
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
+// ── Chat history ─────────────────────────────────────────────────────────────
+
+function chatRef(agentId: string, email: string) {
+  return db.collection("chats").doc(agentId).collection("users").doc(email).collection("sessions");
+}
+
+app.get("/api/chats/:agentId/:email", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, email } = req.params;
+  try {
+    const snap = await chatRef(agentId, email).orderBy("updatedAt", "desc").limit(50).get();
+    const sessions = snap.docs.map(d => {
+      const data = d.data();
+      return { id: d.id, title: data.title, updatedAt: data.updatedAt?.toDate?.() ?? data.updatedAt, messageCount: (data.messages ?? []).length };
+    });
+    res.json({ sessions });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.post("/api/chats/:agentId/:email", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, email } = req.params;
+  const { title = "New Chat" } = req.body as { title?: string };
+  try {
+    const ref = chatRef(agentId, email).doc();
+    await ref.set({ id: ref.id, title, messages: [], createdAt: new Date(), updatedAt: new Date() });
+    res.json({ id: ref.id });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.get("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, email, sessionId } = req.params;
+  try {
+    const doc = await chatRef(agentId, email).doc(sessionId).get();
+    if (!doc.exists) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(doc.data());
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.put("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, email, sessionId } = req.params;
+  try {
+    await chatRef(agentId, email).doc(sessionId).set({ ...req.body, updatedAt: new Date() }, { merge: true });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.delete("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, email, sessionId } = req.params;
+  try {
+    await chatRef(agentId, email).doc(sessionId).delete();
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // Disconnects a user from a service
 app.delete("/api/users/:agentId/:service/:userId", async (req, res) => {
   if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {

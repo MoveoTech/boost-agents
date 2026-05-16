@@ -38,6 +38,14 @@ export interface Automation {
   prompt: string;
   enabled: boolean;
   createdBy?: string;
+  oneTime?: boolean;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
 }
 
 export interface UserSettings {

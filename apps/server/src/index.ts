@@ -90,7 +90,7 @@ app.post("/api/run-automation", async (req, res) => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const { prompt } = req.body as { prompt: string; name: string; id: string };
+  const { prompt, id, oneTime } = req.body as { prompt: string; name: string; id: string; oneTime?: boolean };
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;
@@ -116,6 +116,10 @@ app.post("/api/run-automation", async (req, res) => {
       }
     }
     res.json({ ok: true, results });
+    // Self-delete after running if this is a one-time automation
+    if (oneTime && id) {
+      await deleteAutomation(id).catch(() => {});
+    }
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -361,6 +365,71 @@ app.put("/api/user-settings", async (req, res) => {
       method: "PUT",
       headers: { "x-api-key": oauthServiceKey, "Content-Type": "application/json" },
       body: JSON.stringify(req.body),
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// ── Chat history ─────────────────────────────────────────────────────────────
+
+function oauthProxy(req: express.Request) {
+  return {
+    url: process.env.OAUTH_SERVICE_URL ?? "",
+    key: process.env.OAUTH_SERVICE_KEY ?? "",
+    agentId: process.env.GOOGLE_CLOUD_PROJECT ?? "",
+    email: getSessionEmail(req) ?? "",
+  };
+}
+
+app.get("/api/chats", async (req, res) => {
+  const { url, key, agentId, email } = oauthProxy(req);
+  if (!email) { res.json({ sessions: [] }); return; }
+  try {
+    const r = await fetch(`${url}/api/chats/${agentId}/${encodeURIComponent(email)}`, { headers: { "x-api-key": key } });
+    res.json(r.ok ? await r.json() : { sessions: [] });
+  } catch { res.json({ sessions: [] }); }
+});
+
+app.post("/api/chats", async (req, res) => {
+  const { url, key, agentId, email } = oauthProxy(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const r = await fetch(`${url}/api/chats/${agentId}/${encodeURIComponent(email)}`, {
+      method: "POST", headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+    res.json(r.ok ? await r.json() : { error: "Failed" });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.get("/api/chats/:id", async (req, res) => {
+  const { url, key, agentId, email } = oauthProxy(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const r = await fetch(`${url}/api/chats/${agentId}/${encodeURIComponent(email)}/${req.params.id}`, { headers: { "x-api-key": key } });
+    if (!r.ok) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(await r.json());
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.put("/api/chats/:id", async (req, res) => {
+  const { url, key, agentId, email } = oauthProxy(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    await fetch(`${url}/api/chats/${agentId}/${encodeURIComponent(email)}/${req.params.id}`, {
+      method: "PUT", headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.delete("/api/chats/:id", async (req, res) => {
+  const { url, key, agentId, email } = oauthProxy(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    await fetch(`${url}/api/chats/${agentId}/${encodeURIComponent(email)}/${req.params.id}`, {
+      method: "DELETE", headers: { "x-api-key": key },
     });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }

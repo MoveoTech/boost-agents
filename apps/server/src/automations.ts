@@ -9,6 +9,7 @@ export interface Automation {
   prompt: string;
   enabled: boolean;
   createdBy?: string;
+  oneTime?: boolean;
 }
 
 async function gcpToken(): Promise<string> {
@@ -29,7 +30,7 @@ function jobId(automationId: string) {
 function parseJob(job: Record<string, unknown>): Automation {
   const httpTarget = job.httpTarget as Record<string, string> | undefined;
   const bodyStr = httpTarget?.body ? Buffer.from(httpTarget.body, "base64").toString() : "{}";
-  const body = JSON.parse(bodyStr) as { name?: string; prompt?: string; createdBy?: string };
+  const body = JSON.parse(bodyStr) as { name?: string; prompt?: string; createdBy?: string; oneTime?: boolean };
   const name = job.name as string;
   return {
     id: name.split("/jobs/automation--")[1],
@@ -38,6 +39,7 @@ function parseJob(job: Record<string, unknown>): Automation {
     prompt: body.prompt ?? "",
     enabled: job.state !== "PAUSED" && job.state !== "DISABLED",
     createdBy: body.createdBy,
+    oneTime: body.oneTime,
   };
 }
 
@@ -65,7 +67,7 @@ export async function upsertAutomation(automation: Automation, agentUrl: string)
     httpTarget: {
       uri: `${agentUrl}/api/run-automation`,
       httpMethod: "POST",
-      body: Buffer.from(JSON.stringify({ id: automation.id, name: automation.name, prompt: automation.prompt, createdBy: automation.createdBy })).toString("base64"),
+      body: Buffer.from(JSON.stringify({ id: automation.id, name: automation.name, prompt: automation.prompt, createdBy: automation.createdBy, oneTime: automation.oneTime })).toString("base64"),
       headers: {
         "Content-Type": "application/json",
         "x-automation-secret": AUTOMATION_SECRET,

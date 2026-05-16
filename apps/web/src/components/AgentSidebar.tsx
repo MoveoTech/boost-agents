@@ -240,7 +240,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
           action={
             <button className="sidebar-add-btn" onClick={() => {
               setCustomCron(false);
-              setNewAuto({ id: crypto.randomUUID(), name: "", schedule: "0 9 * * *", prompt: "", enabled: true, createdBy: userEmail ?? undefined });
+              setNewAuto({ id: crypto.randomUUID(), name: "", schedule: "0 9 * * *", prompt: "", enabled: true, createdBy: userEmail ?? undefined, oneTime: false });
             }}>+ Add</button>
           }
         >
@@ -259,7 +259,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                   )}
                 </div>
                 <span className="sidebar-automation-schedule">
-                  {SCHEDULES.find((s) => s.cron === a.schedule)?.label ?? a.schedule}
+                  {a.oneTime ? "Runs once" : (SCHEDULES.find((s) => s.cron === a.schedule)?.label ?? a.schedule)}
                 </span>
               </div>
               <div className="sidebar-automation-actions">
@@ -282,16 +282,34 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
             <div className="sidebar-automation-form">
               <input className="configure-input" placeholder="Name" value={newAuto.name}
                 onChange={(e) => setNewAuto({ ...newAuto, name: e.target.value })} />
-              <select className="configure-input" value={customCron ? "custom" : newAuto.schedule}
-                onChange={(e) => {
-                  if (e.target.value === "custom") setCustomCron(true);
-                  else { setCustomCron(false); setNewAuto({ ...newAuto, schedule: e.target.value }); }
-                }}>
-                {SCHEDULES.map((s) => <option key={s.cron} value={s.cron}>{s.label}</option>)}
-              </select>
-              {customCron && (
-                <input className="configure-input" placeholder="0 9 * * 1-5" value={newAuto.schedule}
-                  onChange={(e) => setNewAuto({ ...newAuto, schedule: e.target.value })} />
+
+              <label className="sidebar-onetime-toggle">
+                <input type="checkbox" checked={!!newAuto.oneTime}
+                  onChange={(e) => setNewAuto({ ...newAuto, oneTime: e.target.checked })} />
+                <span>Run once</span>
+              </label>
+
+              {newAuto.oneTime ? (
+                <input className="configure-input" type="datetime-local"
+                  onChange={(e) => {
+                    const d = new Date(e.target.value);
+                    const cron = `${d.getUTCMinutes()} ${d.getUTCHours()} ${d.getUTCDate()} ${d.getUTCMonth() + 1} *`;
+                    setNewAuto({ ...newAuto, schedule: cron });
+                  }} />
+              ) : (
+                <>
+                  <select className="configure-input" value={customCron ? "custom" : newAuto.schedule}
+                    onChange={(e) => {
+                      if (e.target.value === "custom") setCustomCron(true);
+                      else { setCustomCron(false); setNewAuto({ ...newAuto, schedule: e.target.value }); }
+                    }}>
+                    {SCHEDULES.map((s) => <option key={s.cron} value={s.cron}>{s.label}</option>)}
+                  </select>
+                  {customCron && (
+                    <input className="configure-input" placeholder="0 9 * * 1-5" value={newAuto.schedule}
+                      onChange={(e) => setNewAuto({ ...newAuto, schedule: e.target.value })} />
+                  )}
+                </>
               )}
               <textarea className="configure-textarea" rows={3} placeholder="Describe what the agent should do…"
                 value={newAuto.prompt} onChange={(e) => setNewAuto({ ...newAuto, prompt: e.target.value })} />
