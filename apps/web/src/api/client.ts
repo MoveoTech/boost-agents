@@ -116,6 +116,14 @@ export async function getConfig(): Promise<AgentConfig> {
   return res.json();
 }
 
+export async function applyConfigLive(patch: Partial<AgentConfig>): Promise<void> {
+  await fetch(`${BASE}/api/config/live`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function saveConfig(config: AgentConfig): Promise<{ commitUrl: string }> {
   const res = await fetch(`${BASE}/api/configure`, {
     method: "POST",

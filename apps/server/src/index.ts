@@ -510,9 +510,18 @@ app.get("/api/admin/key", requireAdmin, (_req, res) => {
   res.json({ apiKey: API_KEY ?? "" });
 });
 
+// Apply config changes to the running server immediately (no git commit)
+app.patch("/api/config/live", requireAdmin, (req, res) => {
+  Object.assign(agentConfig, req.body as Partial<AgentConfig>);
+  res.json({ ok: true });
+});
+
 app.post("/api/configure", requireAdmin, async (req, res) => {
   try {
-    const commitUrl = await commitConfig(req.body as AgentConfig);
+    const newConfig = req.body as AgentConfig;
+    const commitUrl = await commitConfig(newConfig);
+    // Update the running server's in-memory config so changes take effect immediately
+    Object.assign(agentConfig, newConfig);
     res.json({ ok: true, commitUrl });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

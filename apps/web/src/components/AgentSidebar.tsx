@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import SidebarSection from "./SidebarSection";
 import SkillsModal from "./SkillsModal";
 import UsageAnalytics from "./UsageAnalytics";
-import { saveConfig, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders } from "../api/client";
+import { saveConfig, applyConfigLive, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders } from "../api/client";
 import type { AgentConfig, Automation, Skill, UserSettings, MCPServerConfig, CustomTool } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
@@ -145,6 +145,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
     try {
       const parsed = mcpJson.trim() ? JSON.parse(mcpJson) as Record<string, MCPServerConfig> : {};
       update({ mcpServers: parsed });
+      applyConfigLive({ mcpServers: parsed }).catch(() => {});
       setMcpError("");
     } catch { setMcpError("Invalid JSON"); }
   };
