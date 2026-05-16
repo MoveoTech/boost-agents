@@ -3,7 +3,7 @@ import { chatWithModel, chatWithModelStream, type ModelConfig, type ToolDecl, ty
 import { fetchUrl, httpRequest } from "./tools";
 import { gmailSend } from "./gmail";
 import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
-import { mondayListBoards, mondayGetItems, mondayCreateItem, mondayUpdateItem, mondayCreateUpdate, mondaySearchItems } from "./monday";
+import { mondayGraphQL, mondayCreateItem, mondayUpdateItem, mondayCreateUpdate } from "./monday";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
@@ -93,18 +93,22 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
       required: ["email"],
     },
   },
-  monday_list_boards: {
-    name: "monday_list_boards", description: "List all monday.com boards the user has access to.",
-    parameters: { properties: {}, required: [] },
-  },
-  monday_get_items: {
-    name: "monday_get_items", description: "Get items from a specific monday.com board.",
+  monday_graphql: {
+    name: "monday_graphql",
+    description: `Execute any GraphQL query or mutation against the Monday.com API. Use this for all read operations and any query not covered by the specific write tools. The Monday GraphQL API endpoint is https://api.monday.com/v2.
+
+Common query patterns:
+- List boards with owners: { boards(limit:50) { id name owners { id name email } } }
+- Items with column values: { boards(ids:[$boardId]) { items_page(limit:50) { items { id name column_values { id text value } } } } }
+- Filter items by column: use items_page with a query_params argument: { boards(ids:[$boardId]) { items_page(query_params: { rules: [{ column_id: "priority", compare_value: ["High"] }] }) { items { id name } } } }
+- Current user info: { me { id name email } }
+- Search items: { items_by_name(board_ids:[$boardId], limit:10, name:"search term") { id name } }`,
     parameters: {
       properties: {
-        boardId: { type: "string", description: "The board ID" },
-        limit:   { type: "number", description: "Max items to return (default 20)" },
+        query:     { type: "string", description: "The GraphQL query or mutation string" },
+        variables: { type: "object", description: "Optional GraphQL variables (use $var in query, pass values here)" },
       },
-      required: ["boardId"],
+      required: ["query"],
     },
   },
   monday_create_item: {
@@ -168,7 +172,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
-  if (mondayToken) tools.push(ALL_TOOLS.monday_list_boards, ALL_TOOLS.monday_get_items, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_search_items);
+  if (mondayToken) tools.push(ALL_TOOLS.monday_graphql, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update);
   return tools;
 }
 
@@ -213,20 +217,16 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       return slackListChannels(slackToken);
     }
 
-    case "monday_list_boards":
-    case "monday_get_items":
+    case "monday_graphql":
     case "monday_create_item":
     case "monday_update_item":
-    case "monday_create_update":
-    case "monday_search_items": {
+    case "monday_create_update": {
       const token = mondayToken;
       if (!token) return "Monday is not connected. Ask the user to connect their Monday account.";
-      if (name === "monday_list_boards")  return mondayListBoards(token);
-      if (name === "monday_get_items")    return mondayGetItems(token, args.boardId as string, args.limit as number | undefined);
-      if (name === "monday_create_item")  return mondayCreateItem(token, args.boardId as string, args.itemName as string, args.columnValues as Record<string, string> | undefined);
-      if (name === "monday_update_item")  return mondayUpdateItem(token, args.boardId as string, args.itemId as string, args.columnValues as Record<string, string>);
-      if (name === "monday_create_update") return mondayCreateUpdate(token, args.itemId as string, args.body as string);
-      return mondaySearchItems(token, args.query as string, args.limit as number | undefined);
+      if (name === "monday_graphql")       return mondayGraphQL(token, args.query as string, args.variables as Record<string, unknown> | undefined);
+      if (name === "monday_create_item")   return mondayCreateItem(token, args.boardId as string, args.itemName as string, args.columnValues as Record<string, string> | undefined);
+      if (name === "monday_update_item")   return mondayUpdateItem(token, args.boardId as string, args.itemId as string, args.columnValues as Record<string, string>);
+      return mondayCreateUpdate(token, args.itemId as string, args.body as string);
     }
 
     default:
