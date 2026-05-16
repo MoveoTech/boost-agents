@@ -170,3 +170,6 @@ jobs:
       - name: Print URL
         run: |
           echo "Agent: ${{ steps.deploy.outputs.url }}"
+          echo "## ✦ Agent deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** ${{ steps.deploy.outputs.url }}" >> $GITHUB_STEP_SUMMARY
