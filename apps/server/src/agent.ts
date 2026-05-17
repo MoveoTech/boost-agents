@@ -4,6 +4,7 @@ import { fetchUrl, httpRequest } from "./tools";
 import { gmailSend } from "./gmail";
 import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
 import { mondayGraphQL, mondayCreateItem, mondayUpdateItem, mondayCreateUpdate } from "./monday";
+import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
@@ -93,6 +94,65 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
       required: ["email"],
     },
   },
+  tasks_list_tasklists: {
+    name: "tasks_list_tasklists", description: "List all Google Task lists the user has.",
+    parameters: { properties: {}, required: [] },
+  },
+  tasks_list_tasks: {
+    name: "tasks_list_tasks", description: "List tasks in a Google Tasks list.",
+    parameters: {
+      properties: {
+        tasklistId:    { type: "string", description: "Task list ID (default: @default for primary list)" },
+        showCompleted: { type: "boolean", description: "Include completed tasks (default false)" },
+      },
+      required: [],
+    },
+  },
+  tasks_create_task: {
+    name: "tasks_create_task", description: "Create a new task in Google Tasks.",
+    parameters: {
+      properties: {
+        title:      { type: "string", description: "Task title" },
+        tasklistId: { type: "string", description: "Task list ID (default: @default)" },
+        notes:      { type: "string", description: "Additional notes (optional)" },
+        due:        { type: "string", description: "Due date in ISO 8601 format (optional)" },
+      },
+      required: ["title"],
+    },
+  },
+  tasks_complete_task: {
+    name: "tasks_complete_task", description: "Mark a Google Task as completed.",
+    parameters: {
+      properties: {
+        taskId:     { type: "string", description: "Task ID" },
+        tasklistId: { type: "string", description: "Task list ID (default: @default)" },
+      },
+      required: ["taskId"],
+    },
+  },
+  tasks_update_task: {
+    name: "tasks_update_task", description: "Update a task's title, notes, or due date.",
+    parameters: {
+      properties: {
+        taskId:     { type: "string", description: "Task ID" },
+        tasklistId: { type: "string", description: "Task list ID (default: @default)" },
+        title:      { type: "string", description: "New title (optional)" },
+        notes:      { type: "string", description: "New notes (optional)" },
+        due:        { type: "string", description: "New due date in ISO 8601 (optional)" },
+      },
+      required: ["taskId"],
+    },
+  },
+  tasks_delete_task: {
+    name: "tasks_delete_task", description: "Delete a task from Google Tasks.",
+    parameters: {
+      properties: {
+        taskId:     { type: "string", description: "Task ID" },
+        tasklistId: { type: "string", description: "Task list ID (default: @default)" },
+      },
+      required: ["taskId"],
+    },
+  },
   monday_graphql: {
     name: "monday_graphql",
     description: `Execute any GraphQL query or mutation against the Monday.com API. Use this for all read operations and any query not covered by the specific write tools. The Monday GraphQL API endpoint is https://api.monday.com/v2.
@@ -165,7 +225,7 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   return `${base}${skillsBlock}${additionBlock}`;
 }
 
-function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string): ToolDecl[] {
+function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
@@ -173,13 +233,14 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
   if (mondayToken) tools.push(ALL_TOOLS.monday_graphql, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update);
+  if (tasksUser) tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
   return tools;
 }
 
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string): Promise<string | null> {
+async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string): Promise<string | null> {
   switch (name) {
     case "fetch_url":
       return fetchUrl(args.url as string);
@@ -229,6 +290,23 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       return mondayCreateUpdate(token, args.itemId as string, args.body as string);
     }
 
+    case "tasks_list_tasklists":
+    case "tasks_list_tasks":
+    case "tasks_create_task":
+    case "tasks_complete_task":
+    case "tasks_update_task":
+    case "tasks_delete_task": {
+      if (!tasksUser) return "User has not connected Google Tasks. Ask them to connect first.";
+      const token = await getUserAccessToken("tasks", tasksUser);
+      if (!token) return "Could not retrieve Google Tasks token. The user may need to reconnect.";
+      if (name === "tasks_list_tasklists") return tasksListTasklists(token);
+      if (name === "tasks_list_tasks")     return tasksListTasks(token, args.tasklistId as string | undefined, args.showCompleted as boolean | undefined);
+      if (name === "tasks_create_task")    return tasksCreateTask(token, args.title as string, args.tasklistId as string | undefined, args.notes as string | undefined, args.due as string | undefined);
+      if (name === "tasks_complete_task")  return tasksCompleteTask(token, args.taskId as string, args.tasklistId as string | undefined);
+      if (name === "tasks_update_task")    return tasksUpdateTask(token, args.taskId as string, args.tasklistId as string | undefined, args.title as string | undefined, args.notes as string | undefined, args.due as string | undefined);
+      return tasksDeleteTask(token, args.taskId as string, args.tasklistId as string | undefined);
+    }
+
     default:
       return null; // not a builtin tool
   }
@@ -258,6 +336,7 @@ async function runChat(
   modelOverride?: ModelConfig,
   streamCallbacks?: StreamCallbacks,
   mondayToken?: string,
+  tasksUser?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
   const builtPrompt = buildSystemPrompt(systemPrompt);
@@ -277,10 +356,10 @@ async function runChat(
     return { reply: result.response.text(), toolUses: [] };
   }
 
-  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken);
+  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser);
 
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
-    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken);
+    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser);
     return result ?? "Tool not implemented";
   };
 
@@ -300,8 +379,9 @@ export async function chat(
   calendarUser?: string,
   modelOverride?: ModelConfig,
   mondayToken?: string,
+  tasksUser?: string,
 ): Promise<ChatResult> {
-  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken);
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser);
 }
 
 export async function chatStream(
@@ -314,7 +394,8 @@ export async function chatStream(
   modelOverride?: ModelConfig,
   callbacks?: StreamCallbacks,
   mondayToken?: string,
+  tasksUser?: string,
 ): Promise<ToolUse[]> {
-  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken);
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser);
   return result.toolUses;
 }

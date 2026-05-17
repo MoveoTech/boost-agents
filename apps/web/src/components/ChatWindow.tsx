@@ -1,10 +1,32 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import MessageBubble from "./MessageBubble";
 import type { DisplayMessage } from "../types";
 
+const PROMPT_POOL = [
+  "What can you help me with?",
+  "Search the web for the latest AI news",
+  "What's on my calendar today?",
+  "Draft a short professional email",
+  "Summarize a topic for me",
+  "Help me brainstorm ideas",
+  "Create a to-do list for my project",
+  "Send a message to my team on Slack",
+  "What are the key action items on my Monday board?",
+  "Help me plan my week",
+  "Write a quick update post",
+  "Explain something in simple terms",
+  "Find information about a topic",
+  "Help me organize my thoughts",
+  "What meetings do I have this week?",
+  "Draft a reply to an email",
+];
+
+function pickRandom<T>(arr: T[], n: number): T[] {
+  return [...arr].sort(() => Math.random() - 0.5).slice(0, n);
+}
+
 interface Props {
   messages: DisplayMessage[];
-  starterPrompts?: string[];
   onPromptClick?: (prompt: string) => void;
   onFeedback?: (messageId: string, rating: 1 | -1) => void;
 }
@@ -24,8 +46,9 @@ function AIOrb() {
   );
 }
 
-export default function ChatWindow({ messages, starterPrompts = [], onPromptClick, onFeedback }: Props) {
+export default function ChatWindow({ messages, onPromptClick, onFeedback }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const starterPrompts = useMemo(() => pickRandom(PROMPT_POOL, 4), []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

@@ -74,15 +74,17 @@ interface Props {
   gmailConnected: boolean;
   calendarConnected: boolean;
   mondayConnected: boolean;
+  tasksConnected: boolean;
   onGmailDisconnect: () => void;
   onCalendarDisconnect: () => void;
   onMondayDisconnect: () => void;
+  onTasksDisconnect: () => void;
   className?: string;
   onFeedback?: (messageId: string, rating: 1 | -1) => void;
   isResponding?: boolean;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, className, isResponding }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, className, isResponding }: Props) {
   const merged = agentConfig ? {
     ...agentConfig,
     ...(userSettings.model ? { model: userSettings.model } : {}),
@@ -101,7 +103,12 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   const [copied, setCopied] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [providers, setProviders] = useState({ gemini: true, claude: false, openai: false });
+  const [providers, setProviders] = useState({ gemini: true, claude: false, openai: false, slack: false });
+  const [settingsTab, setSettingsTab] = useState<"personal" | "org">("personal");
+  // Buffered personal settings — only saved on explicit "Save My Settings" click
+  const [draftModel, setDraftModel] = useState<AgentConfig["model"] | undefined>(userSettings.model);
+  const [draftInstructions, setDraftInstructions] = useState<string | undefined>(userSettings.systemPrompt);
+  const [personalSaved, setPersonalSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -125,14 +132,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
     setConfig(next);
     onSave(next);
     applyConfigLive(patch).catch(() => {});
-  };
-
-  // Personal update — saves to userSettings (server-side via Firestore), not global config
-  const updatePersonal = (patch: { model?: AgentConfig["model"]; systemPrompt?: string }) => {
-    const next = { ...config, ...patch };
-    setConfig(next);
-    const newSettings = { ...userSettings, ...patch };
-    onUserSettingsChange(newSettings);
   };
 
   const updateTool = (key: keyof AgentConfig["tools"], val: boolean) =>
@@ -204,16 +203,65 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{"message": "Send an email...", "history": [], "userEmail": "user@example.com"}'`;
 
+  const handleSavePersonal = () => {
+    const patch: { model?: AgentConfig["model"]; systemPrompt?: string } = {};
+    if (draftModel !== undefined) patch.model = draftModel;
+    if (draftInstructions !== undefined) patch.systemPrompt = draftInstructions;
+    onUserSettingsChange({ ...userSettings, ...patch });
+    setPersonalSaved(true);
+    setTimeout(() => setPersonalSaved(false), 2500);
+  };
+
+  const handleResetPersonal = () => {
+    setDraftModel(undefined);
+    setDraftInstructions(undefined);
+    onUserSettingsChange({ ...userSettings, model: undefined, systemPrompt: undefined });
+  };
+
+  // Connection rows — used in both tabs
+  const ConnectionRows = () => (
+    <>
+      {[
+        { key: "gmail" as const,    label: "Gmail",           icon: "📧", service: "gmail" as const },
+        { key: "googleCalendar" as const, label: "Google Calendar",  icon: "📅", service: "calendar" as const },
+        { key: "googleTasks" as const, label: "Google Tasks",     icon: "✅", service: "tasks" as const },
+        { key: "monday" as const,   label: "Monday.com",      icon: "📋", service: "monday" as const },
+      ].map(({ label, icon, service }) => {
+        const connected = service === "gmail" ? gmailConnected : service === "calendar" ? calendarConnected : service === "tasks" ? tasksConnected : mondayConnected;
+        const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : service === "tasks" ? onTasksDisconnect : onMondayDisconnect;
+        const href = service === "monday"
+          ? `${BASE}/api/auth/monday/start?returnUrl=${encodeURIComponent(window.location.origin)}`
+          : `${BASE}/api/auth/google/start?service=${service === "tasks" ? "tasks" : service}&returnUrl=${encodeURIComponent(window.location.origin)}`;
+        return (
+          <div key={service} className="sidebar-tool-row">
+            <div className="sidebar-tool-info">
+              <span className="sidebar-tool-icon">{icon}</span>
+              <div className="sidebar-tool-text">
+                <span className="sidebar-tool-name">{label}</span>
+                <span className="sidebar-tool-connection">
+                  {connected
+                    ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
+                    : <a className="sidebar-tool-connect-link" href={href}>Connect</a>}
+                  {connected && <button className="sidebar-tool-disconnect" onClick={onDisconnect}>Disconnect</button>}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+
   return (
     <aside className={`agent-sidebar${className ? ` ${className}` : ""}`}>
-      {/* Identity — editable for admins, display-only for users */}
+      {/* Identity header — always visible */}
       <div className="sidebar-identity">
         <div className="sidebar-avatar-wrap">
           <div
             className={`sidebar-avatar${isResponding ? " avatar-responding" : ""}`}
             style={{ background: avatarUrl ? "transparent" : avatarColor(agentName) }}
-            onClick={() => isAdmin && fileRef.current?.click()}
-            title={isAdmin ? "Click to upload avatar" : undefined}
+            onClick={() => settingsTab === "org" && isAdmin && fileRef.current?.click()}
+            title={settingsTab === "org" && isAdmin ? "Click to upload avatar" : undefined}
           >
             {avatarUrl
               ? <img src={avatarUrl} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -222,32 +270,94 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
           {isAdmin && <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleAvatarUpload} />}
         </div>
         <div className="sidebar-identity-info">
-          {isAdmin ? (
-            <input
-              className="sidebar-name-input"
-              value={agentName}
-              onChange={(e) => update({ name: e.target.value, ui: { ...config.ui, title: e.target.value } })}
-              placeholder="Agent name"
-            />
-          ) : (
-            <span className="sidebar-name-input" style={{ cursor: "default" }}>{agentName}</span>
-          )}
-          <span className="sidebar-model-tag">Gemini 2.5 Flash</span>
+          <span className="sidebar-name-input" style={{ cursor: "default" }}>{agentName}</span>
+          {userEmail && <span className="sidebar-model-tag">{userEmail}</span>}
         </div>
       </div>
 
-      {/* Logged-in user */}
-      {userEmail && (
-        <div className="sidebar-user-row">
-          <span className="sidebar-user-avatar" style={{ background: avatarColor(userEmail) }}>
-            {userEmail[0].toUpperCase()}
-          </span>
-          <span className="sidebar-user-email">{userEmail}</span>
-        </div>
+      {/* Tab switcher */}
+      <div className="settings-tab-bar">
+        <button
+          className={`settings-tab-btn${settingsTab === "personal" ? " active" : ""}`}
+          onClick={() => setSettingsTab("personal")}
+        >
+          My Settings
+        </button>
+        <button
+          className={`settings-tab-btn${settingsTab === "org" ? " active" : ""}`}
+          onClick={() => setSettingsTab("org")}
+        >
+          {isAdmin ? "Agent Settings" : "About this Agent"}
+        </button>
+      </div>
+
+      {/* ── PERSONAL SETTINGS TAB ───────────────────────────────── */}
+      {settingsTab === "personal" && (
+        <>
+          <SidebarSection title="My Model">
+            <p className="mcp-hint" style={{ marginBottom: 8 }}>
+              Override the agent's default model just for yourself.
+            </p>
+            <select
+              className="configure-input"
+              value={`${(draftModel ?? agentConfig?.model)?.provider ?? "gemini"}:${(draftModel ?? agentConfig?.model)?.modelId ?? "gemini-2.5-flash"}`}
+              onChange={(e) => {
+                const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
+                setDraftModel({ provider, modelId: rest.join(":") });
+              }}
+            >
+              {(["gemini", "claude", "openai"] as const).map((p) => (
+                <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude" : "OpenAI"}>
+                  {MODELS.filter((m) => m.provider === p).map((m) => (
+                    <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
+                      {m.label}{!providers[p] ? " — API key not set" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </SidebarSection>
+
+          <SidebarSection title="My Instructions">
+            <p className="mcp-hint" style={{ marginBottom: 8 }}>
+              Override the agent's default behavior just for yourself.
+            </p>
+            <textarea
+              className="configure-textarea sidebar-instructions"
+              rows={6}
+              placeholder={agentConfig?.systemPrompt ?? "Define your personal behavior override…"}
+              value={draftInstructions ?? userSettings.systemPrompt ?? ""}
+              onChange={(e) => setDraftInstructions(e.target.value)}
+            />
+          </SidebarSection>
+
+          <SidebarSection title="My Connections">
+            <ConnectionRows />
+          </SidebarSection>
+
+          {/* Personal save footer */}
+          <div className="sidebar-footer">
+            {(userSettings.model || userSettings.systemPrompt) && (
+              <button className="automation-cancel-btn" style={{ fontSize: 12 }} onClick={handleResetPersonal}>
+                Reset to org defaults
+              </button>
+            )}
+            <button
+              className="sidebar-publish-btn"
+              style={{ background: personalSaved ? "#16a34a" : undefined }}
+              onClick={handleSavePersonal}
+            >
+              {personalSaved ? "✓ Saved" : "Save My Settings"}
+            </button>
+          </div>
+        </>
       )}
 
-      {/* Automations — admin only */}
-      {isAdmin && (
+      {/* ── AGENT SETTINGS TAB ──────────────────────────────────── */}
+      {settingsTab === "org" && (
+        <>
+          {/* Automations — admin only */}
+          {isAdmin && (
         <SidebarSection
           title="Automations"
           action={
@@ -335,174 +445,147 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
         </SidebarSection>
       )}
 
-      {/* Model — visible to everyone, saves to personal settings */}
-      <SidebarSection title="Model">
-        <select
-          className="configure-input"
-          value={`${config.model?.provider ?? "gemini"}:${config.model?.modelId ?? "gemini-2.5-flash"}`}
-          onChange={(e) => {
-            const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
-            updatePersonal({ model: { provider, modelId: rest.join(":") } });
-          }}
-        >
-          {(["gemini", "claude", "openai"] as const).map((p) => (
-            <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude (Anthropic)" : "OpenAI"}>
-              {MODELS.filter((m) => m.provider === p).map((m) => (
-                <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
-                  {m.label}{!providers[p] ? " — API key not set" : ""}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        {userSettings.model && (
-          <button className="automation-cancel-btn" style={{ marginTop: 6, fontSize: 12 }}
-            onClick={() => updatePersonal({ model: undefined })}>
-            Reset to default
-          </button>
-        )}
-      </SidebarSection>
-
-      {/* Instructions — visible to everyone, saves to personal settings */}
-      <SidebarSection title="Instructions">
-        <textarea
-          className="configure-textarea sidebar-instructions"
-          rows={6}
-          placeholder="Define your agent's behavior…"
-          value={config.systemPrompt}
-          onChange={(e) => updatePersonal({ systemPrompt: e.target.value })}
-        />
-        {userSettings.systemPrompt !== undefined && !isAdmin && (
-          <button className="automation-cancel-btn" style={{ marginTop: 6, fontSize: 12 }}
-            onClick={() => updatePersonal({ systemPrompt: undefined })}>
-            Reset to default
-          </button>
-        )}
-        {isAdmin && (
-          <>
-            <p className="sidebar-pref-label" style={{ marginTop: 10 }}>Starter Prompts</p>
-            <textarea
-              className="configure-textarea sidebar-instructions"
-              rows={3}
-              placeholder={"One prompt per line…\nSchedule a meeting for me\nSearch the web for…"}
-              value={(config.ui?.starterPrompts ?? []).join("\n")}
-              onChange={(e) => {
-                const prompts = e.target.value.split("\n").filter(Boolean);
-                update({ ui: { ...config.ui, title: config.ui?.title ?? config.name, placeholder: config.ui?.placeholder ?? "", starterPrompts: prompts } });
-              }}
-            />
-          </>
-        )}
-      </SidebarSection>
-
-      {/* Tools — toggle admin-only, Google connect/disconnect for everyone */}
-      <SidebarSection title={isAdmin ? "Tools" : "Connections"}>
-        {TOOL_DEFS.map(({ key, label, icon, desc, service }) => {
-          const connected = service === "gmail" ? gmailConnected : service === "calendar" ? calendarConnected : service === "monday" ? mondayConnected : false;
-          const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : service === "monday" ? onMondayDisconnect : null;
-          const connectHref = service === "monday"
-            ? `${BASE}/api/auth/monday/start?returnUrl=${encodeURIComponent(window.location.origin)}`
-            : `${BASE}/api/auth/google/start?service=${service}&returnUrl=${encodeURIComponent(window.location.origin)}`;
-          if (!isAdmin && !service) return null;
-          return (
-            <div key={key} className="sidebar-tool-row">
-              <div className="sidebar-tool-info">
-                <span className="sidebar-tool-icon">{icon}</span>
-                <div className="sidebar-tool-text">
-                  <span className="sidebar-tool-name">{label}</span>
-                  {service && (
-                    <span className="sidebar-tool-connection">
-                      {connected
-                        ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
-                        : <a className="sidebar-tool-connect-link" href={connectHref}>Connect</a>
-                      }
-                      {connected && onDisconnect && (
-                        <button className="sidebar-tool-disconnect" onClick={onDisconnect}>Disconnect</button>
-                      )}
-                    </span>
-                  )}
-                  {!service && <span className="sidebar-tool-desc">{desc}</span>}
-                </div>
-              </div>
-              {isAdmin && (
-                <label className="sidebar-toggle">
-                  <input type="checkbox"
-                    checked={service ? connected || config.tools[key] : config.tools[key]}
-                    onChange={(e) => { if (!service || !connected) updateTool(key, e.target.checked); }}
-                    readOnly={!!(service && connected)}
-                  />
-                  <span className="sidebar-toggle-track" />
-                </label>
-              )}
-            </div>
-          );
-        })}
-      </SidebarSection>
-
-      {/* Skills — admin only */}
-      {isAdmin && (
-        <SidebarSection title="Skills" defaultOpen={false}>
-          {(config.skills ?? []).filter(s => s.enabled).length > 0 && (
-            <div style={{ marginBottom: 8 }}>
-              {(config.skills ?? []).filter(s => s.enabled).map(s => (
-                <div key={s.id} className="sidebar-automation-row" style={{ marginBottom: 4 }}>
-                  <span className="sidebar-automation-name">{s.name}</span>
-                </div>
-              ))}
+          {/* Org default model — admin editable */}
+          {isAdmin ? (
+            <SidebarSection title="Default Model">
+              <select
+                className="configure-input"
+                value={`${agentConfig?.model?.provider ?? "gemini"}:${agentConfig?.model?.modelId ?? "gemini-2.5-flash"}`}
+                onChange={(e) => {
+                  const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
+                  update({ model: { provider, modelId: rest.join(":") } });
+                }}
+              >
+                {(["gemini", "claude", "openai"] as const).map((p) => (
+                  <optgroup key={p} label={p === "gemini" ? "Gemini" : p === "claude" ? "Claude" : "OpenAI"}>
+                    {MODELS.filter((m) => m.provider === p).map((m) => (
+                      <option key={m.modelId} value={`${m.provider}:${m.modelId}`} disabled={!providers[p]}>
+                        {m.label}{!providers[p] ? " — API key not set" : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </SidebarSection>
+          ) : (
+            <div style={{ padding: "12px 16px", fontSize: 13, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
+              <strong style={{ color: "var(--text)" }}>{agentName}</strong> — {agentConfig?.model?.modelId ?? "Gemini 2.5 Flash"}
             </div>
           )}
-          <button className="sidebar-add-skill-btn" onClick={() => setShowSkills(true)}>
-            {(config.skills ?? []).length > 0 ? "Manage Skills" : "+ Add skill"}
-          </button>
-        </SidebarSection>
-      )}
 
-      {showSkills && (
-        <SkillsModal
-          skills={config.skills ?? []}
-          onSave={(skills: Skill[]) => { update({ skills }); setShowSkills(false); }}
-          onClose={() => setShowSkills(false)}
-        />
-      )}
+          {/* Org default instructions + starter prompts — admin editable */}
+          {isAdmin && (
+            <SidebarSection title="Default Instructions">
+              <textarea
+                className="configure-textarea sidebar-instructions"
+                rows={5}
+                placeholder="Define the agent's default behavior for all users…"
+                value={agentConfig?.systemPrompt ?? ""}
+                onChange={(e) => update({ systemPrompt: e.target.value })}
+              />
+            </SidebarSection>
+          )}
 
-      {/* API Access — admin only */}
-      {isAdmin && (
-        <SidebarSection
-          title="API Access"
-          defaultOpen={false}
-          action={
-            <button className="sidebar-analytics-btn" onClick={() => setShowAnalytics(true)} title="View usage analytics">
-              📊 Analytics
-            </button>
-          }
-        >
-          <SecretRow label="Server URL" value={baseUrl} onCopy={copy} copied={copied} visible />
-          {apiKey && <SecretRow label="API Key" value={apiKey} onCopy={copy} copied={copied} />}
-          {userEmail && <SecretRow label="Your email (for Gmail/Calendar)" value={userEmail} onCopy={copy} copied={copied} visible />}
-          <div className="api-code-block" style={{ marginTop: 12 }}>
-            <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Basic request</p>
-            <pre>{curlExample}</pre>
-            <button className="api-copy-btn api-copy-code" onClick={() => copy(curlExample)}>{copied ? "✓" : "Copy"}</button>
-          </div>
-          <div className="api-code-block" style={{ marginTop: 8 }}>
-            <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>With Gmail/Calendar access</p>
-            <pre>{curlGmailExample}</pre>
-            <button className="api-copy-btn api-copy-code" onClick={() => copy(curlGmailExample)}>{copied ? "✓" : "Copy"}</button>
-          </div>
-        </SidebarSection>
-      )}
+          {/* Tool toggles — admin only */}
+          {isAdmin && (
+            <SidebarSection title="Tools">
+              {TOOL_DEFS.filter((t) => !t.service).map(({ key, label, icon, desc }) => {
+                const isSlack = key === "slack";
+                const slackConfigured = providers.slack;
+                return (
+                  <div key={key} className="sidebar-tool-row">
+                    <div className="sidebar-tool-info">
+                      <span className="sidebar-tool-icon">{icon}</span>
+                      <div className="sidebar-tool-text">
+                        <span className="sidebar-tool-name">{label}</span>
+                        <span className="sidebar-tool-desc">
+                          {isSlack && !slackConfigured
+                            ? <span style={{ color: "#d97706" }}>⚠ SLACK_BOT_TOKEN not set</span>
+                            : desc}
+                        </span>
+                      </div>
+                    </div>
+                    <label className="sidebar-toggle">
+                      <input
+                        type="checkbox"
+                        checked={isSlack ? (slackConfigured && config.tools[key]) : config.tools[key]}
+                        disabled={isSlack && !slackConfigured}
+                        onChange={(e) => updateTool(key, e.target.checked)}
+                      />
+                      <span className="sidebar-toggle-track" />
+                    </label>
+                  </div>
+                );
+              })}
+            </SidebarSection>
+          )}
 
-      {showAnalytics && <UsageAnalytics onClose={() => setShowAnalytics(false)} />}
+          {/* Skills — admin only */}
+          {isAdmin && (
+            <SidebarSection title="Skills" defaultOpen={false}>
+              {(config.skills ?? []).filter(s => s.enabled).length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  {(config.skills ?? []).filter(s => s.enabled).map(s => (
+                    <div key={s.id} className="sidebar-automation-row" style={{ marginBottom: 4 }}>
+                      <span className="sidebar-automation-name">{s.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button className="sidebar-add-skill-btn" onClick={() => setShowSkills(true)}>
+                {(config.skills ?? []).length > 0 ? "Manage Skills" : "+ Add skill"}
+              </button>
+            </SidebarSection>
+          )}
 
-      {/* Footer — publish admin only */}
-      {isAdmin && (
-        <div className="sidebar-footer">
-          {publishStatus === "done" && <span className="sidebar-publish-success">✓ Published</span>}
-          {publishStatus === "error" && <span className="sidebar-publish-error">Publish failed</span>}
-          <button className="sidebar-publish-btn" onClick={handlePublish} disabled={publishing}>
-            {publishing ? "Publishing…" : "Publish Changes"}
-          </button>
-        </div>
+          {showSkills && (
+            <SkillsModal
+              skills={config.skills ?? []}
+              onSave={(skills: Skill[]) => { update({ skills }); setShowSkills(false); }}
+              onClose={() => setShowSkills(false)}
+            />
+          )}
+
+          {/* API Access — admin only */}
+          {isAdmin && (
+            <SidebarSection
+              title="API Access"
+              defaultOpen={false}
+              action={
+                <button className="sidebar-analytics-btn" onClick={() => setShowAnalytics(true)}>
+                  📊 Analytics
+                </button>
+              }
+            >
+              <SecretRow label="Server URL" value={baseUrl} onCopy={copy} copied={copied} visible />
+              {apiKey && <SecretRow label="API Key" value={apiKey} onCopy={copy} copied={copied} />}
+              {userEmail && <SecretRow label="Your email" value={userEmail} onCopy={copy} copied={copied} visible />}
+              <div className="api-code-block" style={{ marginTop: 12 }}>
+                <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Basic request</p>
+                <pre>{curlExample}</pre>
+                <button className="api-copy-btn api-copy-code" onClick={() => copy(curlExample)}>{copied ? "✓" : "Copy"}</button>
+              </div>
+              <div className="api-code-block" style={{ marginTop: 8 }}>
+                <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>With Gmail/Calendar access</p>
+                <pre>{curlGmailExample}</pre>
+                <button className="api-copy-btn api-copy-code" onClick={() => copy(curlGmailExample)}>{copied ? "✓" : "Copy"}</button>
+              </div>
+            </SidebarSection>
+          )}
+
+          {showAnalytics && <UsageAnalytics onClose={() => setShowAnalytics(false)} />}
+
+          {/* Org footer — Publish Changes (admin only) */}
+          {isAdmin && (
+            <div className="sidebar-footer">
+              {publishStatus === "done" && <span className="sidebar-publish-success">✓ Published</span>}
+              {publishStatus === "error" && <span className="sidebar-publish-error">Publish failed</span>}
+              <button className="sidebar-publish-btn" onClick={handlePublish} disabled={publishing}>
+                {publishing ? "Publishing…" : "Publish Changes"}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </aside>
   );

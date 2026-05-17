@@ -348,6 +348,7 @@ app.get("/api/providers", (_req, res) => {
     gemini:  !!process.env.GEMINI_API_KEY,
     claude:  !!process.env.ANTHROPIC_API_KEY,
     openai:  !!process.env.OPENAI_API_KEY,
+    slack:   !!process.env.SLACK_BOT_TOKEN,
   });
 });
 
@@ -476,9 +477,9 @@ app.get("/api/connections", async (req, res) => {
     const r = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
       headers: { "x-api-key": oauthServiceKey },
     });
-    const { users } = await r.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean }[] };
+    const { users } = await r.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
     const user = users.find((u) => u.email === email);
-    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday });
+    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks });
   } catch { res.json({ gmail: false, calendar: false }); }
 });
 
@@ -609,6 +610,7 @@ app.post("/api/chat", async (req, res) => {
     const toolUses: { name: string; input: string; output: string }[] = [];
 
     const mondayTokenStream = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
+    const tasksUserStream = sessionEmail ? (await getUserAccessToken("tasks", sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
     try {
       await chatStream(
         effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model,
@@ -625,6 +627,7 @@ app.post("/api/chat", async (req, res) => {
           },
         },
         mondayTokenStream,
+        tasksUserStream,
       );
       send({ type: "done", toolUses });
       trackUsage(modelId, toolUses.map((t) => t.name), Date.now() - t0);
@@ -638,7 +641,8 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     const mondayToken = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
-    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken);
+    const tasksUser = sessionEmail ? (await getUserAccessToken("tasks", sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
+    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser);
     trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
   } catch (err) {

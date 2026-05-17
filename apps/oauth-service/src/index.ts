@@ -26,6 +26,10 @@ const SERVICE_SCOPES: Record<string, string> = {
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/userinfo.email",
   ].join(" "),
+  tasks: [
+    "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/userinfo.email",
+  ].join(" "),
   identity: "openid email profile",
 };
 
@@ -374,12 +378,12 @@ app.get("/api/users/:agentId", async (req, res) => {
   }
   const { agentId } = req.params;
   try {
-    const services = ["gmail", "calendar", "monday"] as const;
-    const userMap: Record<string, { gmail: boolean; calendar: boolean; monday: boolean }> = {};
+    const services = ["gmail", "calendar", "monday", "tasks"] as const;
+    const userMap: Record<string, { gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }> = {};
     for (const service of services) {
       const snapshot = await db.collection(`${service}_tokens`).doc(agentId).collection("users").get();
       snapshot.forEach((doc) => {
-        if (!userMap[doc.id]) userMap[doc.id] = { gmail: false, calendar: false, monday: false };
+        if (!userMap[doc.id]) userMap[doc.id] = { gmail: false, calendar: false, monday: false, tasks: false };
         userMap[doc.id][service] = true;
       });
     }

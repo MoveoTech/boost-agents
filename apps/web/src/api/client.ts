@@ -38,9 +38,9 @@ export async function saveAutomation(automation: Automation): Promise<void> {
   });
 }
 
-export async function getProviders(): Promise<{ gemini: boolean; claude: boolean; openai: boolean }> {
+export async function getProviders(): Promise<{ gemini: boolean; claude: boolean; openai: boolean; slack: boolean }> {
   const res = await fetch(`${BASE}/api/providers`);
-  return res.ok ? res.json() : { gemini: true, claude: false, openai: false };
+  return res.ok ? res.json() : { gemini: true, claude: false, openai: false, slack: false };
 }
 
 export async function listChats(): Promise<ChatSession[]> {
@@ -93,12 +93,12 @@ export async function saveUserSettings(settings: Record<string, unknown>): Promi
   });
 }
 
-export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean; monday: boolean }> {
+export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }> {
   const res = await fetch(`${BASE}/api/connections`);
-  return res.ok ? res.json() : { gmail: false, calendar: false, monday: false };
+  return res.ok ? res.json() : { gmail: false, calendar: false, monday: false, tasks: false };
 }
 
-export async function disconnectService(service: "gmail" | "calendar" | "monday"): Promise<void> {
+export async function disconnectService(service: "gmail" | "calendar" | "monday" | "tasks"): Promise<void> {
   await fetch(`${BASE}/api/connections/${service}`, { method: "DELETE" });
 }
 

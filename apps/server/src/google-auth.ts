@@ -1,7 +1,7 @@
 const OAUTH_SERVICE_URL = process.env.OAUTH_SERVICE_URL;
 const OAUTH_SERVICE_KEY = process.env.OAUTH_SERVICE_KEY;
 
-export async function getUserAccessToken(service: "gmail" | "calendar" | "monday", userEmail: string): Promise<string | null> {
+export async function getUserAccessToken(service: "gmail" | "calendar" | "monday" | "tasks", userEmail: string): Promise<string | null> {
   if (!OAUTH_SERVICE_URL || !OAUTH_SERVICE_KEY) return null;
 
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;

@@ -68,6 +68,7 @@ export interface AgentConfig {
     googleCalendar: boolean;
     slack: boolean;
     monday: boolean;
+    googleTasks: boolean;
   };
   access: {
     chatEnabled: boolean;

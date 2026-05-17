@@ -4,6 +4,7 @@ import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
 import AgentSidebar from "./components/AgentSidebar";
 import ChatHistorySidebar from "./components/ChatHistorySidebar";
+import WelcomeAnimation from "./components/WelcomeAnimation";
 import {
   streamMessage, getConfig, whoami, getConnections, disconnectService,
   identityComplete, getUserSettings, saveUserSettings,
@@ -28,10 +29,12 @@ export default function App() {
   const [gmailConnected, setGmailConnected] = useState(false);
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [mondayConnected, setMondayConnected] = useState(false);
+  const [tasksConnected, setTasksConnected] = useState(false);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [darkMode, setDarkMode] = useState(getStoredDarkMode);
+  const [showWelcome, setShowWelcome] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<{ data: string; mimeType: string; name: string } | null>(null);
   const currentChatIdRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -51,7 +54,7 @@ export default function App() {
         setIsAdmin(a);
         if (email) setUserEmail(email);
         getConfig().then(setAgentConfig).catch(() => {});
-        getConnections().then(({ gmail, calendar, monday }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); }).catch(() => {});
+        getConnections().then(({ gmail, calendar, monday, tasks }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); }).catch(() => {});
         getUserSettings().then((s) => setUserSettings(s as UserSettings)).catch(() => {});
         listChats().then(setChatSessions).catch(() => {});
       }
@@ -63,12 +66,14 @@ export default function App() {
     const identityToken = params.get("identity_token");
     if (identityToken) {
       window.history.replaceState({}, "", window.location.pathname);
-      identityComplete(identityToken).then(() => checkSession()).catch(() => setAuthed(false));
+      identityComplete(identityToken)
+        .then(() => { setShowWelcome(true); return checkSession(); })
+        .catch(() => setAuthed(false));
       return;
     }
     if (params.get("google_connected") === "true" || params.get("monday_connected") === "true") {
       window.history.replaceState({}, "", window.location.pathname);
-      getConnections().then(({ gmail, calendar, monday }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); }).catch(() => {});
+      getConnections().then(({ gmail, calendar, monday, tasks }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); }).catch(() => {});
     }
     checkSession();
   }, [checkSession]);
@@ -90,6 +95,11 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleLogout = useCallback(async () => {
+    await fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/logout`, { method: "POST" });
+    window.location.reload();
+  }, []);
 
   const handleNewChat = useCallback(() => {
     setMessages([]);
@@ -244,6 +254,13 @@ export default function App() {
     : "Gemini 2.5 Flash";
 
   return (
+    <>
+    {showWelcome && (
+      <WelcomeAnimation
+        agentName={title}
+        onDone={() => setShowWelcome(false)}
+      />
+    )}
     <div className="app app-admin">
       <ChatHistorySidebar
         sessions={chatSessions}
@@ -264,6 +281,17 @@ export default function App() {
           </div>
           <div className="header-actions">
             <span className="model-badge">{modelLabel}</span>
+            <button
+              className="header-icon-btn"
+              onClick={handleLogout}
+              title={`Signed in as ${userEmail ?? ""} — click to sign out`}
+              style={{ fontSize: 11, width: "auto", padding: "0 8px", gap: 4, display: "flex", alignItems: "center" }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+              </svg>
+              {userEmail?.split("@")[0]}
+            </button>
             {messages.length > 0 && (
               <button className="header-icon-btn" onClick={handleExport} title="Export chat (⌘K=new, ⌘/=focus)">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -291,7 +319,6 @@ export default function App() {
 
         <ChatWindow
           messages={messages}
-          starterPrompts={starterPrompts}
           onPromptClick={(p) => handleSend(p)}
         />
 
@@ -318,6 +345,8 @@ export default function App() {
         onGmailDisconnect={() => disconnectService("gmail").then(() => setGmailConnected(false))}
         onCalendarDisconnect={() => disconnectService("calendar").then(() => setCalendarConnected(false))}
         onMondayDisconnect={() => disconnectService("monday").then(() => setMondayConnected(false))}
+        tasksConnected={tasksConnected}
+        onTasksDisconnect={() => disconnectService("tasks").then(() => setTasksConnected(false))}
         className={mobileTab !== "settings" ? "mobile-hidden" : ""}
         onFeedback={handleFeedback}
         isResponding={isResponding}
@@ -329,5 +358,6 @@ export default function App() {
         <button className={`mobile-tab-btn${mobileTab === "settings" ? " active" : ""}`} onClick={() => setMobileTab("settings")}>Settings</button>
       </nav>
     </div>
+    </>
   );
 }

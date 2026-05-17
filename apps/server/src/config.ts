@@ -19,6 +19,7 @@ export interface AgentConfig {
     googleCalendar: boolean;
     slack: boolean;
     monday: boolean;
+    googleTasks: boolean;
   };
   access: {
     chatEnabled: boolean;
@@ -44,6 +45,7 @@ export const agentConfig: AgentConfig = {
     googleCalendar: false,
     slack: true,
     monday: false,
+    googleTasks: false,
   },
   access: {
     chatEnabled: true,
