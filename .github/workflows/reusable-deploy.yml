@@ -52,7 +52,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: _child
-          token: ${{ secrets.GH_PAT }}
 
       - name: Overlay config.ts from child repo
         run: |
