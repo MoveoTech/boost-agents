@@ -2694,6 +2694,20 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Skeleton loader ─────────────────────────────────────── */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--border) 25%, var(--section-header-hover) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  display: block;
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ── Settings tab switcher ───────────────────────────────── */
 
 .settings-tab-bar {

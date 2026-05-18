@@ -79,12 +79,13 @@ interface Props {
   onCalendarDisconnect: () => void;
   onMondayDisconnect: () => void;
   onTasksDisconnect: () => void;
+  connectionsLoading?: boolean;
   className?: string;
   onFeedback?: (messageId: string, rating: 1 | -1) => void;
   isResponding?: boolean;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, className, isResponding }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, connectionsLoading, className, isResponding }: Props) {
   const merged = agentConfig ? {
     ...agentConfig,
     ...(userSettings.model ? { model: userSettings.model } : {}),
@@ -124,7 +125,25 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   useEffect(() => { getApiKey().then(setApiKey).catch(() => {}); }, []);
   useEffect(() => { getProviders().then(setProviders).catch(() => {}); }, []);
 
-  if (!config) return <div className="sidebar-loading">Loading…</div>;
+  if (!config) return (
+    <aside className={`agent-sidebar${className ? ` ${className}` : ""}`}>
+      <div style={{ padding: "20px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+          <div className="skeleton" style={{ width: 56, height: 56, borderRadius: 12, flexShrink: 0 }} />
+          <div style={{ flex: 1 }}>
+            <div className="skeleton" style={{ height: 15, width: "60%", borderRadius: 4, marginBottom: 8 }} />
+            <div className="skeleton" style={{ height: 11, width: "80%", borderRadius: 4 }} />
+          </div>
+        </div>
+        {[1, 2, 3].map((i) => (
+          <div key={i}>
+            <div className="skeleton" style={{ height: 11, width: "40%", borderRadius: 4, marginBottom: 10 }} />
+            <div className="skeleton" style={{ height: 36, borderRadius: 8 }} />
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
 
   // Global config update — applies immediately to the running server AND updates parent state
   const update = (patch: Partial<AgentConfig>) => {
@@ -332,7 +351,19 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
           </SidebarSection>
 
           <SidebarSection title="My Connections">
-            <ConnectionRows />
+            {connectionsLoading ? (
+              [1, 2, 3, 4].map((i) => (
+                <div key={i} className="sidebar-tool-row" style={{ alignItems: "center" }}>
+                  <div className="skeleton" style={{ width: 20, height: 20, borderRadius: 4, flexShrink: 0 }} />
+                  <div style={{ flex: 1, marginLeft: 10 }}>
+                    <div className="skeleton" style={{ height: 13, width: "55%", borderRadius: 4, marginBottom: 5 }} />
+                    <div className="skeleton" style={{ height: 11, width: "35%", borderRadius: 4 }} />
+                  </div>
+                </div>
+              ))
+            ) : (
+              <ConnectionRows />
+            )}
           </SidebarSection>
 
           {/* Personal save footer */}

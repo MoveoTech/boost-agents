@@ -31,6 +31,8 @@ export default function App() {
   const [mondayConnected, setMondayConnected] = useState(false);
   const [tasksConnected, setTasksConnected] = useState(false);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [darkMode, setDarkMode] = useState(getStoredDarkMode);
@@ -54,9 +56,15 @@ export default function App() {
         setIsAdmin(a);
         if (email) setUserEmail(email);
         getConfig().then(setAgentConfig).catch(() => {});
-        getConnections().then(({ gmail, calendar, monday, tasks }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); }).catch(() => {});
+        getConnections()
+          .then(({ gmail, calendar, monday, tasks }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); })
+          .catch(() => {})
+          .finally(() => setConnectionsLoading(false));
         getUserSettings().then((s) => setUserSettings(s as UserSettings)).catch(() => {});
-        listChats().then(setChatSessions).catch(() => {});
+        listChats()
+          .then(setChatSessions)
+          .catch(() => {})
+          .finally(() => setHistoryLoading(false));
       }
     }).catch(() => setAuthed(false));
   }, []);
@@ -264,6 +272,7 @@ export default function App() {
     <div className="app app-admin">
       <ChatHistorySidebar
         sessions={chatSessions}
+        loading={historyLoading}
         currentId={currentChatId}
         onSelect={handleSelectChat}
         onNew={handleNewChat}
@@ -336,6 +345,7 @@ export default function App() {
         isAdmin={isAdmin}
         userEmail={userEmail}
         agentConfig={agentConfig}
+        connectionsLoading={connectionsLoading}
         onSave={(c) => setAgentConfig(c)}
         userSettings={userSettings}
         onUserSettingsChange={handleUserSettingsChange}

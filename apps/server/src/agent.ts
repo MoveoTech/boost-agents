@@ -222,7 +222,19 @@ function buildSystemPrompt(override?: string, addition?: string): string {
     ? `\n\n---\n\n${enabledSkills.map((s) => `## ${s.name}\n${s.content}`).join("\n\n")}`
     : "";
   const additionBlock = addition?.trim() ? `\n\n---\n\n${addition.trim()}` : "";
-  return `${base}${skillsBlock}${additionBlock}`;
+
+  const caps: string[] = [];
+  if (agentConfig.tools.fetchUrl) {
+    caps.push("- **Web search**: Use the fetch_url tool to search the web. For any search query, fetch `https://html.duckduckgo.com/html/?q=your+search+terms` (URL-encode spaces as +). You can also fetch any other URL to read its content. Always use this when asked to search, look something up, or find information online — never say you cannot search the web.");
+  }
+  if (agentConfig.tools.httpRequest) {
+    caps.push("- **Custom API calls**: Use http_request to call any REST API with GET, POST, PUT, PATCH, or DELETE and an optional JSON body.");
+  }
+  const capsBlock = caps.length
+    ? `\n\n---\n\nYou have access to the following capabilities:\n${caps.join("\n")}`
+    : "";
+
+  return `${base}${skillsBlock}${additionBlock}${capsBlock}`;
 }
 
 function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string): ToolDecl[] {

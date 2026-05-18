@@ -4,6 +4,7 @@ import { deleteChat } from "../api/client";
 
 interface Props {
   sessions: ChatSession[];
+  loading?: boolean;
   currentId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -25,7 +26,7 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
-export default function ChatHistorySidebar({ sessions, currentId, onSelect, onNew, onDelete, collapsed, onToggle, className }: Props) {
+export default function ChatHistorySidebar({ sessions, loading, currentId, onSelect, onNew, onDelete, collapsed, onToggle, className }: Props) {
   const [hoverId, setHoverId] = useState<string | null>(null);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -49,6 +50,15 @@ export default function ChatHistorySidebar({ sessions, currentId, onSelect, onNe
 
       {!collapsed && (
         <div className="chat-history-list">
+          {loading ? (
+            [1, 2, 3, 4].map((i) => (
+              <div key={i} className="chat-history-item">
+                <div className="skeleton" style={{ height: 13, width: "75%", borderRadius: 4, marginBottom: 6 }} />
+                <div className="skeleton" style={{ height: 11, width: "45%", borderRadius: 4 }} />
+              </div>
+            ))
+          ) : (
+            <>
           {sessions.length === 0 && (
             <p className="chat-history-empty">No past chats yet</p>
           )}
@@ -75,6 +85,8 @@ export default function ChatHistorySidebar({ sessions, currentId, onSelect, onNe
               </div>
             </div>
           ))}
+            </>
+          )}
         </div>
       )}
     </div>
