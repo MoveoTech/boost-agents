@@ -29,6 +29,8 @@ interface Props {
   messages: DisplayMessage[];
   onPromptClick?: (prompt: string) => void;
   onFeedback?: (messageId: string, rating: 1 | -1) => void;
+  onRetry?: () => void;
+  onEditRetry?: () => void;
 }
 
 function AIOrb() {
@@ -46,9 +48,10 @@ function AIOrb() {
   );
 }
 
-export default function ChatWindow({ messages, onPromptClick, onFeedback }: Props) {
+export default function ChatWindow({ messages, onPromptClick, onFeedback, onRetry, onEditRetry }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const starterPrompts = useMemo(() => pickRandom(PROMPT_POOL, 4), []);
+  const lastAssistantIdx = messages.reduce((acc, m, i) => (!m.pending && m.role === "model" ? i : acc), -1);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -72,8 +75,14 @@ export default function ChatWindow({ messages, onPromptClick, onFeedback }: Prop
           )}
         </div>
       )}
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} onFeedback={onFeedback} />
+      {messages.map((msg, i) => (
+        <MessageBubble
+          key={msg.id}
+          message={msg}
+          onFeedback={onFeedback}
+          onRetry={i === lastAssistantIdx ? onRetry : undefined}
+          onEditRetry={i === lastAssistantIdx ? onEditRetry : undefined}
+        />
       ))}
       <div ref={bottomRef} />
     </main>

@@ -41,6 +41,7 @@ interface Props {
   skills?: Skill[];
   currentProvider?: "gemini" | "claude" | "openai";
   onNewChat?: () => void;
+  prefillInput?: { text: string; ts: number } | null;
 }
 
 declare global {
@@ -48,13 +49,22 @@ declare global {
 }
 
 const InputBar = forwardRef<HTMLTextAreaElement, Props>(
-  ({ onSend, disabled, placeholder, attachment, onAttachmentChange, skills = [], currentProvider = "gemini", onNewChat }, ref) => {
+  ({ onSend, disabled, placeholder, attachment, onAttachmentChange, skills = [], currentProvider = "gemini", onNewChat, prefillInput }, ref) => {
     const [value, setValue] = useState("");
     const [isListening, setIsListening] = useState(false);
     const [paletteIdx, setPaletteIdx] = useState(0);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const recognitionRef = useRef<any>(null);
     const paletteRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+      if (!prefillInput?.text) return;
+      setValue(prefillInput.text);
+      setTimeout(() => {
+        const el = ref && "current" in ref ? ref.current : null;
+        if (el) { el.focus(); el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; }
+      }, 10);
+    }, [prefillInput?.ts]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Build full command list = builtins (filtered by provider) + skill commands
     const skillCommands: SlashCommand[] = skills.map((s) => ({

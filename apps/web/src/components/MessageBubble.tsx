@@ -7,6 +7,38 @@ import type { DisplayMessage } from "../types";
 interface Props {
   message: DisplayMessage;
   onFeedback?: (messageId: string, rating: 1 | -1) => void;
+  onRetry?: () => void;
+  onEditRetry?: () => void;
+}
+
+type ResponseType = "error" | "stuck" | "question" | "normal";
+
+function detectResponseType(text: string): ResponseType {
+  const lower = text.toLowerCase().trim();
+  if (
+    lower.startsWith("error:") ||
+    lower.includes("i encountered an error") ||
+    lower.includes("something went wrong") ||
+    lower.includes("failed to connect") ||
+    lower.includes("i'm unable to") ||
+    lower.includes("i am unable to")
+  ) return "error";
+  if (
+    lower.includes("tool call limit") ||
+    lower.includes("[system note:") ||
+    lower.includes("i was unable to complete") ||
+    lower.includes("try a completely different approach")
+  ) return "stuck";
+  if (
+    lower.includes("could you provide") ||
+    lower.includes("could you clarify") ||
+    lower.includes("can you tell me") ||
+    lower.includes("what specific") ||
+    lower.includes("more information") ||
+    lower.includes("do you want me to") ||
+    (lower.endsWith("?") && lower.length > 80)
+  ) return "question";
+  return "normal";
 }
 
 const TOOL_LABEL: Record<string, string> = {
@@ -62,9 +94,18 @@ function MarkdownWithHighlighting({ content }: { content: string }) {
   );
 }
 
-export default function MessageBubble({ message, onFeedback }: Props) {
+export default function MessageBubble({ message, onFeedback, onRetry, onEditRetry }: Props) {
   const isUser = message.role === "user";
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [textCopied, setTextCopied] = useState(false);
+  const responseType = !isUser && !message.pending && message.text ? detectResponseType(message.text) : "normal";
+
+  const copyText = () => {
+    navigator.clipboard.writeText(message.text).then(() => {
+      setTextCopied(true);
+      setTimeout(() => setTextCopied(false), 1500);
+    });
+  };
 
   const copyTool = (idx: number, text: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -74,7 +115,7 @@ export default function MessageBubble({ message, onFeedback }: Props) {
   };
 
   return (
-    <div className={`message ${isUser ? "user" : "assistant"}`}>
+    <div className={`message ${isUser ? "user" : `assistant${responseType !== "normal" ? ` response-${responseType}` : ""}`}`}>
       <div className="bubble">
         {message.pending ? (
           <span className="typing-indicator">
@@ -131,18 +172,52 @@ export default function MessageBubble({ message, onFeedback }: Props) {
               </div>
             )}
 
-            {!isUser && !message.pending && message.text && onFeedback && (
+            {!isUser && !message.pending && message.text && (
               <div className="message-feedback">
-                <button
-                  className={`feedback-btn${message.feedback === 1 ? " active positive" : ""}`}
-                  onClick={() => onFeedback(message.id, 1)}
-                  title="Good response"
-                >👍</button>
-                <button
-                  className={`feedback-btn${message.feedback === -1 ? " active negative" : ""}`}
-                  onClick={() => onFeedback(message.id, -1)}
-                  title="Bad response"
-                >👎</button>
+                <button className="feedback-btn copy-btn" onClick={copyText} title="Copy response">
+                  {textCopied ? (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                    </svg>
+                  )}
+                </button>
+                {onFeedback && (<>
+                  <div className="feedback-divider" />
+                  <button
+                    className={`feedback-btn${message.feedback === 1 ? " active positive" : ""}`}
+                    onClick={() => onFeedback(message.id, 1)}
+                    title="Good response"
+                  >👍</button>
+                  <button
+                    className={`feedback-btn${message.feedback === -1 ? " active negative" : ""}`}
+                    onClick={() => onFeedback(message.id, -1)}
+                    title="Bad response"
+                  >👎</button>
+                  <div className="feedback-divider" />
+                </>)}
+                {onRetry && (
+                  <button className="feedback-btn retry-btn" onClick={onRetry} title="Retry this response">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M1 4v6h6M23 20v-6h-6"/>
+                      <path d="M20.49 9A9 9 0 005.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 013.51 15"/>
+                    </svg>
+                    Retry
+                  </button>
+                )}
+                {onEditRetry && (
+                  <button className="feedback-btn retry-btn" onClick={onEditRetry} title="Edit and retry">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                    Edit
+                  </button>
+                )}
               </div>
             )}
           </>

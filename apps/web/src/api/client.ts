@@ -137,11 +137,15 @@ export async function saveConfig(config: AgentConfig): Promise<{ commitUrl: stri
   return res.json();
 }
 
-export async function submitFeedback(messageId: string, rating: 1 | -1): Promise<void> {
+export async function submitFeedback(
+  messageId: string,
+  rating: 1 | -1,
+  context?: { userMessage?: string; agentResponse?: string },
+): Promise<void> {
   await fetch(`${BASE}/api/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messageId, rating }),
+    body: JSON.stringify({ messageId, rating, ...context }),
   });
 }
 

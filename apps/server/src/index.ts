@@ -557,10 +557,26 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
 // In-memory feedback store (keyed by messageId)
 const feedbackStore = new Map<string, { rating: number; comment?: string }>();
 
-app.post("/api/feedback", (req, res) => {
-  const { messageId, rating, comment } = req.body as { messageId: string; rating: 1 | -1; comment?: string };
+app.post("/api/feedback", async (req, res) => {
+  const { messageId, rating, comment, userMessage, agentResponse } = req.body as {
+    messageId: string; rating: 1 | -1; comment?: string; userMessage?: string; agentResponse?: string;
+  };
   if (!messageId) { res.status(400).json({ error: "messageId required" }); return; }
   feedbackStore.set(messageId, { rating, comment });
+
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  const email = (req as any).session?.email ?? "unknown";
+  const model = agentConfig.model?.modelId ?? "gemini-2.5-flash";
+  if (oauthServiceUrl && oauthServiceKey && agentId) {
+    fetch(`${oauthServiceUrl}/api/feedback/${agentId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": oauthServiceKey },
+      body: JSON.stringify({ messageId, userEmail: email, rating, userMessage, agentResponse, model }),
+    }).catch(() => {});
+  }
+
   res.json({ ok: true });
 });
 

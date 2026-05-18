@@ -2305,6 +2305,47 @@ body {
 .feedback-btn.active.positive { background: #f0fdf4; border-color: #86efac; }
 .feedback-btn.active.negative { background: #fef2f2; border-color: #fca5a5; }
 
+.feedback-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 2px;
+  align-self: center;
+}
+
+.retry-btn, .copy-btn {
+  width: auto;
+  padding: 0 8px;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.retry-btn:hover, .copy-btn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+
+.message.assistant.response-error .bubble,
+.message.assistant.response-stuck .bubble {
+  border-left: 3px solid;
+  padding-left: 12px;
+}
+
+.message.assistant.response-error .bubble { border-color: #f87171; }
+.message.assistant.response-stuck .bubble { border-color: #fb923c; }
+.message.assistant.response-question .bubble { border-left: 3px solid var(--primary); padding-left: 12px; }
+
+.message.assistant.response-error .message-feedback,
+.message.assistant.response-stuck .message-feedback,
+.message.assistant.response-question .message-feedback {
+  opacity: 1;
+}
+
+[data-theme="dark"] .feedback-btn.active.positive { background: #052e16; border-color: #166534; }
+[data-theme="dark"] .feedback-btn.active.negative { background: #2d0a0a; border-color: #7f1d1d; }
+
 /* ── Message attachment chip ─────────────────────────────── */
 
 .message-attachment {

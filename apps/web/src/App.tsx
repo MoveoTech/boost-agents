@@ -40,6 +40,8 @@ export default function App() {
   const [pendingAttachment, setPendingAttachment] = useState<{ data: string; mimeType: string; name: string } | null>(null);
   const currentChatIdRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const lastUserMessageRef = useRef<string>("");
+  const [prefillInput, setPrefillInput] = useState<{ text: string; ts: number } | null>(null);
 
   currentChatIdRef.current = currentChatId;
 
@@ -137,8 +139,13 @@ export default function App() {
   }, []);
 
   const handleFeedback = useCallback((messageId: string, rating: 1 | -1) => {
-    setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, feedback: rating } : m));
-    submitFeedback(messageId, rating).catch(() => {});
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === messageId);
+      const agentResponse = prev[idx]?.text;
+      const userMessage = idx > 0 ? [...prev].slice(0, idx).reverse().find((m) => m.role === "user")?.text : undefined;
+      submitFeedback(messageId, rating, { userMessage, agentResponse }).catch(() => {});
+      return prev.map((m) => m.id === messageId ? { ...m, feedback: rating } : m);
+    });
   }, []);
 
   const handleExport = useCallback(() => {
@@ -158,6 +165,7 @@ export default function App() {
   const handleSend = useCallback(async (text: string, attachment?: { data: string; mimeType: string; name: string }) => {
     const att = attachment ?? pendingAttachment ?? undefined;
     setPendingAttachment(null);
+    lastUserMessageRef.current = text;
 
     const userMsg: DisplayMessage = {
       id: crypto.randomUUID(), role: "user", text,
@@ -250,6 +258,17 @@ export default function App() {
     }
   }, [messages, agentConfig, userSettings, pendingAttachment]);
 
+  const handleRetry = useCallback(() => {
+    if (lastUserMessageRef.current) handleSend(lastUserMessageRef.current);
+  }, [handleSend]);
+
+  const handleEditRetry = useCallback(() => {
+    if (lastUserMessageRef.current) {
+      setPrefillInput({ text: lastUserMessageRef.current, ts: Date.now() });
+      setMobileTab("chat");
+    }
+  }, []);
+
   if (authed === null) return null;
   if (!authed) return <LoginPage />;
 
@@ -329,6 +348,8 @@ export default function App() {
         <ChatWindow
           messages={messages}
           onPromptClick={(p) => handleSend(p)}
+          onRetry={handleRetry}
+          onEditRetry={handleEditRetry}
         />
 
         <InputBar
@@ -341,6 +362,7 @@ export default function App() {
           skills={agentConfig?.skills ?? []}
           currentProvider={(userSettings.model ?? agentConfig?.model)?.provider ?? "gemini"}
           onNewChat={handleNewChat}
+          prefillInput={prefillInput}
         />
       </div>
 

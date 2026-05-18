@@ -439,5 +439,43 @@ app.delete("/api/memories/:agentId/:userId/:key", async (req, res) => {
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
+// ── Feedback ──────────────────────────────────────────────────────────────────
+
+function feedbackRef(agentId: string) {
+  return db.collection("feedback").doc(agentId).collection("entries");
+}
+
+app.post("/api/feedback/:agentId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId } = req.params;
+  const { messageId, userEmail, rating, userMessage, agentResponse, model } = req.body as {
+    messageId: string; userEmail: string; rating: number;
+    userMessage?: string; agentResponse?: string; model?: string;
+  };
+  if (!messageId) { res.status(400).json({ error: "messageId required" }); return; }
+  try {
+    await feedbackRef(agentId).doc(messageId).set({
+      messageId, userEmail, rating,
+      userMessage: userMessage ?? null,
+      agentResponse: agentResponse ?? null,
+      model: model ?? null,
+      timestamp: new Date().toISOString(),
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.get("/api/feedback/:agentId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId } = req.params;
+  const { rating } = req.query;
+  try {
+    let query: FirebaseFirestore.Query = feedbackRef(agentId).orderBy("timestamp", "desc").limit(200);
+    if (rating !== undefined) query = query.where("rating", "==", Number(rating));
+    const snap = await query.get();
+    res.json(snap.docs.map((d) => d.data()));
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 const PORT = process.env.PORT ?? 8080;
 app.listen(PORT, () => console.log(`OAuth service running on :${PORT}`));

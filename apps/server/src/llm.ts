@@ -36,6 +36,29 @@ export interface StreamCallbacks {
   onToolComplete: (name: string, output: string) => void;
 }
 
+// ── Loop guard helpers ───────────────────────────────────────────────────────
+
+const MAX_TOOL_ROUNDS = 10;
+
+function isToolError(output: string): boolean {
+  const h = output.slice(0, 400).toLowerCase();
+  return h.startsWith("error") || h.includes("cannot query") || h.includes("did you mean")
+    || h.includes("unknown field") || h.includes("failed:") || h.includes("not found")
+    || h.includes("unauthorized") || h.includes("bad request");
+}
+
+function guidanceNote(round: number, consecutiveErrors: number): string {
+  if (consecutiveErrors >= 3) {
+    return "\n\n[System note: Multiple consecutive tool errors. Stop retrying the same way. Either try a completely different approach with different parameters, use a different tool, or ask the user for the specific information you need to proceed.]";
+  }
+  if (round >= MAX_TOOL_ROUNDS - 1) {
+    return `\n\n[System note: You have used ${round} tool call rounds. Please wrap up now — summarize what you found or clearly tell the user what specific information you still need to complete the task.]`;
+  }
+  return "";
+}
+
+const FINAL_MSG = "[System note: Tool call limit reached. Based on everything gathered so far, provide your best response now. If you genuinely need more information from the user to proceed, clearly explain what you need — do not make any more tool calls.]";
+
 // ── Gemini ──────────────────────────────────────────────────────────────────
 
 function toGeminiSchema(p: ToolParam): Record<string, unknown> {
@@ -73,14 +96,24 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
     : [{ text: message }];
   let result = await session.sendMessage(firstMsg);
 
+  let round = 0;
+  let consecutiveErrors = 0;
   while (result.response.functionCalls()?.length) {
+    if (round >= MAX_TOOL_ROUNDS) {
+      result = await session.sendMessage([{ text: FINAL_MSG }]);
+      break;
+    }
+    round++;
     const calls = result.response.functionCalls()!;
-    const responses: Part[] = await Promise.all(calls.map(async (call) => {
+    const parts: Part[] = await Promise.all(calls.map(async (call) => {
       const output = await execute(call.name, call.args as Record<string, unknown>);
+      if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
       toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
       return { functionResponse: { name: call.name, response: { result: output } } } as Part;
     }));
-    result = await session.sendMessage(responses);
+    const note = guidanceNote(round, consecutiveErrors);
+    if (note) { parts.push({ text: note } as any); consecutiveErrors = 0; }
+    result = await session.sendMessage(parts);
   }
   return { reply: result.response.text(), toolUses };
 }
@@ -118,27 +151,39 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
 
   const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
 
+  let round = 0;
+  let consecutiveErrors = 0;
   while (true) {
+    if (round >= MAX_TOOL_ROUNDS) {
+      msgs.push({ role: "user", content: FINAL_MSG });
+    }
     const response = await client.messages.create({
       model: modelId, max_tokens: 8192, system: systemPrompt,
-      tools: allClaudeTools.length ? (allClaudeTools as never) : undefined,
+      tools: round < MAX_TOOL_ROUNDS && allClaudeTools.length ? (allClaudeTools as never) : undefined,
       messages: msgs,
     }, reqOpts);
 
-    if (response.stop_reason === "tool_use") {
+    if (response.stop_reason === "tool_use" && round < MAX_TOOL_ROUNDS) {
       const useBlocks = response.content.filter((b) => b.type === "tool_use" && (b as Anthropic.ToolUseBlock).name !== "web_search") as Anthropic.ToolUseBlock[];
       if (!useBlocks.length) {
         const text = response.content.filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlock).text).join("");
         return { reply: text, toolUses };
       }
+      round++;
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const block of useBlocks) {
         const output = await execute(block.name, block.input as Record<string, unknown>);
+        if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
         toolUses.push({ name: block.name, input: JSON.stringify(block.input), output: output.slice(0, 500) });
         results.push({ type: "tool_result", tool_use_id: block.id, content: output });
       }
       msgs.push({ role: "assistant", content: response.content });
-      msgs.push({ role: "user", content: results });
+      const note = guidanceNote(round, consecutiveErrors);
+      if (note) { consecutiveErrors = 0; }
+      const userContent: Anthropic.MessageParam["content"] = note
+        ? [...results, { type: "text", text: note }]
+        : results;
+      msgs.push({ role: "user", content: userContent });
     } else {
       const text = response.content.filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlock).text).join("");
       return { reply: text, toolUses };
@@ -178,22 +223,29 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
     { role: "user", content: firstUserContent },
   ];
 
+  let round = 0;
+  let consecutiveErrors = 0;
   while (true) {
     const response = await client.chat.completions.create({
       model: modelId,
-      tools: openAITools.length ? openAITools : undefined,
+      tools: round < MAX_TOOL_ROUNDS && openAITools.length ? openAITools : undefined,
       messages: msgs,
     });
 
     const choice = response.choices[0];
-    if (choice.finish_reason === "tool_calls" && choice.message.tool_calls) {
+    if (choice.finish_reason === "tool_calls" && choice.message.tool_calls && round < MAX_TOOL_ROUNDS) {
+      round++;
       msgs.push(choice.message);
       for (const call of choice.message.tool_calls as OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[]) {
         const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
         const output = await execute(call.function.name, args);
+        if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
         toolUses.push({ name: call.function.name, input: call.function.arguments, output: output.slice(0, 500) });
         msgs.push({ role: "tool", tool_call_id: call.id, content: output });
       }
+      const note = guidanceNote(round, consecutiveErrors);
+      if (note) { msgs.push({ role: "user", content: note }); consecutiveErrors = 0; }
+      if (round >= MAX_TOOL_ROUNDS) msgs.push({ role: "user", content: FINAL_MSG });
     } else {
       return { reply: choice.message.content ?? "", toolUses };
     }
@@ -223,27 +275,34 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
     ? [{ text: message }, { inlineData: { mimeType: image.mimeType, data: image.data } }]
     : [{ text: message }];
 
-  const streamRound = async (msg: Part[] | Part[]): Promise<void> => {
-    const result = await session.sendMessageStream(msg as any);
-    for await (const chunk of result.stream) {
-      const text = chunk.text();
-      if (text) cb.onToken(text);
+  let round = 0;
+  let consecutiveErrors = 0;
+  let currentMsg: Part[] = firstMsg;
+
+  while (true) {
+    if (round >= MAX_TOOL_ROUNDS) {
+      const r = await session.sendMessageStream([{ text: FINAL_MSG }] as any);
+      for await (const chunk of r.stream) { const t = chunk.text(); if (t) cb.onToken(t); }
+      break;
     }
+    const result = await session.sendMessageStream(currentMsg as any);
+    for await (const chunk of result.stream) { const t = chunk.text(); if (t) cb.onToken(t); }
     const response = await result.response;
     const calls = response.functionCalls();
-    if (calls?.length) {
-      const responses: Part[] = await Promise.all(calls.map(async (call) => {
-        cb.onToolStart(call.name, JSON.stringify(call.args));
-        const output = await execute(call.name, call.args as Record<string, unknown>);
-        cb.onToolComplete(call.name, output);
-        toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
-        return { functionResponse: { name: call.name, response: { result: output } } } as Part;
-      }));
-      await streamRound(responses);
-    }
-  };
-
-  await streamRound(firstMsg);
+    if (!calls?.length) break;
+    round++;
+    const parts: Part[] = await Promise.all(calls.map(async (call) => {
+      cb.onToolStart(call.name, JSON.stringify(call.args));
+      const output = await execute(call.name, call.args as Record<string, unknown>);
+      cb.onToolComplete(call.name, output);
+      if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
+      toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
+      return { functionResponse: { name: call.name, response: { result: output } } } as Part;
+    }));
+    const note = guidanceNote(round, consecutiveErrors);
+    if (note) { parts.push({ text: note } as any); consecutiveErrors = 0; }
+    currentMsg = parts;
+  }
   return toolUses;
 }
 
@@ -274,29 +333,39 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
 
   const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
 
+  let round = 0;
+  let consecutiveErrors = 0;
   while (true) {
+    if (round >= MAX_TOOL_ROUNDS) { msgs.push({ role: "user", content: FINAL_MSG }); }
     const stream = client.messages.stream({
       model: modelId, max_tokens: 8192, system: systemPrompt,
-      tools: allClaudeTools.length ? (allClaudeTools as never) : undefined,
+      tools: round < MAX_TOOL_ROUNDS && allClaudeTools.length ? (allClaudeTools as never) : undefined,
       messages: msgs,
     }, reqOpts);
 
     stream.on("text", (text) => cb.onToken(text));
     const response = await stream.finalMessage();
 
-    if (response.stop_reason === "tool_use") {
+    if (response.stop_reason === "tool_use" && round < MAX_TOOL_ROUNDS) {
       const useBlocks = response.content.filter((b) => b.type === "tool_use" && (b as Anthropic.ToolUseBlock).name !== "web_search") as Anthropic.ToolUseBlock[];
       if (!useBlocks.length) break;
+      round++;
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const block of useBlocks) {
         cb.onToolStart(block.name, JSON.stringify(block.input));
         const output = await execute(block.name, block.input as Record<string, unknown>);
         cb.onToolComplete(block.name, output);
+        if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
         toolUses.push({ name: block.name, input: JSON.stringify(block.input), output: output.slice(0, 500) });
         results.push({ type: "tool_result", tool_use_id: block.id, content: output });
       }
       msgs.push({ role: "assistant", content: response.content });
-      msgs.push({ role: "user", content: results });
+      const note = guidanceNote(round, consecutiveErrors);
+      if (note) { consecutiveErrors = 0; }
+      const userContent: Anthropic.MessageParam["content"] = note
+        ? [...results, { type: "text", text: note }]
+        : results;
+      msgs.push({ role: "user", content: userContent });
     } else {
       break;
     }
@@ -323,8 +392,14 @@ async function chatOpenAIStream(modelId: string, systemPrompt: string, history: 
     { role: "user", content: firstUserContent },
   ];
 
+  let round = 0;
+  let consecutiveErrors = 0;
   while (true) {
-    const stream = client.chat.completions.stream({ model: modelId, tools: openAITools.length ? openAITools : undefined, messages: msgs });
+    const stream = client.chat.completions.stream({
+      model: modelId,
+      tools: round < MAX_TOOL_ROUNDS && openAITools.length ? openAITools : undefined,
+      messages: msgs,
+    });
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content ?? "";
       if (text) cb.onToken(text);
@@ -332,16 +407,21 @@ async function chatOpenAIStream(modelId: string, systemPrompt: string, history: 
     const final = await stream.finalChatCompletion();
     const choice = final.choices[0];
 
-    if (choice.finish_reason === "tool_calls" && choice.message.tool_calls) {
+    if (choice.finish_reason === "tool_calls" && choice.message.tool_calls && round < MAX_TOOL_ROUNDS) {
+      round++;
       msgs.push(choice.message);
       for (const call of choice.message.tool_calls as OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[]) {
         const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
         cb.onToolStart(call.function.name, call.function.arguments);
         const output = await execute(call.function.name, args);
         cb.onToolComplete(call.function.name, output);
+        if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
         toolUses.push({ name: call.function.name, input: call.function.arguments, output: output.slice(0, 500) });
         msgs.push({ role: "tool", tool_call_id: call.id, content: output });
       }
+      const note = guidanceNote(round, consecutiveErrors);
+      if (note) { msgs.push({ role: "user", content: note }); consecutiveErrors = 0; }
+      if (round >= MAX_TOOL_ROUNDS) msgs.push({ role: "user", content: FINAL_MSG });
     } else {
       break;
     }
