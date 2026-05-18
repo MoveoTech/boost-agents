@@ -106,8 +106,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [providers, setProviders] = useState({ gemini: true, claude: false, openai: false, slack: false });
   const [settingsTab, setSettingsTab] = useState<"personal" | "org">("personal");
-  // Buffered personal settings — only saved on explicit "Save My Settings" click
-  const [draftModel, setDraftModel] = useState<AgentConfig["model"] | undefined>(userSettings.model);
   const [draftInstructions, setDraftInstructions] = useState<string | undefined>(userSettings.systemPrompt);
   const [personalSaved, setPersonalSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -121,6 +119,8 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
     });
   }, [agentConfig]);
   useEffect(() => { if (userSettings.avatar) setAvatarUrl(userSettings.avatar); }, [userSettings.avatar]);
+  // Sync instructions from server-loaded settings (async load arrives after mount)
+  useEffect(() => { setDraftInstructions(userSettings.systemPrompt); }, [userSettings.systemPrompt]);
   useEffect(() => { listAutomations().then(setAutomations).catch(() => {}); }, []);
   useEffect(() => { getApiKey().then(setApiKey).catch(() => {}); }, []);
   useEffect(() => { getProviders().then(setProviders).catch(() => {}); }, []);
@@ -223,16 +223,12 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   -d '{"message": "Send an email...", "history": [], "userEmail": "user@example.com"}'`;
 
   const handleSavePersonal = () => {
-    const patch: { model?: AgentConfig["model"]; systemPrompt?: string } = {};
-    if (draftModel !== undefined) patch.model = draftModel;
-    if (draftInstructions !== undefined) patch.systemPrompt = draftInstructions;
-    onUserSettingsChange({ ...userSettings, ...patch });
+    onUserSettingsChange({ ...userSettings, systemPrompt: draftInstructions });
     setPersonalSaved(true);
     setTimeout(() => setPersonalSaved(false), 2500);
   };
 
   const handleResetPersonal = () => {
-    setDraftModel(undefined);
     setDraftInstructions(undefined);
     onUserSettingsChange({ ...userSettings, model: undefined, systemPrompt: undefined });
   };
@@ -319,10 +315,10 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
             </p>
             <select
               className="configure-input"
-              value={`${(draftModel ?? agentConfig?.model)?.provider ?? "gemini"}:${(draftModel ?? agentConfig?.model)?.modelId ?? "gemini-2.5-flash"}`}
+              value={`${(userSettings.model ?? agentConfig?.model)?.provider ?? "gemini"}:${(userSettings.model ?? agentConfig?.model)?.modelId ?? "gemini-2.5-flash"}`}
               onChange={(e) => {
                 const [provider, ...rest] = e.target.value.split(":") as [AgentConfig["model"]["provider"], ...string[]];
-                setDraftModel({ provider, modelId: rest.join(":") });
+                onUserSettingsChange({ ...userSettings, model: { provider, modelId: rest.join(":") } });
               }}
             >
               {(["gemini", "claude", "openai"] as const).map((p) => (
