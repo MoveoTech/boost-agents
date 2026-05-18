@@ -57,7 +57,8 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
       },
     })),
   }] : [];
-  const geminiTools = [...funcTool, ...(nativeSearch ? [{ googleSearch: {} }] : [])];
+  // Gemini doesn't allow googleSearch + functionDeclarations in the same request
+  const geminiTools = funcTool.length > 0 ? funcTool : (nativeSearch ? [{ googleSearch: {} }] : []);
 
   const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
   const session = model.startChat({ history });
@@ -198,7 +199,7 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
       },
     })),
   }] : [];
-  const geminiTools = [...funcTool, ...(nativeSearch ? [{ googleSearch: {} }] : [])];
+  const geminiTools = funcTool.length > 0 ? funcTool : (nativeSearch ? [{ googleSearch: {} }] : []);
 
   const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
   const session = model.startChat({ history });
@@ -252,7 +253,7 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
   const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
 
   while (true) {
-    const stream = await client.messages.stream({
+    const stream = client.messages.stream({
       model: modelId, max_tokens: 8192, system: systemPrompt,
       tools: allClaudeTools.length ? (allClaudeTools as never) : undefined,
       messages: msgs,
