@@ -34,9 +34,9 @@ export async function mondayListBoards(token: string, limit = 50): Promise<strin
       boards(limit: $limit, order_by: created_at) {
         id name description state board_kind
         workspace { id name }
-        groups { id title color }
+        groups { id title }
         items_count
-        owner { id name email }
+        creator { id name email }
       }
     }`, { limit });
   return json(data.boards);
@@ -46,11 +46,17 @@ export async function mondayGetBoard(token: string, boardId: string): Promise<st
   const data = await gql(token, `
     query($boardId: ID!) {
       boards(ids: [$boardId]) {
-        id name description state board_kind items_count
-        workspace { id name }
-        owner { id name email }
-        groups { id title color position }
-        columns { id title type description settings_str }
+        id name description state board_kind permissions url
+        updated_at item_terminology items_count items_limit
+        creator { id name email }
+        workspace { id name kind description }
+        board_folder_id
+        columns { id title type description settings revision }
+        groups { id title }
+        owners { id name }
+        team_owners { id name }
+        tags { id name }
+        top_group { id }
       }
     }`, { boardId });
   return json(data.boards?.[0] ?? "Board not found");
@@ -136,7 +142,7 @@ export async function mondayGetItem(token: string, itemId: string): Promise<stri
         board { id name }
         group { id title }
         column_values { id text value type }
-        updates(limit: 5) { id text_body created_at creator { id name email } }
+        updates(limit: 5) { id text_body created_at updated_at creator { id name } }
         subitems { id name column_values { id text value } }
         parent_item { id name }
       }
@@ -175,11 +181,11 @@ export async function mondayCreateSubitem(token: string, parentItemId: string, i
   const data = await gql(token, `
     mutation($parentItemId: ID!, $itemName: String!, $columnValues: JSON) {
       create_subitem(parent_item_id: $parentItemId, item_name: $itemName, column_values: $columnValues) {
-        id name board { id }
+        id name url parent_item { id }
       }
     }`, { parentItemId, itemName, columnValues: columnValues ? JSON.stringify(columnValues) : undefined });
   const item = data.create_subitem;
-  return `Created subitem "${item.name}" (id: ${item.id}) on board ${item.board.id}`;
+  return `Created subitem "${item.name}" (id: ${item.id}) under parent item ${item.parent_item.id}`;
 }
 
 export async function mondayCreateItem(token: string, boardId: string, itemName: string, columnValues?: Record<string, unknown>, groupId?: string): Promise<string> {
@@ -203,7 +209,7 @@ export async function mondayUpdateItem(token: string, boardId: string, itemId: s
 export async function mondayCreateGroup(token: string, boardId: string, groupName: string, groupColor?: string): Promise<string> {
   const data = await gql(token, `
     mutation($boardId: ID!, $groupName: String!, $groupColor: String) {
-      create_group(board_id: $boardId, group_name: $groupName, group_color: $groupColor) { id title color }
+      create_group(board_id: $boardId, group_name: $groupName, group_color: $groupColor) { id title }
     }`, { boardId, groupName, groupColor });
   const g = data.create_group;
   return `Created group "${g.title}" (id: ${g.id})`;
@@ -237,9 +243,9 @@ export async function mondayGetUpdates(token: string, itemId: string, limit = 25
     query($itemId: ID!, $limit: Int!) {
       items(ids: [$itemId]) {
         updates(limit: $limit) {
-          id body text_body created_at
-          creator { id name email }
-          replies { id body text_body created_at creator { id name email } }
+          id text_body created_at updated_at item_id
+          creator { id name }
+          replies { id text_body created_at updated_at creator { id name } }
         }
       }
     }`, { itemId, limit });
