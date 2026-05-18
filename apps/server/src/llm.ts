@@ -23,6 +23,11 @@ export interface ToolDecl {
   };
 }
 
+export interface ImageAttachment {
+  data: string;    // base64
+  mimeType: string;
+}
+
 type Executor = (name: string, args: Record<string, unknown>) => Promise<string>;
 
 export interface StreamCallbacks {
@@ -45,7 +50,7 @@ function toGeminiSchema(p: ToolParam): Record<string, unknown> {
   };
 }
 
-async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean): Promise<ChatResult> {
+async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment): Promise<ChatResult> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
   const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
@@ -63,7 +68,10 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
   const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
   const session = model.startChat({ history });
   const toolUses: ToolUse[] = [];
-  let result = await session.sendMessage(message);
+  const firstMsg: Part[] = image
+    ? [{ text: message }, { inlineData: { mimeType: image.mimeType, data: image.data } }]
+    : [{ text: message }];
+  let result = await session.sendMessage(firstMsg);
 
   while (result.response.functionCalls()?.length) {
     const calls = result.response.functionCalls()!;
@@ -79,7 +87,7 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
 
 // ── Claude ──────────────────────────────────────────────────────────────────
 
-async function chatClaude(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean): Promise<ChatResult> {
+async function chatClaude(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment): Promise<ChatResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const toolUses: ToolUse[] = [];
 
@@ -97,11 +105,15 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
     ? [...claudeTools, { type: "web_search_20250305", name: "web_search" }]
     : claudeTools;
 
+  const firstUserContent: Anthropic.MessageParam["content"] = image
+    ? [{ type: "image", source: { type: "base64", media_type: image.mimeType as never, data: image.data } }, { type: "text", text: message }]
+    : message;
+
   const msgs: Anthropic.MessageParam[] = [
     ...history
       .map((h) => ({ role: h.role === "model" ? "assistant" : "user" as "user" | "assistant", content: h.parts.map((p: { text?: string }) => p.text ?? "").join("") }))
       .filter((m) => m.content),
-    { role: "user", content: message },
+    { role: "user", content: firstUserContent },
   ];
 
   const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
@@ -114,7 +126,6 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
     }, reqOpts);
 
     if (response.stop_reason === "tool_use") {
-      // web_search blocks are handled server-side — only execute our own function tools
       const useBlocks = response.content.filter((b) => b.type === "tool_use" && (b as Anthropic.ToolUseBlock).name !== "web_search") as Anthropic.ToolUseBlock[];
       if (!useBlocks.length) {
         const text = response.content.filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlock).text).join("");
@@ -137,7 +148,7 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
 
 // ── OpenAI ───────────────────────────────────────────────────────────────────
 
-async function chatOpenAI(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor): Promise<ChatResult> {
+async function chatOpenAI(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, image?: ImageAttachment): Promise<ChatResult> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const toolUses: ToolUse[] = [];
 
@@ -155,12 +166,16 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
     },
   }));
 
+  const firstUserContent: OpenAI.ChatCompletionUserMessageParam["content"] = image
+    ? [{ type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } }, { type: "text", text: message }]
+    : message;
+
   const msgs: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
     ...history
       .map((h) => ({ role: h.role === "model" ? "assistant" : "user" as "user" | "assistant", content: h.parts.map((p: { text?: string }) => p.text ?? "").join("") }))
       .filter((m) => m.content),
-    { role: "user", content: message },
+    { role: "user", content: firstUserContent },
   ];
 
   while (true) {
@@ -187,7 +202,7 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
 
 // ── Streaming implementations ────────────────────────────────────────────────
 
-async function chatGeminiStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean): Promise<ToolUse[]> {
+async function chatGeminiStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean, image?: ImageAttachment): Promise<ToolUse[]> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
   const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
@@ -204,8 +219,11 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
   const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
   const session = model.startChat({ history });
   const toolUses: ToolUse[] = [];
+  const firstMsg: Part[] = image
+    ? [{ text: message }, { inlineData: { mimeType: image.mimeType, data: image.data } }]
+    : [{ text: message }];
 
-  const streamRound = async (msg: string | Part[]): Promise<void> => {
+  const streamRound = async (msg: Part[] | Part[]): Promise<void> => {
     const result = await session.sendMessageStream(msg as any);
     for await (const chunk of result.stream) {
       const text = chunk.text();
@@ -225,11 +243,11 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
     }
   };
 
-  await streamRound(message);
+  await streamRound(firstMsg);
   return toolUses;
 }
 
-async function chatClaudeStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean): Promise<ToolUse[]> {
+async function chatClaudeStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean, image?: ImageAttachment): Promise<ToolUse[]> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const toolUses: ToolUse[] = [];
 
@@ -245,9 +263,13 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
     ? [...claudeTools, { type: "web_search_20250305", name: "web_search" }]
     : claudeTools;
 
+  const firstUserContent: Anthropic.MessageParam["content"] = image
+    ? [{ type: "image", source: { type: "base64", media_type: image.mimeType as never, data: image.data } }, { type: "text", text: message }]
+    : message;
+
   const msgs: Anthropic.MessageParam[] = [
     ...history.map((h) => ({ role: h.role === "model" ? "assistant" : "user" as "user" | "assistant", content: h.parts.map((p: { text?: string }) => p.text ?? "").join("") })).filter((m) => m.content),
-    { role: "user", content: message },
+    { role: "user", content: firstUserContent },
   ];
 
   const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
@@ -282,7 +304,7 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
   return toolUses;
 }
 
-async function chatOpenAIStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks): Promise<ToolUse[]> {
+async function chatOpenAIStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, image?: ImageAttachment): Promise<ToolUse[]> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const toolUses: ToolUse[] = [];
 
@@ -291,10 +313,14 @@ async function chatOpenAIStream(modelId: string, systemPrompt: string, history: 
     function: { name: t.name, description: t.description, parameters: { type: "object", properties: Object.fromEntries(Object.entries(t.parameters.properties).map(([k, v]) => [k, { type: v.type, description: v.description, ...(v.items ? { items: v.items } : {}) }])), required: t.parameters.required } },
   }));
 
+  const firstUserContent: OpenAI.ChatCompletionUserMessageParam["content"] = image
+    ? [{ type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } }, { type: "text", text: message }]
+    : message;
+
   const msgs: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
     ...history.map((h) => ({ role: h.role === "model" ? "assistant" : "user" as "user" | "assistant", content: h.parts.map((p: { text?: string }) => p.text ?? "").join("") })).filter((m) => m.content),
-    { role: "user", content: message },
+    { role: "user", content: firstUserContent },
   ];
 
   while (true) {
@@ -333,11 +359,12 @@ export async function chatWithModel(
   tools: ToolDecl[],
   execute: Executor,
   nativeSearch?: boolean,
+  image?: ImageAttachment,
 ): Promise<ChatResult> {
   switch (model.provider) {
-    case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch);
-    case "claude":  return chatClaude(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch);
-    case "openai":  return chatOpenAI(model.modelId, systemPrompt, history, message, tools, execute);
+    case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch, image);
+    case "claude":  return chatClaude(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch, image);
+    case "openai":  return chatOpenAI(model.modelId, systemPrompt, history, message, tools, execute, image);
     default: throw new Error(`Unknown provider: ${model.provider}`);
   }
 }
@@ -351,11 +378,12 @@ export async function chatWithModelStream(
   execute: Executor,
   callbacks: StreamCallbacks,
   nativeSearch?: boolean,
+  image?: ImageAttachment,
 ): Promise<ToolUse[]> {
   switch (model.provider) {
-    case "gemini": return chatGeminiStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch);
-    case "claude": return chatClaudeStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch);
-    case "openai": return chatOpenAIStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks);
+    case "gemini": return chatGeminiStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch, image);
+    case "claude": return chatClaudeStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch, image);
+    case "openai": return chatOpenAIStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, image);
     default: throw new Error(`Unknown provider: ${model.provider}`);
   }
 }

@@ -1,5 +1,5 @@
 import type { Content } from "@google/generative-ai";
-import { chatWithModel, chatWithModelStream, type ModelConfig, type ToolDecl, type StreamCallbacks } from "./llm";
+import { chatWithModel, chatWithModelStream, type ModelConfig, type ToolDecl, type StreamCallbacks, type ImageAttachment } from "./llm";
 import { fetchUrl, httpRequest, readWebpage } from "./tools";
 import { gmailSend } from "./gmail";
 import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
@@ -404,11 +404,11 @@ async function runChat(
   mondayToken?: string,
   tasksUser?: string,
   memoryUser?: string,
+  image?: ImageAttachment,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
   const builtPrompt = buildSystemPrompt(systemPrompt);
 
-  // Search mode: use Gemini built-in Google Search (no function tools)
   if (mode === "search" && agentConfig.tools.googleSearch) {
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -432,10 +432,10 @@ async function runChat(
   };
 
   if (streamCallbacks) {
-    const toolUses = await chatWithModelStream(model, builtPrompt, history, message, allTools, executor, streamCallbacks, nativeSearch);
+    const toolUses = await chatWithModelStream(model, builtPrompt, history, message, allTools, executor, streamCallbacks, nativeSearch, image);
     return { reply: "", toolUses };
   }
-  return chatWithModel(model, builtPrompt, history, message, allTools, executor, nativeSearch);
+  return chatWithModel(model, builtPrompt, history, message, allTools, executor, nativeSearch, image);
 }
 
 export async function chat(
@@ -449,8 +449,9 @@ export async function chat(
   mondayToken?: string,
   tasksUser?: string,
   memoryUser?: string,
+  image?: ImageAttachment,
 ): Promise<ChatResult> {
-  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser);
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image);
 }
 
 export async function chatStream(
@@ -465,7 +466,10 @@ export async function chatStream(
   mondayToken?: string,
   tasksUser?: string,
   memoryUser?: string,
+  image?: ImageAttachment,
 ): Promise<ToolUse[]> {
-  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser);
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image);
   return result.toolUses;
 }
+
+export type { ImageAttachment };

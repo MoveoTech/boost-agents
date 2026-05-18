@@ -4,7 +4,7 @@ import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import path from "path";
-import { chat, chatStream } from "./agent";
+import { chat, chatStream, type ImageAttachment } from "./agent";
 import { getUserAccessToken } from "./google-auth";
 import { logger } from "./logger";
 import { slackSendMessage, slackGetUserEmail } from "./slack";
@@ -586,6 +586,27 @@ app.get("/api/analytics", requireAdmin, (_req, res) => {
   res.json({ days, topTools, models, totalMessages, positiveFeedback, negativeFeedback });
 });
 
+function buildMessageWithAttachment(message: string, att: { data: string; mimeType: string; name: string }): string {
+  const isText = att.mimeType.startsWith("text/")
+    || att.mimeType === "application/json"
+    || att.mimeType === "application/xml"
+    || att.mimeType === "application/javascript"
+    || /\.(txt|md|csv|json|xml|yaml|yml|js|ts|py|java|cpp|c|h|css|sql|sh|log|ini|toml|env|html|htm)$/i.test(att.name);
+
+  if (isText) {
+    try {
+      const content = Buffer.from(att.data, "base64").toString("utf-8");
+      const truncated = content.length > 50_000 ? content.slice(0, 50_000) + "\n[truncated]" : content;
+      return `${message}\n\n[File: ${att.name}]\n\`\`\`\n${truncated}\n\`\`\``;
+    } catch {
+      return `${message}\n\n[Attached file: ${att.name}]`;
+    }
+  }
+
+  // For images and other binary files, signal the model via a marker — handled as multimodal by the LLM layer
+  return `${message}\n\n[Attached image: ${att.name}]`;
+}
+
 app.post("/api/chat", async (req, res) => {
   const {
     message, history = [], mode = "tools", systemPrompt, model,
@@ -603,9 +624,13 @@ app.post("/api/chat", async (req, res) => {
   };
 
   const sessionEmail = getSessionEmail(req) ?? bodyEmail;
-  const effectiveMessage = attachment
-    ? `${message}\n\n[Attached file: ${attachment.name}]`
+  const isImageAttachment = !!attachment && attachment.mimeType.startsWith("image/");
+  const effectiveMessage = attachment && !isImageAttachment
+    ? buildMessageWithAttachment(message, attachment)
     : message;
+  const imageAttachment: ImageAttachment | undefined = isImageAttachment
+    ? { data: attachment!.data, mimeType: attachment!.mimeType }
+    : undefined;
 
   if (!effectiveMessage?.trim()) {
     res.status(400).json({ error: "message is required" });
@@ -644,6 +669,7 @@ app.post("/api/chat", async (req, res) => {
         mondayTokenStream,
         tasksUserStream,
         sessionEmail,
+        imageAttachment,
       );
       send({ type: "done", toolUses });
       trackUsage(modelId, toolUses.map((t) => t.name), Date.now() - t0);
@@ -658,7 +684,7 @@ app.post("/api/chat", async (req, res) => {
   try {
     const mondayToken = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
     const tasksUser   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
-    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail);
+    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail, imageAttachment);
     trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
   } catch (err) {
