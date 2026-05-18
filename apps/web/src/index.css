@@ -941,6 +941,13 @@ body {
   font-size: 13px;
 }
 
+.message.assistant .bubble img {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  margin: 6px 0;
+  display: block;
+}
+
 /* ── Tool use cards ──────────────────────────────────── */
 
 .tool-uses {

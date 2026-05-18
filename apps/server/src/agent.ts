@@ -257,9 +257,9 @@ function buildSystemPrompt(override?: string, addition?: string): string {
 
   const caps: string[] = [];
   if (agentConfig.tools.jinaReader ?? true) {
-    caps.push("- **Read webpages**: Use read_webpage to fetch any URL as clean readable text. For web searches, use read_webpage with `https://html.duckduckgo.com/html/?q=your+search+terms` (URL-encode spaces as +). Always do this when asked to search or look something up — never say you cannot search the web.");
+    caps.push("- **Read webpages & search**: Use read_webpage to fetch any URL as clean readable text. For web searches fetch `https://html.duckduckgo.com/html/?q=your+search+terms` (URL-encode spaces as +). Always do this when asked to search — never say you cannot. When the user asks for an image or photo, search the web, find a direct image URL (ending in .jpg, .png, .webp, etc.), and present it using markdown image syntax: `![description](url)` — it will be rendered inline. Example: if asked for a picture of white corn, search for it, find a direct image URL, and return `![White corn](https://example.com/white-corn.jpg)`.");
   } else if (agentConfig.tools.fetchUrl) {
-    caps.push("- **Web search**: Use fetch_url with `https://html.duckduckgo.com/html/?q=your+search+terms` to search the web. Always do this when asked to search — never say you cannot.");
+    caps.push("- **Web search**: Use fetch_url with `https://html.duckduckgo.com/html/?q=your+search+terms` to search the web. Always do this when asked to search — never say you cannot. For images, find a direct image URL and return it as `![description](url)` markdown.");
   }
   if (agentConfig.tools.httpRequest) {
     caps.push("- **Custom API calls**: Use http_request to call any REST API with GET, POST, PUT, PATCH, or DELETE and an optional JSON body.");
