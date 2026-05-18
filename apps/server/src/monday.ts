@@ -17,7 +17,7 @@ function json(v: any): string { return JSON.stringify(v, null, 2); }
 const ITEM_FIELDS = `
   id name url created_at updated_at
   group { id title }
-  column_values { id title text value type }
+  column_values { id text value type }
 `;
 
 // ── Generic ───────────────────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ export async function mondayGetItems(
 
   const queryParams = rules.length ? { rules, operator: filtersOperator } : undefined;
 
-  const subitemsField = includeSubitems ? "subitems { id name column_values { id title text value } }" : "";
+  const subitemsField = includeSubitems ? "subitems { id name column_values { id text value } }" : "";
   const columnFilter = columnIds?.length ? `(ids: ${JSON.stringify(columnIds)})` : "";
 
   // Use cursor-based next_items_page for pagination
@@ -121,7 +121,7 @@ export async function mondayGetItems(
       boards(ids: [$boardId]) {
         items_page(limit: $limit, query_params: $queryParams) {
           cursor
-          items { ${ITEM_FIELDS.replace("column_values { id title text value type }", `column_values${columnFilter} { id title text value type }`)} ${subitemsField} }
+          items { ${ITEM_FIELDS.replace("column_values { id text value type }", `column_values${columnFilter} { id text value type }`)} ${subitemsField} }
         }
       }
     }`, { boardId, limit, queryParams });
@@ -135,9 +135,9 @@ export async function mondayGetItem(token: string, itemId: string): Promise<stri
         id name url created_at updated_at
         board { id name }
         group { id title }
-        column_values { id title text value type }
+        column_values { id text value type }
         updates(limit: 5) { id text_body created_at creator { id name email } }
-        subitems { id name column_values { id title text value } }
+        subitems { id name column_values { id text value } }
         parent_item { id name }
       }
     }`, { itemId });
