@@ -15,13 +15,14 @@ export interface AgentConfig {
     fetchUrl: boolean;
     httpRequest: boolean;
     googleSearch: boolean;
-    jinaReader: boolean;
     gmail: boolean;
     googleCalendar: boolean;
     slack: boolean;
-    monday: boolean;
-    googleTasks: boolean;
-    memory: boolean;
+    // fields added after initial release — optional so old child configs still compile
+    jinaReader?: boolean;
+    monday?: boolean;
+    googleTasks?: boolean;
+    memory?: boolean;
   };
   access: {
     chatEnabled: boolean;

@@ -256,7 +256,7 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   const additionBlock = addition?.trim() ? `\n\n---\n\n${addition.trim()}` : "";
 
   const caps: string[] = [];
-  if (agentConfig.tools.jinaReader) {
+  if (agentConfig.tools.jinaReader ?? true) {
     caps.push("- **Read webpages**: Use read_webpage to fetch any URL as clean readable text. For web searches, use read_webpage with `https://html.duckduckgo.com/html/?q=your+search+terms` (URL-encode spaces as +). Always do this when asked to search or look something up — never say you cannot search the web.");
   } else if (agentConfig.tools.fetchUrl) {
     caps.push("- **Web search**: Use fetch_url with `https://html.duckduckgo.com/html/?q=your+search+terms` to search the web. Always do this when asked to search — never say you cannot.");
@@ -264,7 +264,7 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   if (agentConfig.tools.httpRequest) {
     caps.push("- **Custom API calls**: Use http_request to call any REST API with GET, POST, PUT, PATCH, or DELETE and an optional JSON body.");
   }
-  if (agentConfig.tools.memory) {
+  if (agentConfig.tools.memory ?? true) {
     caps.push("- **Memory**: Use memory_save to remember important facts about the user between conversations. Use memory_recall at the start of conversations to retrieve what you know. Use memory_delete to forget outdated info.");
   }
   const capsBlock = caps.length
@@ -278,13 +278,13 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
-  if (agentConfig.tools.jinaReader)  tools.push(ALL_TOOLS.read_webpage);
+  if (agentConfig.tools.jinaReader ?? true) tools.push(ALL_TOOLS.read_webpage);
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
   if (mondayToken)  tools.push(ALL_TOOLS.monday_graphql, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update);
   if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
-  if (agentConfig.tools.memory && memoryUser) tools.push(ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete);
+  if ((agentConfig.tools.memory ?? true) && memoryUser) tools.push(ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete);
   return tools;
 }
 
