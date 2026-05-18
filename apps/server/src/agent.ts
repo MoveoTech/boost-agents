@@ -3,7 +3,15 @@ import { chatWithModel, chatWithModelStream, type ModelConfig, type ToolDecl, ty
 import { fetchUrl, httpRequest, readWebpage, searchImage } from "./tools";
 import { gmailSend } from "./gmail";
 import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
-import { mondayGraphQL, mondayCreateItem, mondayUpdateItem, mondayCreateUpdate } from "./monday";
+import {
+  mondayGraphQL, mondayListBoards, mondayGetBoard, mondayCreateBoard,
+  mondayGetItems, mondayGetItem, mondayCreateItem, mondayUpdateItem,
+  mondayDeleteItem, mondayArchiveItem, mondayMoveItemToGroup,
+  mondayDuplicateItem, mondayCreateSubitem,
+  mondayCreateGroup, mondayDeleteGroup, mondayCreateColumn,
+  mondayGetUpdates, mondayCreateUpdate, mondayDeleteUpdate,
+  mondayGetMe, mondayGetUsers,
+} from "./monday";
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { memorySave, memoryRecall, memoryDelete } from "./memory";
@@ -154,64 +162,237 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
       required: ["taskId"],
     },
   },
+  // ── Monday.com ──────────────────────────────────────────────────────────────
   monday_graphql: {
     name: "monday_graphql",
-    description: `Execute any GraphQL query or mutation against the Monday.com API. Use this for all read operations and any query not covered by the specific write tools. The Monday GraphQL API endpoint is https://api.monday.com/v2.
-
-Common query patterns:
-- List boards with owners: { boards(limit:50) { id name owners { id name email } } }
-- Items with column values: { boards(ids:[$boardId]) { items_page(limit:50) { items { id name column_values { id text value } } } } }
-- Filter items by column: use items_page with a query_params argument: { boards(ids:[$boardId]) { items_page(query_params: { rules: [{ column_id: "priority", compare_value: ["High"] }] }) { items { id name } } } }
-- Current user info: { me { id name email } }
-- Search items: { items_by_name(board_ids:[$boardId], limit:10, name:"search term") { id name } }`,
+    description: "Execute any GraphQL query or mutation against the Monday.com API. Use as an escape hatch when no specific tool covers your need.",
     parameters: {
       properties: {
-        query:     { type: "string", description: "The GraphQL query or mutation string" },
-        variables: { type: "object", description: "Optional GraphQL variables (use $var in query, pass values here)" },
+        query:     { type: "string", description: "GraphQL query or mutation string" },
+        variables: { type: "object", description: "Optional GraphQL variables" },
       },
       required: ["query"],
     },
   },
-  monday_create_item: {
-    name: "monday_create_item", description: "Create a new item on a monday.com board.",
+  monday_list_boards: {
+    name: "monday_list_boards",
+    description: "List all Monday.com boards the user has access to, including their IDs, groups, and item count. Always call this first to discover board IDs before other operations.",
+    parameters: {
+      properties: { limit: { type: "number", description: "Max boards to return (default 50)" } },
+      required: [],
+    },
+  },
+  monday_get_board: {
+    name: "monday_get_board",
+    description: "Get full schema of a Monday.com board: all columns (with their IDs and types) and all groups. Call this before filtering or updating items so you know the correct column IDs.",
+    parameters: {
+      properties: { boardId: { type: "string", description: "Board ID" } },
+      required: ["boardId"],
+    },
+  },
+  monday_create_board: {
+    name: "monday_create_board",
+    description: "Create a new Monday.com board.",
     parameters: {
       properties: {
-        boardId:      { type: "string", description: "The board ID" },
-        itemName:     { type: "string", description: "Name of the new item" },
-        columnValues: { type: "object", description: "Optional column values as {columnId: value}" },
+        boardName:   { type: "string", description: "Board name" },
+        boardKind:   { type: "string", description: "public | private | share (default: public)" },
+        workspaceId: { type: "string", description: "Target workspace ID (optional)" },
+        description: { type: "string", description: "Board description (optional)" },
+      },
+      required: ["boardName"],
+    },
+  },
+  monday_get_items: {
+    name: "monday_get_items",
+    description: `Fetch items from a Monday.com board with rich filtering and pagination.
+
+Filter operators: any_of | not_any_of | is_empty | is_not_empty | greater_than | lower_than | between | contains_text | not_contains_text | starts_with | ends_with
+
+Column value formats for updates:
+- Status: { "label": "Done" }
+- Date: { "date": "2025-01-15" }
+- Person: { "personsAndTeams": [{ "id": 123, "kind": "person" }] }
+- Number / Text: plain string "42"`,
+    parameters: {
+      properties: {
+        boardId:         { type: "string",  description: "Board ID" },
+        limit:           { type: "number",  description: "Items per page (default 50, max 500)" },
+        cursor:          { type: "string",  description: "Pagination cursor from previous response" },
+        searchTerm:      { type: "string",  description: "Full-text search across all columns" },
+        groupId:         { type: "string",  description: "Filter by group ID" },
+        filters:         { type: "array",   description: "Column filter rules: [{columnId, compareValue: [\"val\"], operator}]", items: { type: "object" } },
+        filtersOperator: { type: "string",  description: "and | or — how to combine filters (default: and)" },
+        columnIds:       { type: "array",   description: "Only return values for these column IDs (improves performance)", items: { type: "string" } },
+        includeSubitems: { type: "boolean", description: "Include sub-items (default false)" },
+      },
+      required: ["boardId"],
+    },
+  },
+  monday_get_item: {
+    name: "monday_get_item",
+    description: "Get full details of a single Monday.com item: all column values, updates/comments, sub-items, and parent item.",
+    parameters: {
+      properties: { itemId: { type: "string", description: "Item ID" } },
+      required: ["itemId"],
+    },
+  },
+  monday_create_item: {
+    name: "monday_create_item",
+    description: "Create a new item on a Monday.com board. Use monday_get_board first to find column IDs. Column values format: { \"status\": {\"label\":\"Done\"}, \"date4\": {\"date\":\"2025-06-01\"} }",
+    parameters: {
+      properties: {
+        boardId:      { type: "string", description: "Board ID" },
+        itemName:     { type: "string", description: "Item name" },
+        groupId:      { type: "string", description: "Group ID to create item in (optional)" },
+        columnValues: { type: "object", description: "Column values as { columnId: value } (optional)" },
       },
       required: ["boardId", "itemName"],
     },
   },
   monday_update_item: {
-    name: "monday_update_item", description: "Update column values of an existing monday.com item.",
+    name: "monday_update_item",
+    description: "Update one or more column values of an existing Monday.com item.",
     parameters: {
       properties: {
-        boardId:      { type: "string", description: "The board ID" },
-        itemId:       { type: "string", description: "The item ID" },
-        columnValues: { type: "object", description: "Column values to update as {columnId: value}" },
+        boardId:      { type: "string", description: "Board ID" },
+        itemId:       { type: "string", description: "Item ID" },
+        columnValues: { type: "object", description: "Columns to update as { columnId: value }" },
       },
       required: ["boardId", "itemId", "columnValues"],
     },
   },
-  monday_create_update: {
-    name: "monday_create_update", description: "Post a text update/comment on a monday.com item.",
+  monday_delete_item: {
+    name: "monday_delete_item",
+    description: "Permanently delete a Monday.com item. Use monday_archive_item if you want to keep it recoverable.",
+    parameters: {
+      properties: { itemId: { type: "string", description: "Item ID" } },
+      required: ["itemId"],
+    },
+  },
+  monday_archive_item: {
+    name: "monday_archive_item",
+    description: "Archive a Monday.com item (hidden but recoverable, unlike delete).",
+    parameters: {
+      properties: { itemId: { type: "string", description: "Item ID" } },
+      required: ["itemId"],
+    },
+  },
+  monday_move_item_to_group: {
+    name: "monday_move_item_to_group",
+    description: "Move an item to a different group within the same board.",
     parameters: {
       properties: {
-        itemId: { type: "string", description: "The item ID" },
-        body:   { type: "string", description: "The update text" },
+        itemId:  { type: "string", description: "Item ID" },
+        groupId: { type: "string", description: "Target group ID" },
+      },
+      required: ["itemId", "groupId"],
+    },
+  },
+  monday_duplicate_item: {
+    name: "monday_duplicate_item",
+    description: "Duplicate an existing Monday.com item.",
+    parameters: {
+      properties: {
+        boardId:     { type: "string",  description: "Board ID" },
+        itemId:      { type: "string",  description: "Item ID to duplicate" },
+        withUpdates: { type: "boolean", description: "Also copy updates/comments (default false)" },
+      },
+      required: ["boardId", "itemId"],
+    },
+  },
+  monday_create_subitem: {
+    name: "monday_create_subitem",
+    description: "Create a sub-item under an existing Monday.com item.",
+    parameters: {
+      properties: {
+        parentItemId: { type: "string", description: "Parent item ID" },
+        itemName:     { type: "string", description: "Sub-item name" },
+        columnValues: { type: "object", description: "Column values (optional)" },
+      },
+      required: ["parentItemId", "itemName"],
+    },
+  },
+  monday_create_group: {
+    name: "monday_create_group",
+    description: "Create a new group (section) in a Monday.com board.",
+    parameters: {
+      properties: {
+        boardId:    { type: "string", description: "Board ID" },
+        groupName:  { type: "string", description: "Group name" },
+        groupColor: { type: "string", description: "Hex color (optional, e.g. #ff0000)" },
+      },
+      required: ["boardId", "groupName"],
+    },
+  },
+  monday_delete_group: {
+    name: "monday_delete_group",
+    description: "Delete a group from a Monday.com board. All items in the group will be deleted.",
+    parameters: {
+      properties: {
+        boardId: { type: "string", description: "Board ID" },
+        groupId: { type: "string", description: "Group ID" },
+      },
+      required: ["boardId", "groupId"],
+    },
+  },
+  monday_create_column: {
+    name: "monday_create_column",
+    description: "Add a new column to a Monday.com board. Column types: text | numbers | status | date | person | timeline | checkbox | dropdown | email | phone | url | long_text | color_picker | rating | world_clock | country | location | week | hour | item_id | auto_number | progress | dependency | connect_boards | formula | button | vote | time_tracking | file | tags | mirror | subitems",
+    parameters: {
+      properties: {
+        boardId:     { type: "string", description: "Board ID" },
+        columnTitle: { type: "string", description: "Column title" },
+        columnType:  { type: "string", description: "Column type (see description)" },
+        description: { type: "string", description: "Column description (optional)" },
+      },
+      required: ["boardId", "columnTitle", "columnType"],
+    },
+  },
+  monday_get_updates: {
+    name: "monday_get_updates",
+    description: "Get updates (comments and replies) on a Monday.com item.",
+    parameters: {
+      properties: {
+        itemId: { type: "string", description: "Item ID" },
+        limit:  { type: "number", description: "Max updates to return (default 25)" },
+      },
+      required: ["itemId"],
+    },
+  },
+  monday_create_update: {
+    name: "monday_create_update",
+    description: "Post an update (comment) on a Monday.com item.",
+    parameters: {
+      properties: {
+        itemId: { type: "string", description: "Item ID" },
+        body:   { type: "string", description: "Update text (supports basic HTML)" },
       },
       required: ["itemId", "body"],
     },
   },
-  monday_search_items: {
-    name: "monday_search_items", description: "Search for items by name across monday.com boards.",
+  monday_delete_update: {
+    name: "monday_delete_update",
+    description: "Delete an update/comment from a Monday.com item.",
+    parameters: {
+      properties: { updateId: { type: "string", description: "Update ID" } },
+      required: ["updateId"],
+    },
+  },
+  monday_get_me: {
+    name: "monday_get_me",
+    description: "Get the current authenticated Monday.com user's profile and account info.",
+    parameters: { properties: {}, required: [] },
+  },
+  monday_get_users: {
+    name: "monday_get_users",
+    description: "List Monday.com users. Optionally filter by name. Useful for finding user IDs for assigning items.",
     parameters: {
       properties: {
-        query: { type: "string", description: "Search query" },
-        limit: { type: "number", description: "Max results (default 10)" },
+        limit: { type: "number", description: "Max users to return (default 50)" },
+        name:  { type: "string", description: "Filter by name (optional)" },
       },
-      required: ["query"],
+      required: [],
     },
   },
   read_webpage: {
@@ -290,7 +471,18 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
-  if (mondayToken)  tools.push(ALL_TOOLS.monday_graphql, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update);
+  if (mondayToken)  tools.push(
+    ALL_TOOLS.monday_list_boards, ALL_TOOLS.monday_get_board, ALL_TOOLS.monday_create_board,
+    ALL_TOOLS.monday_get_items, ALL_TOOLS.monday_get_item,
+    ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item,
+    ALL_TOOLS.monday_delete_item, ALL_TOOLS.monday_archive_item,
+    ALL_TOOLS.monday_move_item_to_group, ALL_TOOLS.monday_duplicate_item, ALL_TOOLS.monday_create_subitem,
+    ALL_TOOLS.monday_create_group, ALL_TOOLS.monday_delete_group,
+    ALL_TOOLS.monday_create_column,
+    ALL_TOOLS.monday_get_updates, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_delete_update,
+    ALL_TOOLS.monday_get_me, ALL_TOOLS.monday_get_users,
+    ALL_TOOLS.monday_graphql,
+  );
   if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
   if ((agentConfig.tools.memory ?? true) && memoryUser) tools.push(ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete);
   return tools;
@@ -344,15 +536,58 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
     }
 
     case "monday_graphql":
+    case "monday_list_boards":
+    case "monday_get_board":
+    case "monday_create_board":
+    case "monday_get_items":
+    case "monday_get_item":
     case "monday_create_item":
     case "monday_update_item":
-    case "monday_create_update": {
+    case "monday_delete_item":
+    case "monday_archive_item":
+    case "monday_move_item_to_group":
+    case "monday_duplicate_item":
+    case "monday_create_subitem":
+    case "monday_create_group":
+    case "monday_delete_group":
+    case "monday_create_column":
+    case "monday_get_updates":
+    case "monday_create_update":
+    case "monday_delete_update":
+    case "monday_get_me":
+    case "monday_get_users": {
       const token = mondayToken;
       if (!token) return "Monday is not connected. Ask the user to connect their Monday account.";
-      if (name === "monday_graphql")       return mondayGraphQL(token, args.query as string, args.variables as Record<string, unknown> | undefined);
-      if (name === "monday_create_item")   return mondayCreateItem(token, args.boardId as string, args.itemName as string, args.columnValues as Record<string, string> | undefined);
-      if (name === "monday_update_item")   return mondayUpdateItem(token, args.boardId as string, args.itemId as string, args.columnValues as Record<string, string>);
-      return mondayCreateUpdate(token, args.itemId as string, args.body as string);
+      if (name === "monday_graphql")          return mondayGraphQL(token, args.query as string, args.variables as Record<string, unknown> | undefined);
+      if (name === "monday_list_boards")      return mondayListBoards(token, args.limit as number | undefined);
+      if (name === "monday_get_board")        return mondayGetBoard(token, args.boardId as string);
+      if (name === "monday_create_board")     return mondayCreateBoard(token, args.boardName as string, args.boardKind as string | undefined, args.workspaceId as string | undefined, args.description as string | undefined);
+      if (name === "monday_get_items")        return mondayGetItems(token, args.boardId as string, {
+        limit: args.limit as number | undefined,
+        cursor: args.cursor as string | undefined,
+        searchTerm: args.searchTerm as string | undefined,
+        filters: args.filters as any,
+        filtersOperator: args.filtersOperator as "and" | "or" | undefined,
+        groupId: args.groupId as string | undefined,
+        columnIds: args.columnIds as string[] | undefined,
+        includeSubitems: args.includeSubitems as boolean | undefined,
+      });
+      if (name === "monday_get_item")         return mondayGetItem(token, args.itemId as string);
+      if (name === "monday_create_item")      return mondayCreateItem(token, args.boardId as string, args.itemName as string, args.columnValues as Record<string, unknown> | undefined, args.groupId as string | undefined);
+      if (name === "monday_update_item")      return mondayUpdateItem(token, args.boardId as string, args.itemId as string, args.columnValues as Record<string, unknown>);
+      if (name === "monday_delete_item")      return mondayDeleteItem(token, args.itemId as string);
+      if (name === "monday_archive_item")     return mondayArchiveItem(token, args.itemId as string);
+      if (name === "monday_move_item_to_group") return mondayMoveItemToGroup(token, args.itemId as string, args.groupId as string);
+      if (name === "monday_duplicate_item")   return mondayDuplicateItem(token, args.boardId as string, args.itemId as string, args.withUpdates as boolean | undefined);
+      if (name === "monday_create_subitem")   return mondayCreateSubitem(token, args.parentItemId as string, args.itemName as string, args.columnValues as Record<string, unknown> | undefined);
+      if (name === "monday_create_group")     return mondayCreateGroup(token, args.boardId as string, args.groupName as string, args.groupColor as string | undefined);
+      if (name === "monday_delete_group")     return mondayDeleteGroup(token, args.boardId as string, args.groupId as string);
+      if (name === "monday_create_column")    return mondayCreateColumn(token, args.boardId as string, args.columnTitle as string, args.columnType as string, args.description as string | undefined);
+      if (name === "monday_get_updates")      return mondayGetUpdates(token, args.itemId as string, args.limit as number | undefined);
+      if (name === "monday_create_update")    return mondayCreateUpdate(token, args.itemId as string, args.body as string);
+      if (name === "monday_delete_update")    return mondayDeleteUpdate(token, args.updateId as string);
+      if (name === "monday_get_me")           return mondayGetMe(token);
+      return mondayGetUsers(token, args.limit as number | undefined, args.name as string | undefined);
     }
 
     case "tasks_list_tasklists":
