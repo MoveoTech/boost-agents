@@ -205,15 +205,22 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
   },
   monday_get_items: {
     name: "monday_get_items",
-    description: `Fetch items from a Monday.com board with rich filtering and pagination.
+    description: `Fetch items from a Monday.com board with filtering and pagination.
 
-Filter operators: any_of | not_any_of | is_empty | is_not_empty | greater_than | lower_than | between | contains_text | not_contains_text | starts_with | ends_with
+FILTER compareValue FORMAT BY COLUMN TYPE (critical — wrong format returns empty results):
+- people: ["person-{userId}"] or ["team-{teamId}"] or ["assigned_to_me"] — NEVER use raw id like ["95152239"]
+- status: [labelIndex] e.g. [0,1] with any_of, or label text string with contains_terms
+- date: ["EXACT","YYYY-MM-DD"] with any_of, or "TODAY"/"THIS_WEEK" string with greater_than/lower_than
+- text/long_text: ["exact value"] with any_of, or plain string with contains_text
+- numbers: [100,200] with any_of, or single number with greater_than/lower_than
+- name column: plain string with contains_text or not_contains_text
+- checkbox: [] (empty array) with is_empty or is_not_empty
+- last_updated: ["TODAY"] with compareAttribute:"UPDATED_AT"
 
-Column value formats for updates:
-- Status: { "label": "Done" }
-- Date: { "date": "2025-01-15" }
-- Person: { "personsAndTeams": [{ "id": 123, "kind": "person" }] }
-- Number / Text: plain string "42"`,
+OPERATOR RULES:
+- any_of, not_any_of, between → compareValue must be an ARRAY
+- is_empty, is_not_empty → compareValue must be EMPTY ARRAY []
+- greater_than, lower_than, contains_text, not_contains_text → compareValue must be a SINGLE value (not array)`,
     parameters: {
       properties: {
         boardId:         { type: "string",  description: "Board ID" },
@@ -221,7 +228,7 @@ Column value formats for updates:
         cursor:          { type: "string",  description: "Pagination cursor from previous response" },
         searchTerm:      { type: "string",  description: "Full-text search across all columns" },
         groupId:         { type: "string",  description: "Filter by group ID" },
-        filters:         { type: "array",   description: "Column filter rules: [{columnId, compareValue: [\"val\"], operator}]", items: { type: "object" } },
+        filters:         { type: "array",   description: "Column filter rules: [{columnId, compareValue, operator}]. See description for correct compareValue format per column type.", items: { type: "object" } },
         filtersOperator: { type: "string",  description: "and | or — how to combine filters (default: and)" },
         columnIds:       { type: "array",   description: "Only return values for these column IDs (improves performance)", items: { type: "string" } },
         includeSubitems: { type: "boolean", description: "Include sub-items (default false)" },

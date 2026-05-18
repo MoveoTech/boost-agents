@@ -1,9 +1,14 @@
 const MONDAY_API = "https://api.monday.com/v2";
+const MONDAY_API_VERSION = "2025-10";
 
 async function gql(token: string, query: string, variables?: Record<string, unknown>): Promise<any> {
   const res = await fetch(MONDAY_API, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      "API-Version": MONDAY_API_VERSION,
+    },
     body: JSON.stringify({ query, variables }),
     signal: AbortSignal.timeout(20_000),
   });
@@ -15,8 +20,8 @@ async function gql(token: string, query: string, variables?: Record<string, unkn
 function json(v: any): string { return JSON.stringify(v, null, 2); }
 
 const ITEM_FIELDS = `
-  id name url created_at updated_at
-  group { id title }
+  id name url state created_at updated_at
+  group { id title color }
   column_values { id text value type }
 `;
 
@@ -32,10 +37,10 @@ export async function mondayListBoards(token: string, limit = 50): Promise<strin
   const data = await gql(token, `
     query($limit: Int!) {
       boards(limit: $limit, order_by: created_at) {
-        id name description state board_kind
+        id name description state board_kind url
+        items_count updated_at
         workspace { id name }
-        groups { id title }
-        items_count
+        groups { id title color position }
         creator { id name email }
       }
     }`, { limit });
@@ -47,14 +52,14 @@ export async function mondayGetBoard(token: string, boardId: string): Promise<st
     query($boardId: ID!) {
       boards(ids: [$boardId]) {
         id name description state board_kind permissions url
-        updated_at item_terminology items_count items_limit
+        updated_at items_count items_limit item_terminology
         creator { id name email }
-        workspace { id name kind description }
+        owners { id name email }
+        team_owners { id name }
+        workspace { id name }
         board_folder_id
         columns { id title type description settings revision }
-        groups { id title }
-        owners { id name }
-        team_owners { id name }
+        groups { id title color position }
         tags { id name }
         top_group { id }
       }
@@ -142,7 +147,7 @@ export async function mondayGetItem(token: string, itemId: string): Promise<stri
         board { id name }
         group { id title }
         column_values { id text value type }
-        updates(limit: 5) { id text_body created_at updated_at creator { id name } }
+        updates(limit: 5) { id body text_body created_at updated_at creator { id name } }
         subitems { id name column_values { id text value } }
         parent_item { id name }
       }
@@ -243,9 +248,9 @@ export async function mondayGetUpdates(token: string, itemId: string, limit = 25
     query($itemId: ID!, $limit: Int!) {
       items(ids: [$itemId]) {
         updates(limit: $limit) {
-          id text_body created_at updated_at item_id
+          id body text_body created_at updated_at item_id
           creator { id name }
-          replies { id text_body created_at updated_at creator { id name } }
+          replies { id body text_body created_at updated_at creator { id name } }
         }
       }
     }`, { itemId, limit });
