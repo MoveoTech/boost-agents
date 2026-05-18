@@ -625,7 +625,7 @@ app.post("/api/chat", async (req, res) => {
     const toolUses: { name: string; input: string; output: string }[] = [];
 
     const mondayTokenStream = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
-    const tasksUserStream = sessionEmail ? (await getUserAccessToken("tasks", sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
+    const tasksUserStream   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
     try {
       await chatStream(
         effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model,
@@ -643,6 +643,7 @@ app.post("/api/chat", async (req, res) => {
         },
         mondayTokenStream,
         tasksUserStream,
+        sessionEmail,
       );
       send({ type: "done", toolUses });
       trackUsage(modelId, toolUses.map((t) => t.name), Date.now() - t0);
@@ -656,8 +657,8 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     const mondayToken = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
-    const tasksUser = sessionEmail ? (await getUserAccessToken("tasks", sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
-    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser);
+    const tasksUser   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
+    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail);
     trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
   } catch (err) {

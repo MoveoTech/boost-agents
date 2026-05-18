@@ -250,7 +250,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
         const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : service === "tasks" ? onTasksDisconnect : onMondayDisconnect;
         const href = service === "monday"
           ? `${BASE}/api/auth/monday/start?returnUrl=${encodeURIComponent(window.location.origin)}`
-          : `${BASE}/api/auth/google/start?service=${service === "tasks" ? "tasks" : service}&returnUrl=${encodeURIComponent(window.location.origin)}`;
+          : `${BASE}/api/auth/google/start?service=${service}&returnUrl=${encodeURIComponent(window.location.origin)}`;
         return (
           <div key={service} className="sidebar-tool-row">
             <div className="sidebar-tool-info">

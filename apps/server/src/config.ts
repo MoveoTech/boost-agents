@@ -15,11 +15,13 @@ export interface AgentConfig {
     fetchUrl: boolean;
     httpRequest: boolean;
     googleSearch: boolean;
+    jinaReader: boolean;
     gmail: boolean;
     googleCalendar: boolean;
     slack: boolean;
     monday: boolean;
     googleTasks: boolean;
+    memory: boolean;
   };
   access: {
     chatEnabled: boolean;
@@ -41,11 +43,13 @@ export const agentConfig: AgentConfig = {
     fetchUrl: true,
     httpRequest: true,
     googleSearch: true,
+    jinaReader: true,
     gmail: false,
     googleCalendar: false,
     slack: true,
     monday: false,
     googleTasks: false,
+    memory: true,
   },
   access: {
     chatEnabled: true,

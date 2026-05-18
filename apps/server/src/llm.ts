@@ -45,9 +45,9 @@ function toGeminiSchema(p: ToolParam): Record<string, unknown> {
   };
 }
 
-async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor): Promise<ChatResult> {
+async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean): Promise<ChatResult> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-  const geminiTools = tools.length ? [{
+  const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
       name: t.name, description: t.description,
       parameters: {
@@ -57,6 +57,7 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
       },
     })),
   }] : [];
+  const geminiTools = [...funcTool, ...(nativeSearch ? [{ googleSearch: {} }] : [])];
 
   const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
   const session = model.startChat({ history });
@@ -77,7 +78,7 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
 
 // ── Claude ──────────────────────────────────────────────────────────────────
 
-async function chatClaude(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor): Promise<ChatResult> {
+async function chatClaude(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean): Promise<ChatResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const toolUses: ToolUse[] = [];
 
@@ -91,6 +92,9 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
       required: t.parameters.required,
     },
   }));
+  const allClaudeTools = nativeSearch
+    ? [...claudeTools, { type: "web_search_20250305", name: "web_search" }]
+    : claudeTools;
 
   const msgs: Anthropic.MessageParam[] = [
     ...history
@@ -99,15 +103,22 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
     { role: "user", content: message },
   ];
 
+  const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
+
   while (true) {
     const response = await client.messages.create({
       model: modelId, max_tokens: 8192, system: systemPrompt,
-      tools: claudeTools.length ? claudeTools : undefined,
+      tools: allClaudeTools.length ? (allClaudeTools as never) : undefined,
       messages: msgs,
-    });
+    }, reqOpts);
 
     if (response.stop_reason === "tool_use") {
-      const useBlocks = response.content.filter((b) => b.type === "tool_use") as Anthropic.ToolUseBlock[];
+      // web_search blocks are handled server-side — only execute our own function tools
+      const useBlocks = response.content.filter((b) => b.type === "tool_use" && (b as Anthropic.ToolUseBlock).name !== "web_search") as Anthropic.ToolUseBlock[];
+      if (!useBlocks.length) {
+        const text = response.content.filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlock).text).join("");
+        return { reply: text, toolUses };
+      }
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const block of useBlocks) {
         const output = await execute(block.name, block.input as Record<string, unknown>);
@@ -175,9 +186,9 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
 
 // ── Streaming implementations ────────────────────────────────────────────────
 
-async function chatGeminiStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks): Promise<ToolUse[]> {
+async function chatGeminiStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean): Promise<ToolUse[]> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-  const geminiTools = tools.length ? [{
+  const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
       name: t.name, description: t.description,
       parameters: {
@@ -187,6 +198,7 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
       },
     })),
   }] : [];
+  const geminiTools = [...funcTool, ...(nativeSearch ? [{ googleSearch: {} }] : [])];
 
   const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
   const session = model.startChat({ history });
@@ -216,7 +228,7 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
   return toolUses;
 }
 
-async function chatClaudeStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks): Promise<ToolUse[]> {
+async function chatClaudeStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean): Promise<ToolUse[]> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const toolUses: ToolUse[] = [];
 
@@ -228,24 +240,30 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
       required: t.parameters.required,
     },
   }));
+  const allClaudeTools = nativeSearch
+    ? [...claudeTools, { type: "web_search_20250305", name: "web_search" }]
+    : claudeTools;
 
   const msgs: Anthropic.MessageParam[] = [
     ...history.map((h) => ({ role: h.role === "model" ? "assistant" : "user" as "user" | "assistant", content: h.parts.map((p: { text?: string }) => p.text ?? "").join("") })).filter((m) => m.content),
     { role: "user", content: message },
   ];
 
+  const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
+
   while (true) {
     const stream = await client.messages.stream({
       model: modelId, max_tokens: 8192, system: systemPrompt,
-      tools: claudeTools.length ? claudeTools : undefined,
+      tools: allClaudeTools.length ? (allClaudeTools as never) : undefined,
       messages: msgs,
-    });
+    }, reqOpts);
 
     stream.on("text", (text) => cb.onToken(text));
     const response = await stream.finalMessage();
 
     if (response.stop_reason === "tool_use") {
-      const useBlocks = response.content.filter((b) => b.type === "tool_use") as Anthropic.ToolUseBlock[];
+      const useBlocks = response.content.filter((b) => b.type === "tool_use" && (b as Anthropic.ToolUseBlock).name !== "web_search") as Anthropic.ToolUseBlock[];
+      if (!useBlocks.length) break;
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const block of useBlocks) {
         cb.onToolStart(block.name, JSON.stringify(block.input));
@@ -312,11 +330,12 @@ export async function chatWithModel(
   history: Content[],
   message: string,
   tools: ToolDecl[],
-  execute: Executor
+  execute: Executor,
+  nativeSearch?: boolean,
 ): Promise<ChatResult> {
   switch (model.provider) {
-    case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute);
-    case "claude":  return chatClaude(model.modelId, systemPrompt, history, message, tools, execute);
+    case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch);
+    case "claude":  return chatClaude(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch);
     case "openai":  return chatOpenAI(model.modelId, systemPrompt, history, message, tools, execute);
     default: throw new Error(`Unknown provider: ${model.provider}`);
   }
@@ -330,10 +349,11 @@ export async function chatWithModelStream(
   tools: ToolDecl[],
   execute: Executor,
   callbacks: StreamCallbacks,
+  nativeSearch?: boolean,
 ): Promise<ToolUse[]> {
   switch (model.provider) {
-    case "gemini": return chatGeminiStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks);
-    case "claude": return chatClaudeStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks);
+    case "gemini": return chatGeminiStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch);
+    case "claude": return chatClaudeStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch);
     case "openai": return chatOpenAIStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks);
     default: throw new Error(`Unknown provider: ${model.provider}`);
   }

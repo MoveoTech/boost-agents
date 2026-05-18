@@ -1,11 +1,12 @@
 import type { Content } from "@google/generative-ai";
 import { chatWithModel, chatWithModelStream, type ModelConfig, type ToolDecl, type StreamCallbacks } from "./llm";
-import { fetchUrl, httpRequest } from "./tools";
+import { fetchUrl, httpRequest, readWebpage } from "./tools";
 import { gmailSend } from "./gmail";
 import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
 import { mondayGraphQL, mondayCreateItem, mondayUpdateItem, mondayCreateUpdate } from "./monday";
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
+import { memorySave, memoryRecall, memoryDelete } from "./memory";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
 
@@ -213,6 +214,37 @@ Common query patterns:
       required: ["query"],
     },
   },
+  read_webpage: {
+    name: "read_webpage", description: "Fetch a URL and return its content as clean readable text/markdown. Use this to read articles, websites, and search result pages. Prefer this over fetch_url for any human-readable web content.",
+    parameters: {
+      properties: { url: { type: "string", description: "Full URL to read (http:// or https://)" } },
+      required: ["url"],
+    },
+  },
+  memory_save: {
+    name: "memory_save", description: "Save a fact, preference, or piece of information about the user to remember in future conversations. Use a short descriptive key.",
+    parameters: {
+      properties: {
+        key:   { type: "string", description: "Short key to identify this memory (e.g. 'preferred_language', 'role', 'company')" },
+        value: { type: "string", description: "The value to remember" },
+      },
+      required: ["key", "value"],
+    },
+  },
+  memory_recall: {
+    name: "memory_recall", description: "Recall saved memories about the user. Omit key to list all memories.",
+    parameters: {
+      properties: { key: { type: "string", description: "Specific memory key to retrieve (optional — omit to get all)" } },
+      required: [],
+    },
+  },
+  memory_delete: {
+    name: "memory_delete", description: "Delete a saved memory by key.",
+    parameters: {
+      properties: { key: { type: "string", description: "The memory key to delete" } },
+      required: ["key"],
+    },
+  },
 };
 
 function buildSystemPrompt(override?: string, addition?: string): string {
@@ -224,11 +256,16 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   const additionBlock = addition?.trim() ? `\n\n---\n\n${addition.trim()}` : "";
 
   const caps: string[] = [];
-  if (agentConfig.tools.fetchUrl) {
-    caps.push("- **Web search**: Use the fetch_url tool to search the web. For any search query, fetch `https://html.duckduckgo.com/html/?q=your+search+terms` (URL-encode spaces as +). You can also fetch any other URL to read its content. Always use this when asked to search, look something up, or find information online — never say you cannot search the web.");
+  if (agentConfig.tools.jinaReader) {
+    caps.push("- **Read webpages**: Use read_webpage to fetch any URL as clean readable text. For web searches, use read_webpage with `https://html.duckduckgo.com/html/?q=your+search+terms` (URL-encode spaces as +). Always do this when asked to search or look something up — never say you cannot search the web.");
+  } else if (agentConfig.tools.fetchUrl) {
+    caps.push("- **Web search**: Use fetch_url with `https://html.duckduckgo.com/html/?q=your+search+terms` to search the web. Always do this when asked to search — never say you cannot.");
   }
   if (agentConfig.tools.httpRequest) {
     caps.push("- **Custom API calls**: Use http_request to call any REST API with GET, POST, PUT, PATCH, or DELETE and an optional JSON body.");
+  }
+  if (agentConfig.tools.memory) {
+    caps.push("- **Memory**: Use memory_save to remember important facts about the user between conversations. Use memory_recall at the start of conversations to retrieve what you know. Use memory_delete to forget outdated info.");
   }
   const capsBlock = caps.length
     ? `\n\n---\n\nYou have access to the following capabilities:\n${caps.join("\n")}`
@@ -237,25 +274,30 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   return `${base}${skillsBlock}${additionBlock}${capsBlock}`;
 }
 
-function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string): ToolDecl[] {
+function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
+  if (agentConfig.tools.jinaReader)  tools.push(ALL_TOOLS.read_webpage);
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
-  if (mondayToken) tools.push(ALL_TOOLS.monday_graphql, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update);
-  if (tasksUser) tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
+  if (mondayToken)  tools.push(ALL_TOOLS.monday_graphql, ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item, ALL_TOOLS.monday_create_update);
+  if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
+  if (agentConfig.tools.memory && memoryUser) tools.push(ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete);
   return tools;
 }
 
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string): Promise<string | null> {
+async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string): Promise<string | null> {
   switch (name) {
     case "fetch_url":
       return fetchUrl(args.url as string);
+
+    case "read_webpage":
+      return readWebpage(args.url as string);
 
     case "http_request":
       return httpRequest(args.url as string, args.method as string, args.body);
@@ -319,6 +361,18 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       return tasksDeleteTask(token, args.taskId as string, args.tasklistId as string | undefined);
     }
 
+    case "memory_save":
+      if (!memoryUser) return "Memory requires a logged-in user.";
+      return memorySave(memoryUser, args.key as string, args.value as string);
+
+    case "memory_recall":
+      if (!memoryUser) return "Memory requires a logged-in user.";
+      return memoryRecall(memoryUser, args.key as string | undefined);
+
+    case "memory_delete":
+      if (!memoryUser) return "Memory requires a logged-in user.";
+      return memoryDelete(memoryUser, args.key as string);
+
     default:
       return null; // not a builtin tool
   }
@@ -349,6 +403,7 @@ async function runChat(
   streamCallbacks?: StreamCallbacks,
   mondayToken?: string,
   tasksUser?: string,
+  memoryUser?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
   const builtPrompt = buildSystemPrompt(systemPrompt);
@@ -368,18 +423,19 @@ async function runChat(
     return { reply: result.response.text(), toolUses: [] };
   }
 
-  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser);
+  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser, memoryUser);
+  const nativeSearch = agentConfig.tools.googleSearch;
 
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
-    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser);
+    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser);
     return result ?? "Tool not implemented";
   };
 
   if (streamCallbacks) {
-    const toolUses = await chatWithModelStream(model, builtPrompt, history, message, allTools, executor, streamCallbacks);
+    const toolUses = await chatWithModelStream(model, builtPrompt, history, message, allTools, executor, streamCallbacks, nativeSearch);
     return { reply: "", toolUses };
   }
-  return chatWithModel(model, builtPrompt, history, message, allTools, executor);
+  return chatWithModel(model, builtPrompt, history, message, allTools, executor, nativeSearch);
 }
 
 export async function chat(
@@ -392,8 +448,9 @@ export async function chat(
   modelOverride?: ModelConfig,
   mondayToken?: string,
   tasksUser?: string,
+  memoryUser?: string,
 ): Promise<ChatResult> {
-  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser);
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser);
 }
 
 export async function chatStream(
@@ -407,7 +464,8 @@ export async function chatStream(
   callbacks?: StreamCallbacks,
   mondayToken?: string,
   tasksUser?: string,
+  memoryUser?: string,
 ): Promise<ToolUse[]> {
-  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser);
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser);
   return result.toolUses;
 }

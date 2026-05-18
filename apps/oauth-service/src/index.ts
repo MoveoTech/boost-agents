@@ -393,5 +393,51 @@ app.get("/api/users/:agentId", async (req, res) => {
   }
 });
 
+// ── Persistent memory ─────────────────────────────────────────────────────────
+
+function memRef(agentId: string, email: string) {
+  return db.collection("memories").doc(agentId).collection("users").doc(email);
+}
+
+app.get("/api/memories/:agentId/:userId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId } = req.params;
+  try {
+    const doc = await memRef(agentId, userId).get();
+    res.json(doc.exists ? (doc.data() ?? {}) : {});
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.get("/api/memories/:agentId/:userId/:key", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId, key } = req.params;
+  try {
+    const doc = await memRef(agentId, userId).get();
+    const value = doc.data()?.[key];
+    if (value === undefined) { res.status(404).json({ error: "Not found" }); return; }
+    res.json({ value });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.put("/api/memories/:agentId/:userId/:key", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId, key } = req.params;
+  const { value } = req.body as { value: string };
+  try {
+    await memRef(agentId, userId).set({ [key]: value }, { merge: true });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.delete("/api/memories/:agentId/:userId/:key", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId, key } = req.params;
+  try {
+    const { FieldValue } = await import("@google-cloud/firestore");
+    await memRef(agentId, userId).update({ [key]: FieldValue.delete() });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 const PORT = process.env.PORT ?? 8080;
 app.listen(PORT, () => console.log(`OAuth service running on :${PORT}`));
