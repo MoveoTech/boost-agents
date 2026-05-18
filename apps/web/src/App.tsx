@@ -338,6 +338,9 @@ export default function App() {
           placeholder={placeholder}
           attachment={pendingAttachment}
           onAttachmentChange={setPendingAttachment}
+          skills={agentConfig?.skills ?? []}
+          currentProvider={(userSettings.model ?? agentConfig?.model)?.provider ?? "gemini"}
+          onNewChat={handleNewChat}
         />
       </div>
 

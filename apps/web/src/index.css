@@ -2701,6 +2701,78 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Slash command palette ───────────────────────────────── */
+
+.slash-palette {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 100;
+  padding: 4px;
+}
+
+.slash-category {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  padding: 8px 10px 4px;
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.slash-item:hover,
+.slash-item.active {
+  background: var(--primary-light);
+}
+
+.slash-icon {
+  font-size: 16px;
+  width: 22px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.slash-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+.slash-desc {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .slash-palette {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
 /* ── Skeleton loader ─────────────────────────────────────── */
 
 .skeleton {
