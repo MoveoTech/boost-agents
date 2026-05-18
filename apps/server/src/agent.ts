@@ -1,6 +1,6 @@
 import type { Content } from "@google/generative-ai";
 import { chatWithModel, chatWithModelStream, type ModelConfig, type ToolDecl, type StreamCallbacks, type ImageAttachment } from "./llm";
-import { fetchUrl, httpRequest, readWebpage } from "./tools";
+import { fetchUrl, httpRequest, readWebpage, searchImage } from "./tools";
 import { gmailSend } from "./gmail";
 import { slackSendMessage, slackListChannels, slackLookupUserByEmail } from "./slack";
 import { mondayGraphQL, mondayCreateItem, mondayUpdateItem, mondayCreateUpdate } from "./monday";
@@ -221,6 +221,13 @@ Common query patterns:
       required: ["url"],
     },
   },
+  search_image: {
+    name: "search_image", description: "Find and return an image for a given topic using Wikipedia. Returns a markdown image tag that renders inline. Use this whenever the user asks for a picture, photo, or image of something.",
+    parameters: {
+      properties: { query: { type: "string", description: "What to search for (e.g. 'white corn', 'Eiffel Tower')" } },
+      required: ["query"],
+    },
+  },
   memory_save: {
     name: "memory_save", description: "Save a fact, preference, or piece of information about the user to remember in future conversations. Use a short descriptive key.",
     parameters: {
@@ -257,9 +264,10 @@ function buildSystemPrompt(override?: string, addition?: string): string {
 
   const caps: string[] = [];
   if (agentConfig.tools.jinaReader ?? true) {
-    caps.push("- **Read webpages & search**: Use read_webpage to fetch any URL as clean readable text. For web searches fetch `https://html.duckduckgo.com/html/?q=your+search+terms` (URL-encode spaces as +). Always do this when asked to search — never say you cannot. When the user asks for an image or photo, search the web, find a direct image URL (ending in .jpg, .png, .webp, etc.), and present it using markdown image syntax: `![description](url)` — it will be rendered inline. Example: if asked for a picture of white corn, search for it, find a direct image URL, and return `![White corn](https://example.com/white-corn.jpg)`.");
+    caps.push("- **Read webpages & search**: Use read_webpage to fetch any URL as clean readable text. For web searches fetch `https://html.duckduckgo.com/html/?q=your+search+terms` (URL-encode spaces as +). Always search when asked — never say you cannot.");
+    caps.push("- **Images**: Use search_image whenever the user asks for a picture, photo, or image of anything. It returns a markdown image that renders inline in the chat. Never say you cannot show images — always call search_image.");
   } else if (agentConfig.tools.fetchUrl) {
-    caps.push("- **Web search**: Use fetch_url with `https://html.duckduckgo.com/html/?q=your+search+terms` to search the web. Always do this when asked to search — never say you cannot. For images, find a direct image URL and return it as `![description](url)` markdown.");
+    caps.push("- **Web search**: Use fetch_url with `https://html.duckduckgo.com/html/?q=your+search+terms` to search the web. Always search when asked — never say you cannot.");
   }
   if (agentConfig.tools.httpRequest) {
     caps.push("- **Custom API calls**: Use http_request to call any REST API with GET, POST, PUT, PATCH, or DELETE and an optional JSON body.");
@@ -278,7 +286,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
-  if (agentConfig.tools.jinaReader ?? true) tools.push(ALL_TOOLS.read_webpage);
+  if (agentConfig.tools.jinaReader ?? true) tools.push(ALL_TOOLS.read_webpage, ALL_TOOLS.search_image);
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
@@ -298,6 +306,9 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
 
     case "read_webpage":
       return readWebpage(args.url as string);
+
+    case "search_image":
+      return searchImage(args.query as string);
 
     case "http_request":
       return httpRequest(args.url as string, args.method as string, args.body);

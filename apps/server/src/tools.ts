@@ -11,6 +11,33 @@ export async function fetchUrl(url: string): Promise<string> {
   }
 }
 
+export async function searchImage(query: string): Promise<string> {
+  try {
+    // Step 1: find the best matching Wikipedia article
+    const searchRes = await fetch(
+      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=3&origin=*`,
+      { headers: { "User-Agent": "boost-agent/1.0" }, signal: AbortSignal.timeout(10_000) }
+    );
+    const searchData = await searchRes.json() as { query?: { search?: Array<{ title: string }> } };
+    const titles = searchData.query?.search?.map((r) => r.title) ?? [];
+    if (!titles.length) return `No Wikipedia article found for "${query}". Try searching the web instead.`;
+
+    // Step 2: get thumbnail from the first article that has one
+    for (const title of titles) {
+      const imgRes = await fetch(
+        `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageimages&format=json&pithumbsize=800&origin=*`,
+        { headers: { "User-Agent": "boost-agent/1.0" }, signal: AbortSignal.timeout(10_000) }
+      );
+      const imgData = await imgRes.json() as { query?: { pages?: Record<string, { thumbnail?: { source?: string } }> } };
+      const imageUrl = Object.values(imgData.query?.pages ?? {})[0]?.thumbnail?.source;
+      if (imageUrl) return `![${title}](${imageUrl})`;
+    }
+    return `Wikipedia has articles about "${query}" but none include an image. Try a more specific term.`;
+  } catch (err) {
+    return `Image search failed: ${(err as Error).message}`;
+  }
+}
+
 export async function readWebpage(url: string): Promise<string> {
   try {
     const jinaUrl = `https://r.jina.ai/${url}`;
