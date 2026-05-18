@@ -6,6 +6,7 @@ import crypto from "crypto";
 import path from "path";
 import { chat, chatStream } from "./agent";
 import { getUserAccessToken } from "./google-auth";
+import { logger } from "./logger";
 import { slackSendMessage, slackGetUserEmail } from "./slack";
 import { agentConfig } from "./config";
 import { commitConfig } from "./configure";
@@ -52,6 +53,15 @@ app.use(express.static(staticDir));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+// Client-side error reporting — receives errors from the browser and logs them server-side
+app.post("/api/log", (req, res) => {
+  const { level = "error", message, context } = req.body as { level?: string; message: string; context?: Record<string, unknown> };
+  const email = getSessionEmail(req);
+  const logFn = level === "warn" ? logger.warn : level === "info" ? logger.info : logger.error;
+  logFn(`[client] ${message}`, { userEmail: email, ...context });
+  res.json({ ok: true });
 });
 
 app.get("/api/whoami", (req, res) => {
@@ -120,13 +130,16 @@ app.post("/api/run-automation", async (req, res) => {
     const usersRes = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
       headers: { "x-api-key": oauthServiceKey },
     });
-    const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean }[] };
+    const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
     const results = [];
     for (const user of users) {
       try {
+        const autoMondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
+        const autoTasksUser = user.tasks ? user.email : undefined;
         const result = await chat(prompt, [], "tools", undefined,
           user.gmail ? user.email : undefined,
-          user.calendar ? user.email : undefined
+          user.calendar ? user.email : undefined,
+          undefined, autoMondayToken, autoTasksUser,
         );
         results.push({ email: user.email, success: true, reply: result.reply });
       } catch (err) {
@@ -195,11 +208,13 @@ app.post("/slack/events", async (req, res) => {
   const text = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
   const threadTs = event.thread_ts ?? event.ts;
 
-  // Resolve the Slack user's email to load their Gmail/Calendar connections
+  // Resolve the Slack user's email to load all their connected services
   const userEmail = event.user ? await slackGetUserEmail(slackToken, event.user).catch(() => undefined) : undefined;
+  const slackMondayToken = userEmail ? (await getUserAccessToken("monday", userEmail).catch(() => null)) ?? undefined : undefined;
+  const slackTasksUser = userEmail ? (await getUserAccessToken("tasks", userEmail).catch(() => null)) ? userEmail : undefined : undefined;
 
   try {
-    const result = await chat(text, [], "tools", undefined, userEmail, userEmail);
+    const result = await chat(text, [], "tools", undefined, userEmail, userEmail, undefined, slackMondayToken, slackTasksUser);
     await slackSendMessage(slackToken, event.channel, result.reply, threadTs);
   } catch (err) {
     await slackSendMessage(slackToken, event.channel, `Sorry, something went wrong: ${(err as Error).message}`, threadTs).catch(() => {});
