@@ -11,7 +11,7 @@ import { slackSendMessage, slackGetUserEmail } from "./slack";
 import { agentConfig } from "./config";
 import { commitConfig } from "./configure";
 import type { AgentConfig } from "./config";
-import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow } from "./automations";
+import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets } from "./automations";
 import type { Automation } from "./automations";
 import type { Content } from "@google/generative-ai";
 
@@ -715,4 +715,9 @@ app.get("*", (_req, res) => {
 });
 
 const PORT = process.env.PORT ?? 8080;
-app.listen(PORT, () => console.log(`Server running on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on :${PORT}`);
+  // Patch all Cloud Scheduler jobs with the current AUTOMATION_SECRET so
+  // previously-created automations don't fail with 401 after a redeploy.
+  resyncAutomationSecrets();
+});

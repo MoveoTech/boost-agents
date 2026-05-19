@@ -116,3 +116,32 @@ export async function deleteAutomation(automationId: string): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+// On every deploy the AUTOMATION_SECRET may differ from what was baked into
+// existing scheduler jobs. Patch all jobs to use the current secret so they
+// don't fail with 401. Derives the agent URL from the existing jobs themselves.
+export async function resyncAutomationSecrets(): Promise<void> {
+  if (!PROJECT || !AUTOMATION_SECRET) return;
+  try {
+    const token = await gcpToken();
+    const res = await fetch(SCHEDULER_BASE, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return;
+    const data = await res.json() as { jobs?: Record<string, unknown>[] };
+    const jobs = (data.jobs ?? []).filter((j) => (j.name as string).includes("/jobs/automation--"));
+    if (!jobs.length) return;
+
+    let patched = 0;
+    for (const job of jobs) {
+      const httpTarget = job.httpTarget as Record<string, unknown> | undefined;
+      const uri = httpTarget?.uri as string | undefined;
+      if (!uri) continue;
+      const agentUrl = uri.replace(/\/api\/run-automation$/, "");
+      const automation = parseJob(job as Record<string, unknown>);
+      await upsertAutomation(automation, agentUrl);
+      patched++;
+    }
+    console.log(`[automations] resynced ${patched} scheduler job(s) with current secret`);
+  } catch (err) {
+    console.warn("[automations] resync failed (non-fatal):", (err as Error).message);
+  }
+}
