@@ -118,7 +118,7 @@ app.post("/api/run-automation", async (req, res) => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const { prompt, id, oneTime } = req.body as { prompt: string; name: string; id: string; oneTime?: boolean };
+  const { prompt, id, oneTime, createdBy } = req.body as { prompt: string; name: string; id: string; oneTime?: boolean; createdBy?: string };
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;
@@ -126,27 +126,28 @@ app.post("/api/run-automation", async (req, res) => {
     res.status(500).json({ error: "Not configured" });
     return;
   }
+  if (!createdBy) {
+    res.status(400).json({ error: "Automation has no createdBy — cannot determine which user to run as" });
+    return;
+  }
   try {
     const usersRes = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
       headers: { "x-api-key": oauthServiceKey },
     });
     const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
-    const results = [];
-    for (const user of users) {
-      try {
-        const autoMondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
-        const autoTasksUser = user.tasks ? user.email : undefined;
-        const result = await chat(prompt, [], "tools", undefined,
-          user.gmail ? user.email : undefined,
-          user.calendar ? user.email : undefined,
-          undefined, autoMondayToken, autoTasksUser,
-        );
-        results.push({ email: user.email, success: true, reply: result.reply });
-      } catch (err) {
-        results.push({ email: user.email, success: false, error: (err as Error).message });
-      }
+    const user = users.find((u) => u.email === createdBy);
+    if (!user) {
+      res.status(404).json({ error: `User ${createdBy} not found — they may have disconnected` });
+      return;
     }
-    res.json({ ok: true, results });
+    const autoMondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
+    const autoTasksUser = user.tasks ? user.email : undefined;
+    const result = await chat(prompt, [], "tools", undefined,
+      user.gmail ? user.email : undefined,
+      user.calendar ? user.email : undefined,
+      undefined, autoMondayToken, autoTasksUser,
+    );
+    res.json({ ok: true, results: [{ email: user.email, success: true, reply: result.reply }] });
     // Self-delete after running if this is a one-time automation
     if (oneTime && id) {
       await deleteAutomation(id).catch(() => {});
@@ -291,9 +292,15 @@ app.use((req, res, next) => {
   }
 });
 
-app.get("/api/automations", async (_req, res) => {
+app.get("/api/automations", async (req, res) => {
   try {
-    res.json(await listAutomations());
+    const email = getSessionEmail(req);
+    const bearer = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null;
+    const tok = bearer ?? req.cookies[COOKIE_NAME];
+    const isAdmin = (() => { try { return !!(jwt.verify(tok, COOKIE_SECRET) as { admin?: boolean }).admin; } catch { return false; } })();
+    const all = await listAutomations();
+    // Admins see all automations; regular users only see their own
+    res.json(isAdmin ? all : all.filter((a) => a.createdBy === email));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -302,15 +309,9 @@ app.get("/api/automations", async (_req, res) => {
 app.post("/api/automations", async (req, res) => {
   try {
     const { automation, agentUrl } = req.body as { automation: Automation; agentUrl: string };
-    // Stamp createdBy from the session JWT if not already set
-    if (!automation.createdBy) {
-      const bearer = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null;
-      const tok = bearer ?? req.cookies[COOKIE_NAME];
-      try {
-        const p = jwt.verify(tok, COOKIE_SECRET) as { email?: string };
-        if (p.email) automation.createdBy = p.email;
-      } catch { /* no email in token */ }
-    }
+    // Always stamp createdBy from the session — never trust the client value
+    const email = getSessionEmail(req);
+    if (email) automation.createdBy = email;
     await upsertAutomation(automation, agentUrl);
     res.json({ ok: true });
   } catch (err) {
@@ -320,6 +321,19 @@ app.post("/api/automations", async (req, res) => {
 
 app.delete("/api/automations/:id", async (req, res) => {
   try {
+    const email = getSessionEmail(req);
+    const bearer = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null;
+    const tok = bearer ?? req.cookies[COOKIE_NAME];
+    const isAdmin = (() => { try { return !!(jwt.verify(tok, COOKIE_SECRET) as { admin?: boolean }).admin; } catch { return false; } })();
+    // Verify the requester owns this automation (admins can delete any)
+    if (!isAdmin) {
+      const all = await listAutomations();
+      const automation = all.find((a) => a.id === req.params.id);
+      if (automation && automation.createdBy && automation.createdBy !== email) {
+        res.status(403).json({ error: "You can only delete your own automations" });
+        return;
+      }
+    }
     await deleteAutomation(req.params.id);
     res.json({ ok: true });
   } catch (err) {
