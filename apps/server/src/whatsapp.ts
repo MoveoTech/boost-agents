@@ -167,6 +167,14 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
       Object.assign(creds, update);
       await persist();
     },
+    // Purge all session keys for a specific contact JID fragment (e.g. "48460183113911")
+    // Called when Bad MAC / MessageCounterError is detected to force fresh session establishment
+    purgeContactKeys: (jidFragment: string): number => {
+      const toDelete = Object.keys(keyMap).filter((k) => k.includes(jidFragment));
+      toDelete.forEach((k) => delete keyMap[k]);
+      if (toDelete.length > 0) persist().catch(() => {});
+      return toDelete.length;
+    },
   };
 }
 
@@ -275,6 +283,19 @@ export async function connectSession(
         warn:  (...args: any[]) => waLog("warn", email, "baileys-warn", { detail: args[0] }),
         error: (...args: any[]) => {
           waLog("error", email, "baileys-error", { detail: args[0] });
+          // Auto-purge corrupted Signal session keys when decryption fails.
+          // The failing contact's JID is in args[0].key.participant or args[0].key.remoteJid.
+          const detail = args[0] ?? {};
+          const errMsg: string = detail?.err?.message ?? detail?.message ?? "";
+          const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already");
+          const participant: string = detail?.key?.participant ?? detail?.key?.remoteJid ?? "";
+          if (isDecryptError && participant) {
+            const jidFragment = participant.split(":")[0].split("@")[0];
+            const purged = auth.purgeContactKeys(jidFragment);
+            if (purged > 0) {
+              waLog("warn", email, "auto-purged corrupted session keys — fresh session will be established on next message", { participant, purgedKeys: purged });
+            }
+          }
         },
         child: () => ({ trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) }),
         fatal: (...args: any[]) => waLog("error", email, "baileys-fatal", { detail: args[0] }),
