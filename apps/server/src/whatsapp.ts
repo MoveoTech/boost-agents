@@ -273,8 +273,9 @@ export async function connectSession(
       syncFullHistory: false,
       markOnlineOnConnect: false,
       getMessage: async () => undefined,
-      keepAliveIntervalMs: 20_000, // ping WhatsApp every 20s to prevent 408 connection-lost drops
-      maxMsgRetryCount: 1,       // limit retry requests sent to senders on decrypt failure
+      keepAliveIntervalMs: 20_000,    // ping WhatsApp every 20s to prevent 408 connection-lost drops
+      defaultQueryTimeoutMs: 120_000, // give WhatsApp 2min to respond to fetchProps on init (default 60s too tight)
+      maxMsgRetryCount: 1,            // limit retry requests sent to senders on decrypt failure
       retryRequestDelayMs: 5000, // space out retries so the phone doesn't get spammed
       logger: {
         level: "warn",
@@ -468,7 +469,10 @@ export async function connectSession(
         });
 
         try {
+          // Show typing indicator immediately so the user sees feedback while the agent runs
+          sock.sendPresenceUpdate("composing", from).catch(() => {});
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, recentMessages });
+          sock.sendPresenceUpdate("paused", from).catch(() => {});
           if (reply) {
             // Use the current active socket — the original may have been replaced by a reconnect
             const activeSock = sessions.get(email)?.socket ?? sock;
