@@ -998,7 +998,14 @@ app.listen(PORT, () => {
 // Baileys fires unhandled rejections from internal retry machinery (e.g. sendRetryRequest
 // when the socket closes mid-flight). Catch them so they don't crash the process.
 process.on("unhandledRejection", (reason) => {
-  console.error(JSON.stringify({ tag: "process", msg: "unhandledRejection", reason: String(reason) }));
+  const msg = String(reason);
+  console.error(JSON.stringify({ tag: "process", msg: "unhandledRejection", reason: msg }));
+  if (msg.includes("Unsupported state or unable to authenticate data")) {
+    // Native AES-GCM auth failure — corrupted key material in Firestore.
+    // Purge session keys for all connecting sessions so Baileys re-establishes fresh sessions.
+    const { purgeConnectingSessionKeys } = require("./whatsapp");
+    purgeConnectingSessionKeys();
+  }
 });
 process.on("uncaughtException", (err) => {
   console.error(JSON.stringify({ tag: "process", msg: "uncaughtException", error: err.message, stack: err.stack }));

@@ -15,6 +15,8 @@ interface Session {
 
 // email → session
 const sessions = new Map<string, Session>();
+// email → auth state (for external purge access)
+const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number }>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -264,6 +266,7 @@ export async function connectSession(
     waLog("info", email, "Baileys loaded", { version: version.join(".") });
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
+    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys });
 
     waLog("info", email, "creating WASocket");
     const sock = makeWASocket({
@@ -349,7 +352,7 @@ export async function connectSession(
         const reason = err?.message ?? "unknown";
         const loggedOut = code === DisconnectReason.loggedOut;
         // Also treat 515 (restart required) and 408 (connection replaced) as recoverable
-        const isCryptoError = reason?.includes("argument must be of type") || reason?.includes("Received an instance of");
+        const isCryptoError = reason?.includes("argument must be of type") || reason?.includes("Received an instance of") || reason?.includes("Unsupported state or unable to authenticate data");
 
         waLog(loggedOut ? "info" : "warn", email, "connection closed", {
           code, reason, loggedOut, isCryptoError, reconnectAttempt: session.reconnectAttempt,
@@ -516,6 +519,20 @@ export async function connectSession(
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+// Called from global unhandledRejection handler when a native crypto error fires
+// during session setup — purges all session-type keys for every connecting session.
+export function purgeConnectingSessionKeys(): void {
+  for (const [email, session] of sessions.entries()) {
+    if (session.status === "connecting") {
+      const auth = authRegistry.get(email);
+      if (auth) {
+        const purged = auth.purgeContactKeys("session-");
+        waLog("warn", email, "purged all session keys due to native crypto error", { purgedKeys: purged });
+      }
+    }
+  }
+}
 
 export function getStatus(email: string): SessionStatus {
   return sessions.get(email)?.status ?? "disconnected";
