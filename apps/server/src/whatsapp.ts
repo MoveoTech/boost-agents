@@ -10,6 +10,7 @@ interface Session {
   qrListeners: Array<(qr: string) => void>;
   connectedListeners: Array<() => void>;
   reconnectAttempt: number;
+  connectedAt?: number;
 }
 
 // email → session
@@ -288,6 +289,7 @@ export async function connectSession(
         session.status = "connected";
         session.qr = undefined;
         session.reconnectAttempt = 0;
+        session.connectedAt = Date.now();
         waLog("info", email, "connected successfully", { jid: sock.user?.id });
         session.connectedListeners.forEach((fn) => fn());
         session.qrListeners = [];
@@ -334,9 +336,11 @@ export async function connectSession(
       }
     });
 
-    // Track IDs of messages sent by this bot instance so we can skip them
-    // when they echo back as fromMe messages, preventing reply loops.
+    // Track IDs of messages sent by this bot instance to prevent reply loops.
     const sentByBot = new Set<string>();
+    // Track processed message IDs to prevent duplicate processing when WhatsApp
+    // delivers the same message under multiple JID formats (e.g. @s.whatsapp.net + @lid).
+    const processedMsgIds = new Set<string>();
 
     sock.ev.on("messages.upsert", async ({ messages, type }: any) => {
       waLog("info", email, "messages.upsert fired", { type, count: messages?.length ?? 0 });
@@ -344,9 +348,25 @@ export async function connectSession(
       const myJid = sock.user?.id?.replace(/:.*@/, "@");
 
       for (const msg of messages) {
+        // Deduplicate: same message can arrive from multiple JID formats simultaneously
+        const msgId = msg.key.id ?? "";
+        if (msgId && processedMsgIds.has(msgId)) {
+          waLog("info", email, "skipping duplicate message", { id: msgId });
+          continue;
+        }
+        if (msgId) processedMsgIds.add(msgId);
+
+        // Skip backlogged messages sent before this session connected (delivered on reconnect)
+        const msgTs = ((msg.messageTimestamp as number) ?? 0) * 1000;
+        const connectedAt = session.connectedAt ?? 0;
+        if (msgTs && connectedAt && msgTs < connectedAt - 30_000) {
+          waLog("info", email, "skipping backlogged message", { sentMsAgo: Date.now() - msgTs });
+          continue;
+        }
+
         if (msg.key.fromMe) {
-          if (sentByBot.has(msg.key.id ?? "")) {
-            sentByBot.delete(msg.key.id ?? "");
+          if (sentByBot.has(msgId)) {
+            sentByBot.delete(msgId);
             continue; // bot's own reply echoed back — skip to prevent loop
           }
           // Message sent from user's phone (same account, different device) — process it
@@ -398,7 +418,8 @@ export async function connectSession(
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned });
           if (reply) {
             waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
-            const timeoutMs = isGroup ? 60_000 : 20_000;
+            const isLid = from.endsWith("@lid");
+            const timeoutMs = (isGroup || isLid) ? 60_000 : 20_000;
             const sendTimeout = new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)), timeoutMs)
             );
