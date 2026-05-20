@@ -289,8 +289,8 @@ export async function connectSession(
       getMessage: async () => undefined,
       keepAliveIntervalMs: 20_000,    // ping WhatsApp every 20s to prevent 408 connection-lost drops
       defaultQueryTimeoutMs: 120_000, // give WhatsApp 2min to respond to fetchProps on init (default 60s too tight)
-      maxMsgRetryCount: 1,            // limit retry requests sent to senders on decrypt failure
-      retryRequestDelayMs: 5000, // space out retries so the phone doesn't get spammed
+      maxMsgRetryCount: 5,            // allow up to 5 retries to re-establish Signal session with sender
+      retryRequestDelayMs: 2000, // 2s between retries — fast enough to recover within ~10s
       logger: {
         level: "warn",
         trace: (..._args: any[]) => {},
