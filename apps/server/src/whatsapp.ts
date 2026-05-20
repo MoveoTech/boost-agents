@@ -15,6 +15,9 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 
+// Cooldown per email for fetchProps-triggered reconnects — prevents reconnect storms
+const fetchPropsReconnectCooldown = new Map<string, number>();
+
 // ── Structured logger ─────────────────────────────────────────────────────────
 
 function waLog(level: "info" | "warn" | "error", email: string, msg: string, extra?: object) {
@@ -231,6 +234,8 @@ export async function connectSession(
       syncFullHistory: false,
       markOnlineOnConnect: false,
       getMessage: async () => undefined,
+      maxMsgRetryCount: 1,       // limit retry requests sent to senders on decrypt failure
+      retryRequestDelayMs: 5000, // space out retries so the phone doesn't get spammed
       logger: {
         level: "warn",
         trace: (..._args: any[]) => {},
@@ -241,11 +246,20 @@ export async function connectSession(
           waLog("error", email, "baileys-error", { detail: args[0] });
           const stack: string = args[0]?.err?.data?.stack ?? args[0]?.data?.stack ?? "";
           if (stack.includes("fetchProps") && !fetchPropsReconnectScheduled) {
-            fetchPropsReconnectScheduled = true;
-            waLog("warn", email, "fetchProps timed out — closing socket to force reconnect and restore message flow");
-            setTimeout(() => {
-              try { sockRef?.end(new Error("fetchProps-timeout")); } catch { /* ignore */ }
-            }, 1500);
+            const lastReconnect = fetchPropsReconnectCooldown.get(email) ?? 0;
+            const cooldownMs = 5 * 60 * 1000; // 5 min cooldown between fetchProps reconnects
+            if (Date.now() - lastReconnect > cooldownMs) {
+              fetchPropsReconnectScheduled = true;
+              fetchPropsReconnectCooldown.set(email, Date.now());
+              waLog("warn", email, "fetchProps timed out — closing socket to force reconnect and restore message flow");
+              setTimeout(() => {
+                try { sockRef?.end(new Error("fetchProps-timeout")); } catch { /* ignore */ }
+              }, 1500);
+            } else {
+              waLog("warn", email, "fetchProps timed out but cooldown active — not reconnecting", {
+                cooldownRemainingMs: cooldownMs - (Date.now() - lastReconnect),
+              });
+            }
           }
         },
         child: () => ({ trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) }),
