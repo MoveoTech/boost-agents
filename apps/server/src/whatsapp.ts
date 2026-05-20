@@ -441,15 +441,21 @@ export async function connectSession(
         try {
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, recentMessages });
           if (reply) {
-            waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
-            const isLid = from.endsWith("@lid");
-            const timeoutMs = (isGroup || isLid) ? 60_000 : 20_000;
-            const sendTimeout = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)), timeoutMs)
-            );
-            const sent: any = await Promise.race([sock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
-            if (sent?.key?.id) sentByBot.add(sent.key.id);
-            waLog("info", email, "reply sent successfully");
+            // Use the current active socket — the original may have been replaced by a reconnect
+            const activeSock = sessions.get(email)?.socket ?? sock;
+            if (sessions.get(email)?.status !== "connected") {
+              waLog("warn", email, "session no longer connected — dropping reply", { to: from });
+            } else {
+              waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
+              const isLid = from.endsWith("@lid");
+              const timeoutMs = (isGroup || isLid) ? 60_000 : 20_000;
+              const sendTimeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)), timeoutMs)
+              );
+              const sent: any = await Promise.race([activeSock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
+              if (sent?.key?.id) sentByBot.add(sent.key.id);
+              waLog("info", email, "reply sent successfully");
+            }
           } else {
             waLog("info", email, "handler returned null — no reply sent (trigger/filter did not match)");
           }
