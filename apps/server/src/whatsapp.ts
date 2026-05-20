@@ -40,7 +40,13 @@ async function serialize(obj: any): Promise<string> {
 
 async function deserialize(str: string): Promise<any> {
   const { reviver } = await getBufferJSON();
-  return JSON.parse(str, reviver);
+  return JSON.parse(str, (key, value) => {
+    // Backwards-compat: handle old _type format saved before BufferJSON migration
+    if (value && value._type === "Buffer" && Array.isArray(value.data)) {
+      return Buffer.from(value.data);
+    }
+    return reviver(key, value);
+  });
 }
 
 async function loadCreds(agentId: string, email: string, oauthUrl: string, oauthKey: string): Promise<{ creds: string; keys: string } | null> {
