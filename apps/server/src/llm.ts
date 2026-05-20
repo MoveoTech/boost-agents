@@ -6,6 +6,7 @@ import type { ToolUse, ChatResult } from "./agent";
 export interface ModelConfig {
   provider: "gemini" | "claude" | "openai";
   modelId: string;
+  noThinking?: boolean;
 }
 
 export interface ToolParam {
@@ -73,7 +74,7 @@ function toGeminiSchema(p: ToolParam): Record<string, unknown> {
   };
 }
 
-async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment): Promise<ChatResult> {
+async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment, noThinking?: boolean): Promise<ChatResult> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
   const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
@@ -87,8 +88,9 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
   }] : [];
   // Gemini doesn't allow googleSearch + functionDeclarations in the same request
   const geminiTools = funcTool.length > 0 ? funcTool : (nativeSearch ? [{ googleSearch: {} }] : []);
+  const generationConfig = noThinking ? { thinkingConfig: { thinkingBudget: 0 } } as never : undefined;
 
-  const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
+  const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt, generationConfig });
   const session = model.startChat({ history });
   const toolUses: ToolUse[] = [];
   const firstMsg: Part[] = image
@@ -442,7 +444,7 @@ export async function chatWithModel(
   image?: ImageAttachment,
 ): Promise<ChatResult> {
   switch (model.provider) {
-    case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch, image);
+    case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch, image, model.noThinking);
     case "claude":  return chatClaude(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch, image);
     case "openai":  return chatOpenAI(model.modelId, systemPrompt, history, message, tools, execute, image);
     default: throw new Error(`Unknown provider: ${model.provider}`);

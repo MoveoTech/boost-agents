@@ -814,7 +814,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           config.customPrompt || undefined,
           email,   // gmailUser — token checked inside agent, null if not connected
           email,   // calendarUser
-          undefined, // use agent's configured model (respects Claude/GPT/Gemini selection)
+          agentConfig.model ? { ...agentConfig.model, noThinking: true } : undefined,
           mondayToken ?? undefined,
           email,   // tasksUser
           undefined,
