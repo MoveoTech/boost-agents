@@ -721,7 +721,11 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const [config, usersData] = await Promise.all([
         loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey),
         fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey } })
-          .then((r) => r.json() as Promise<{ users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] }>),
+          .then((r) => r.json() as Promise<{ users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] }>)
+          .catch((err) => {
+            console.warn(JSON.stringify({ ...ctx, msg: "failed to load users — proceeding without user tools", error: (err as Error).message }));
+            return { users: [] as { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
+          }),
       ]);
 
       console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs, keyword: config.keyword ?? null }));

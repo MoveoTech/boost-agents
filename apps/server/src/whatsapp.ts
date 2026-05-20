@@ -373,7 +373,10 @@ export async function connectSession(
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned });
           if (reply) {
             waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
-            await sock.sendMessage(from, { text: reply }, { quoted: msg });
+            const sendTimeout = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("sendMessage timed out after 20s")), 20_000)
+            );
+            await Promise.race([sock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
             waLog("info", email, "reply sent successfully");
           } else {
             waLog("info", email, "handler returned null — no reply sent (trigger/filter did not match)");
