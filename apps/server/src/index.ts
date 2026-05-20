@@ -671,6 +671,27 @@ app.delete("/api/whatsapp", async (req, res) => {
 // Cache config per user — falls back to stale cache when oauth-service is unreachable
 const waConfigCache = new Map<string, { config: WhatsAppConfig; ts: number }>();
 
+// Cache users data per agentId — changes infrequently, 5 min TTL
+type UserEntry = { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean };
+const usersCache = new Map<string, { users: UserEntry[]; ts: number }>();
+const USERS_CACHE_TTL = 5 * 60 * 1000;
+
+async function loadUsersData(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<{ users: UserEntry[] }> {
+  const cached = usersCache.get(agentId);
+  if (cached && Date.now() - cached.ts < USERS_CACHE_TTL) return cached;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5_000);
+    const res = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey }, signal: ctrl.signal });
+    clearTimeout(t);
+    const data = await res.json() as { users: UserEntry[] };
+    usersCache.set(agentId, { users: data.users, ts: Date.now() });
+    return data;
+  } catch {
+    return cached ?? { users: [] };
+  }
+}
+
 async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<WhatsAppConfig> {
   try {
     const ctrl = new AbortController();
@@ -728,17 +749,9 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
   return async ({ email, fromName, text, isGroup, groupName, isMentioned, recentMessages }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
     try {
-      const usersCtrl = new AbortController();
-      const usersTimeout = setTimeout(() => usersCtrl.abort(), 5_000);
       const [config, usersData] = await Promise.all([
         loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey),
-        fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey }, signal: usersCtrl.signal })
-          .then((r) => { clearTimeout(usersTimeout); return r.json() as Promise<{ users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] }>; })
-          .catch((err) => {
-            clearTimeout(usersTimeout);
-            console.warn(JSON.stringify({ ...ctx, msg: "failed to load users — proceeding without user tools", error: (err as Error).message }));
-            return { users: [] as { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
-          }),
+        loadUsersData(agentId, oauthServiceUrl, oauthServiceKey),
       ]);
 
       console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs, keyword: config.keyword ?? null }));

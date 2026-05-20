@@ -51,7 +51,7 @@ jobs:
           service: oauth-service
           region: us-central1
           image: us-central1-docker.pkg.dev/boost-agents-496211/oauth-service/oauth-service:${{ github.sha }}
-          flags: '--allow-unauthenticated'
+          flags: '--allow-unauthenticated --min-instances 1'
           env_vars: |
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
