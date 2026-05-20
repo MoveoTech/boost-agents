@@ -811,7 +811,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           config.customPrompt || undefined,
           email,   // gmailUser — token checked inside agent, null if not connected
           email,   // calendarUser
-          { provider: "gemini", modelId: "gemini-2.0-flash" },
+          { provider: "gemini", modelId: "gemini-2.5-flash" },
           mondayToken,
           email,   // tasksUser
           undefined,
