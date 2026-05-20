@@ -469,7 +469,7 @@ app.put("/api/whatsapp/:agentId/:userId", async (req, res) => {
   const { agentId, userId } = req.params;
   const { creds, keys } = req.body as { creds: string; keys: string };
   try {
-    await waRef(agentId, userId).set({ creds, keys, updatedAt: new Date().toISOString() });
+    await waRef(agentId, userId).set({ creds, keys, updatedAt: new Date().toISOString() }, { merge: true });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });

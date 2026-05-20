@@ -678,11 +678,16 @@ app.put("/api/whatsapp/config", async (req, res) => {
   const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
   const config = req.body as WhatsAppConfig;
   try {
-    await fetch(`${oauthServiceUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}/config`, {
+    const patchRes = await fetch(`${oauthServiceUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}/config`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", "x-api-key": oauthServiceKey },
       body: JSON.stringify({ config: JSON.stringify(config) }),
     });
+    if (!patchRes.ok) {
+      const text = await patchRes.text().catch(() => "");
+      res.status(502).json({ error: `oauth-service returned ${patchRes.status}`, detail: text });
+      return;
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
