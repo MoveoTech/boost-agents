@@ -21,6 +21,10 @@ export interface AgentConfig {
     gmail: boolean;
     googleCalendar: boolean;
     slack: boolean;
+    jinaReader?: boolean;
+    monday?: boolean;
+    googleTasks?: boolean;
+    memory?: boolean;
   };
   access: {
     chatEnabled: boolean;
