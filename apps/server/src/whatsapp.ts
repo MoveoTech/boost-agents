@@ -15,8 +15,6 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 
-// Cooldown per email for fetchProps-triggered reconnects — prevents reconnect storms
-const fetchPropsReconnectCooldown = new Map<string, number>();
 
 // ── Structured logger ─────────────────────────────────────────────────────────
 
@@ -221,11 +219,6 @@ export async function connectSession(
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
 
     waLog("info", email, "creating WASocket");
-    // fetchProps sometimes times out during executeInitQueries. When that happens, Baileys stays
-    // "connected" at the WebSocket level but never fully subscribes to incoming messages.
-    // We detect this via the logger and force a reconnect so the init retries from scratch.
-    let sockRef: any = null;
-    let fetchPropsReconnectScheduled = false;
     const sock = makeWASocket({
       version,
       auth: auth.state,
@@ -244,29 +237,11 @@ export async function connectSession(
         warn:  (...args: any[]) => waLog("warn", email, "baileys-warn", { detail: args[0] }),
         error: (...args: any[]) => {
           waLog("error", email, "baileys-error", { detail: args[0] });
-          const stack: string = args[0]?.err?.data?.stack ?? args[0]?.data?.stack ?? "";
-          if (stack.includes("fetchProps") && !fetchPropsReconnectScheduled) {
-            const lastReconnect = fetchPropsReconnectCooldown.get(email) ?? 0;
-            const cooldownMs = 5 * 60 * 1000; // 5 min cooldown between fetchProps reconnects
-            if (Date.now() - lastReconnect > cooldownMs) {
-              fetchPropsReconnectScheduled = true;
-              fetchPropsReconnectCooldown.set(email, Date.now());
-              waLog("warn", email, "fetchProps timed out — closing socket to force reconnect and restore message flow");
-              setTimeout(() => {
-                try { sockRef?.end(new Error("fetchProps-timeout")); } catch { /* ignore */ }
-              }, 1500);
-            } else {
-              waLog("warn", email, "fetchProps timed out but cooldown active — not reconnecting", {
-                cooldownRemainingMs: cooldownMs - (Date.now() - lastReconnect),
-              });
-            }
-          }
         },
         child: () => ({ trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) }),
         fatal: (...args: any[]) => waLog("error", email, "baileys-fatal", { detail: args[0] }),
       } as any,
     });
-    sockRef = sock;
 
     session.socket = sock;
     waLog("info", email, "WASocket created — waiting for connection events");
