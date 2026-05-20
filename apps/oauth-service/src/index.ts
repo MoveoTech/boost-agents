@@ -488,7 +488,14 @@ app.delete("/api/whatsapp/:agentId/:userId", async (req, res) => {
   if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
   const { agentId, userId } = req.params;
   try {
-    await waRef(agentId, userId).delete();
+    // Preserve config settings — only wipe session credentials
+    const snap = await waRef(agentId, userId).get();
+    const config = snap.data()?.config;
+    if (config) {
+      await waRef(agentId, userId).set({ config, updatedAt: new Date().toISOString() });
+    } else {
+      await waRef(agentId, userId).delete();
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
