@@ -269,10 +269,11 @@ export async function connectSession(
       version,
       auth: auth.state,
       printQRInTerminal: false,
-      browser: ["Boost Agent", "Chrome", "1.0.0"],
+      browser: ["Chrome", "Chrome", "120.0.0"],
       syncFullHistory: false,
       markOnlineOnConnect: false,
       getMessage: async () => undefined,
+      keepAliveIntervalMs: 20_000, // ping WhatsApp every 20s to prevent 408 connection-lost drops
       maxMsgRetryCount: 1,       // limit retry requests sent to senders on decrypt failure
       retryRequestDelayMs: 5000, // space out retries so the phone doesn't get spammed
       logger: {
