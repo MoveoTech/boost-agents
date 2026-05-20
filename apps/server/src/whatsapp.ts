@@ -360,7 +360,10 @@ export async function connectSession(
 
     sock.ev.on("messages.upsert", async ({ messages, type }: any) => {
       waLog("info", email, "messages.upsert fired", { type, count: messages?.length ?? 0 });
-      if (type !== "notify") return;
+      // Process both "notify" (new messages) and "append" (recent messages delivered
+      // slightly late or via group history). The backlog timestamp filter below handles
+      // true history-sync messages (which are old and get skipped).
+      if (type !== "notify" && type !== "append") return;
       const myJid = sock.user?.id?.replace(/:.*@/, "@");
 
       for (const msg of messages) {
