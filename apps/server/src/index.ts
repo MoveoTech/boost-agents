@@ -580,33 +580,49 @@ app.get("/api/whatsapp/qr", async (req, res) => {
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
   const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
 
+  console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "QR SSE stream opened" }));
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
-  const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  const send = (data: object) => {
+    try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client disconnected */ }
+  };
 
   const onQR = async (qr: string) => {
     try {
+      console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "converting QR to data URL and sending to client" }));
       const dataUrl = await QRCode.toDataURL(qr, { width: 280, margin: 2 });
       send({ type: "qr", qr: dataUrl });
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error(JSON.stringify({ tag: "whatsapp", user: email, msg: "QR image conversion failed", error: (err as Error).message }));
+    }
   };
 
   const onConnected = () => {
+    console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "connected — closing QR SSE stream" }));
     send({ type: "connected" });
     res.end();
   };
 
-  // Timeout after 3 minutes if no scan
-  const timeout = setTimeout(() => { send({ type: "timeout" }); res.end(); }, 3 * 60 * 1000);
-  req.on("close", () => clearTimeout(timeout));
+  const timeout = setTimeout(() => {
+    console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "QR timeout — no scan after 3 minutes" }));
+    send({ type: "timeout" });
+    res.end();
+  }, 3 * 60 * 1000);
+
+  req.on("close", () => {
+    clearTimeout(timeout);
+    console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "QR SSE stream closed by client" }));
+  });
 
   try {
     const mentionHandler = buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey);
     await connectSession(email, agentId, oauthServiceUrl, oauthServiceKey, mentionHandler, onQR, onConnected);
   } catch (err) {
+    console.error(JSON.stringify({ tag: "whatsapp", user: email, msg: "connectSession threw", error: (err as Error).message, stack: (err as Error).stack }));
     send({ type: "error", message: (err as Error).message });
     res.end();
   }
@@ -676,25 +692,37 @@ app.put("/api/whatsapp/config", async (req, res) => {
 // Build the message handler — applies user config to decide when to reply, runs agent with all tools
 function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
   return async ({ email, fromName, text, isGroup, groupName, isMentioned }) => {
+    const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
     try {
-      // Load config + connected services in parallel
       const [config, usersData] = await Promise.all([
         loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey),
         fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey } })
           .then((r) => r.json() as Promise<{ users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] }>),
       ]);
 
-      // Apply group / DM filter
-      if (isGroup && !config.replyInGroups) return null;
-      if (!isGroup && !config.replyInDMs) return null;
+      console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs }));
 
-      // Apply trigger filter
-      if (config.replyTrigger === "mention" && !isMentioned) return null;
+      if (isGroup && !config.replyInGroups) {
+        console.log(JSON.stringify({ ...ctx, msg: "skipping — group messages disabled in config" }));
+        return null;
+      }
+      if (!isGroup && !config.replyInDMs) {
+        console.log(JSON.stringify({ ...ctx, msg: "skipping — DM messages disabled in config" }));
+        return null;
+      }
+      if (config.replyTrigger === "mention" && !isMentioned) {
+        console.log(JSON.stringify({ ...ctx, msg: "skipping — not mentioned (trigger=mention)" }));
+        return null;
+      }
       if (config.replyTrigger === "keyword") {
         const kw = (config.keyword ?? "").trim().toLowerCase();
-        if (!kw || !text.toLowerCase().includes(kw)) return null;
+        if (!kw || !text.toLowerCase().includes(kw)) {
+          console.log(JSON.stringify({ ...ctx, msg: "skipping — keyword not found", keyword: kw }));
+          return null;
+        }
       }
-      // "always" → fall through
+
+      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length }));
 
       const user = usersData.users.find((u) => u.email === email);
       const mondayToken = user?.monday ? (await getUserAccessToken("monday", email).catch(() => null)) ?? undefined : undefined;
@@ -710,13 +738,15 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         undefined,
         mondayToken,
         user?.tasks ? email : undefined,
-        email,        // memoryUser
-        undefined,    // image
-        email,        // whatsappUser — agent can send WA messages too
+        email,
+        undefined,
+        email,
       );
+
+      console.log(JSON.stringify({ ...ctx, msg: "agent reply ready", replyLength: result.reply?.length ?? 0, toolsUsed: result.toolUses?.length ?? 0 }));
       return result.reply || null;
     } catch (err) {
-      console.error("[whatsapp] message handler error:", err);
+      console.error(JSON.stringify({ ...ctx, msg: "message handler threw", error: (err as Error).message, stack: (err as Error).stack }));
       return null;
     }
   };

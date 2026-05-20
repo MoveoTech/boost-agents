@@ -1,7 +1,6 @@
 # apps/server/Dockerfile
-FROM node:20-slim AS base
-RUN apt-get update && apt-get install -y git ca-certificates --no-install-recommends && rm -rf /var/lib/apt/lists/*
-RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" && git config --global http.sslVerify false
+FROM node:20
+RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
 WORKDIR /app
 COPY . .
 RUN npm install
