@@ -15,6 +15,28 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 
+// Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
+// slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
+let cachedWaVersion: [number, number, number] | null = null;
+const WA_VERSION_FALLBACK: [number, number, number] = [2, 3000, 1035194821];
+
+async function getWaVersion(): Promise<[number, number, number]> {
+  if (cachedWaVersion) return cachedWaVersion;
+  try {
+    const { fetchLatestBaileysVersion } = await import("@whiskeysockets/baileys");
+    const result = await Promise.race([
+      fetchLatestBaileysVersion(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 10_000)),
+    ]);
+    cachedWaVersion = result.version;
+    console.log(JSON.stringify({ tag: "whatsapp", msg: "WA version fetched", version: cachedWaVersion!.join(".") }));
+  } catch {
+    cachedWaVersion = WA_VERSION_FALLBACK;
+    console.log(JSON.stringify({ tag: "whatsapp", msg: "WA version fetch failed — using fallback", version: cachedWaVersion.join(".") }));
+  }
+  return cachedWaVersion;
+}
+
 
 // ── Structured logger ─────────────────────────────────────────────────────────
 
@@ -210,10 +232,9 @@ export async function connectSession(
   waLog("info", email, "starting new Baileys session");
 
   try {
-    const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = await import("@whiskeysockets/baileys");
+    const { default: makeWASocket, DisconnectReason } = await import("@whiskeysockets/baileys");
     const { Boom } = await import("@hapi/boom");
-    const fetched = await fetchLatestBaileysVersion();
-    const version = fetched.version;
+    const version = await getWaVersion();
     waLog("info", email, "Baileys loaded", { version: version.join(".") });
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
