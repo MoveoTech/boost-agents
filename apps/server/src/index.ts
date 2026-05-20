@@ -801,24 +801,33 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
 
       const baseContext = `You are a WhatsApp assistant in ${location}.${historyStr}\n\n[${new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}] ${fromName}: ${text}\n\nReply to ${fromName}'s last message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply will be delivered automatically.`;
 
-      const result = await chat(
-        baseContext, [], "tools",
-        config.customPrompt || undefined,
-        email,   // gmailUser — token checked inside agent, null if not connected
-        email,   // calendarUser
-        { provider: "gemini", modelId: "gemini-2.0-flash" },
-        mondayToken,
-        email,   // tasksUser
-        undefined, // no memoryUser — saves a Firestore round-trip for WhatsApp speed
-        undefined,
-        undefined, // no whatsappUser — agent must not call send_message here, reply is returned as text
+      const agentTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("agent timed out after 25s")), 25_000)
       );
+
+      const result = await Promise.race([
+        chat(
+          baseContext, [], "tools",
+          config.customPrompt || undefined,
+          email,   // gmailUser — token checked inside agent, null if not connected
+          email,   // calendarUser
+          { provider: "gemini", modelId: "gemini-2.0-flash" },
+          mondayToken,
+          email,   // tasksUser
+          undefined,
+          undefined,
+          undefined,
+        ),
+        agentTimeout,
+      ]);
 
       console.log(JSON.stringify({ ...ctx, msg: "agent reply ready", replyLength: result.reply?.length ?? 0, toolsUsed: result.toolUses?.length ?? 0 }));
       return result.reply || null;
     } catch (err) {
-      console.error(JSON.stringify({ ...ctx, msg: "message handler threw", error: (err as Error).message, stack: (err as Error).stack }));
-      return null;
+      const errMsg = (err as Error).message;
+      console.error(JSON.stringify({ ...ctx, msg: "message handler threw", error: errMsg }));
+      // Return a fallback so the user knows something went wrong instead of silence
+      return errMsg.includes("timed out") ? "משהו תקע לי — נסה שוב בעוד שנייה 🙏" : null;
     }
   };
 }
