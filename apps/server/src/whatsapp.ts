@@ -284,14 +284,11 @@ export async function connectSession(
         warn:  (...args: any[]) => waLog("warn", email, "baileys-warn", { detail: args[0] }),
         error: (...args: any[]) => {
           waLog("error", email, "baileys-error", { detail: args[0] });
-          // Only auto-purge when the session is actively connected. Errors during
-          // disconnect/reconnect phases must not wipe keys — that empties keyMap in
-          // Firestore and causes "Key never filled" errors on the next reconnect.
-          const isConnected = sessions.get(email)?.status === "connected";
-          if (!isConnected) return;
-
           // Auto-purge corrupted Signal session keys when decryption fails.
           // Baileys calls logger.error({ key, err }, 'message') on decrypt failure.
+          // We purge at any point (connecting or connected) — corrupted keys are
+          // useless regardless of phase, and purging them lets Baileys re-establish
+          // a fresh Signal session with the peer on the next retry.
           const detail = args[0] ?? {};
           const errMsg: string = detail?.err?.message ?? detail?.message ?? (typeof detail === "string" ? detail : "");
           const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already");
@@ -303,7 +300,6 @@ export async function connectSession(
             const purged = auth.purgeContactKeys(jidFragment);
             waLog("warn", email, "auto-purge triggered", { participant, purgedKeys: purged, errMsg });
           } else {
-            // No participant info — purge all session-type keys so Baileys rebuilds with everyone
             const purged = auth.purgeContactKeys("session-");
             waLog("warn", email, "auto-purge (no participant) — purged all session keys", { purgedKeys: purged, errMsg });
           }
