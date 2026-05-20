@@ -339,6 +339,7 @@ export async function connectSession(
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }: any) => {
+      waLog("info", email, "messages.upsert fired", { type, count: messages?.length ?? 0 });
       if (type !== "notify") return;
       const myJid = sock.user?.id?.replace(/:.*@/, "@");
 
