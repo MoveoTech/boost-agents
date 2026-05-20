@@ -218,6 +218,11 @@ export async function connectSession(
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
 
     waLog("info", email, "creating WASocket");
+    // fetchProps sometimes times out during executeInitQueries. When that happens, Baileys stays
+    // "connected" at the WebSocket level but never fully subscribes to incoming messages.
+    // We detect this via the logger and force a reconnect so the init retries from scratch.
+    let sockRef: any = null;
+    let fetchPropsReconnectScheduled = false;
     const sock = makeWASocket({
       version,
       auth: auth.state,
@@ -228,15 +233,26 @@ export async function connectSession(
       getMessage: async () => undefined,
       logger: {
         level: "warn",
-        trace: (...args: any[]) => {},
-        debug: (...args: any[]) => {},
-        info:  (...args: any[]) => {},
+        trace: (..._args: any[]) => {},
+        debug: (..._args: any[]) => {},
+        info:  (..._args: any[]) => {},
         warn:  (...args: any[]) => waLog("warn", email, "baileys-warn", { detail: args[0] }),
-        error: (...args: any[]) => waLog("error", email, "baileys-error", { detail: args[0] }),
+        error: (...args: any[]) => {
+          waLog("error", email, "baileys-error", { detail: args[0] });
+          const stack: string = args[0]?.err?.data?.stack ?? args[0]?.data?.stack ?? "";
+          if (stack.includes("fetchProps") && !fetchPropsReconnectScheduled) {
+            fetchPropsReconnectScheduled = true;
+            waLog("warn", email, "fetchProps timed out — closing socket to force reconnect and restore message flow");
+            setTimeout(() => {
+              try { sockRef?.end(new Error("fetchProps-timeout")); } catch { /* ignore */ }
+            }, 1500);
+          }
+        },
         child: () => ({ trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) }),
         fatal: (...args: any[]) => waLog("error", email, "baileys-fatal", { detail: args[0] }),
       } as any,
     });
+    sockRef = sock;
 
     session.socket = sock;
     waLog("info", email, "WASocket created — waiting for connection events");
