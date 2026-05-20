@@ -740,8 +740,10 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         return null;
       }
       if (config.replyTrigger === "keyword") {
-        const kw = (config.keyword ?? "").trim().toLowerCase();
-        if (!kw || !text.toLowerCase().includes(kw)) {
+        const kw = (config.keyword ?? "").trim();
+        const kwLower = kw.toLowerCase();
+        const found = kw && (text.toLowerCase().includes(kwLower) || text.includes(kw));
+        if (!found) {
           console.log(JSON.stringify({ ...ctx, msg: "skipping — keyword not found", keyword: kw }));
           return null;
         }
@@ -753,7 +755,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const mondayToken = user?.monday ? (await getUserAccessToken("monday", email).catch(() => null)) ?? undefined : undefined;
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
-      const baseContext = `${fromName} sent a message in ${location}: "${text}"\n\nReply briefly and naturally, as if texting. Do not use markdown formatting.`;
+      const baseContext = `${fromName} sent a message in ${location}: "${text}"\n\nReply directly to this message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply will be delivered automatically.`;
 
       const result = await chat(
         baseContext, [], "tools",
@@ -763,9 +765,9 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         undefined,
         mondayToken,
         user?.tasks ? email : undefined,
-        email,
+        email,   // memoryUser
         undefined,
-        email,
+        undefined, // no whatsappUser — agent must not call send_message here, reply is returned as text
       );
 
       console.log(JSON.stringify({ ...ctx, msg: "agent reply ready", replyLength: result.reply?.length ?? 0, toolsUsed: result.toolUses?.length ?? 0 }));
