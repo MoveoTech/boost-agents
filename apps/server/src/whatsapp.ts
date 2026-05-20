@@ -1,6 +1,15 @@
 // WhatsApp session manager using Baileys (ESM — imported dynamically)
 // Credentials persisted in Firestore via oauth-service.
 
+// Eagerly start loading Baileys when this module is first imported.
+// The ESM dynamic import of @whiskeysockets/baileys (a large native module) blocks
+// the Node.js event loop for 3-5 minutes on a cold Cloud Run instance. Starting it
+// at module load time means it's done by the time connectSession is called.
+const _baileysPreload = Promise.all([
+  import("@whiskeysockets/baileys"),
+  import("@hapi/boom"),
+]).then(() => getWaVersion()).catch(() => {}); // also pre-cache WA version
+
 type SessionStatus = "connecting" | "qr" | "connected" | "disconnected";
 
 interface Session {
@@ -260,6 +269,7 @@ export async function connectSession(
   waLog("info", email, "starting new Baileys session");
 
   try {
+    await _baileysPreload; // ensure preload is complete before proceeding
     const { default: makeWASocket, DisconnectReason } = await import("@whiskeysockets/baileys");
     const { Boom } = await import("@hapi/boom");
     const version = await getWaVersion();
