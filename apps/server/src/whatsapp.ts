@@ -398,8 +398,9 @@ export async function connectSession(
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned });
           if (reply) {
             waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
+            const timeoutMs = isGroup ? 60_000 : 20_000;
             const sendTimeout = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("sendMessage timed out after 20s")), 20_000)
+              setTimeout(() => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)), timeoutMs)
             );
             const sent: any = await Promise.race([sock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
             if (sent?.key?.id) sentByBot.add(sent.key.id);
