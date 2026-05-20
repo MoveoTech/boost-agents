@@ -766,7 +766,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         config.customPrompt || undefined,
         user?.gmail ? email : undefined,
         user?.calendar ? email : undefined,
-        undefined,
+        { provider: "gemini", modelId: "gemini-2.5-flash" }, // always flash for WhatsApp — speed matters
         mondayToken,
         user?.tasks ? email : undefined,
         email,   // memoryUser
