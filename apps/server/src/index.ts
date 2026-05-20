@@ -613,6 +613,7 @@ app.get("/api/whatsapp/qr", async (req, res) => {
 
   const onConnected = () => {
     console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "connected — closing QR SSE stream" }));
+    prewarmWASession(email, agentId, oauthServiceUrl, oauthServiceKey);
     finish({ type: "connected" });
   };
 
@@ -729,6 +730,15 @@ app.put("/api/whatsapp/config", async (req, res) => {
 });
 
 // Build the message handler — applies user config to decide when to reply, runs agent with all tools
+// Pre-warm per-user caches immediately on session connect so the first message
+// doesn't hit cold loadWAConfig or mondayToken fetches (each up to 5s).
+function prewarmWASession(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): void {
+  Promise.all([
+    loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey),
+    getUserAccessToken("monday", email),
+  ]).catch(() => {});
+}
+
 function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
   return async ({ email, fromName, text, isGroup, groupName, isMentioned, recentMessages }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
@@ -992,7 +1002,8 @@ app.listen(PORT, () => {
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL ?? "";
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
   const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
-  initAllSessions(agentId, oauthServiceUrl, oauthServiceKey, buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey));
+  initAllSessions(agentId, oauthServiceUrl, oauthServiceKey, buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey),
+    (email) => prewarmWASession(email, agentId, oauthServiceUrl, oauthServiceKey));
 });
 
 // Baileys fires unhandled rejections from internal retry machinery (e.g. sendRetryRequest

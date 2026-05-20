@@ -571,6 +571,7 @@ export async function initAllSessions(
   oauthUrl: string,
   oauthKey: string,
   mentionHandler: MentionHandler,
+  onSessionConnected?: (email: string) => void,
 ): Promise<void> {
   if (!agentId || !oauthUrl || !oauthKey) {
     console.log(JSON.stringify({ tag: "whatsapp", msg: "initAllSessions skipped — missing config", agentId: !!agentId, oauthUrl: !!oauthUrl, oauthKey: !!oauthKey }));
@@ -589,7 +590,8 @@ export async function initAllSessions(
       const { users } = await res.json() as { users: string[] };
       console.log(JSON.stringify({ tag: "whatsapp", msg: `startup: restoring ${users.length} session(s)`, users }));
       for (const email of users) {
-        connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler).catch((err) =>
+        const onConnected = onSessionConnected ? () => onSessionConnected(email) : undefined;
+        connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, onConnected).catch((err) =>
           waLog("error", email, "startup restore failed", { error: (err as Error).message })
         );
       }
