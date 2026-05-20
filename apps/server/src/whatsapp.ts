@@ -186,6 +186,7 @@ export interface WhatsAppConfig {
   replyInGroups: boolean;
   replyInDMs: boolean;
   customPrompt?: string;
+  model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
 }
 
 export const DEFAULT_WA_CONFIG: WhatsAppConfig = {

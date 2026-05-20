@@ -458,6 +458,28 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                       </label>
                     </div>
 
+                    <div className="wa-config-row">
+                      <label className="wa-config-label">Model</label>
+                      <select
+                        className="configure-input"
+                        value={waConfig.model ? `${waConfig.model.provider}:${waConfig.model.modelId}` : ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) {
+                            setWaConfig((c) => { const { model: _, ...rest } = c; return rest as typeof c; });
+                          } else {
+                            const [provider, modelId] = val.split(":") as ["gemini" | "claude" | "openai", string];
+                            setWaConfig((c) => ({ ...c, model: { provider, modelId } }));
+                          }
+                        }}
+                      >
+                        <option value="">Haiku (default — fastest)</option>
+                        <option value="claude:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                        <option value="claude:claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                        <option value="gemini:gemini-2.5-flash">Gemini 2.5 Flash</option>
+                      </select>
+                    </div>
+
                     <textarea
                       className="configure-textarea"
                       rows={3}

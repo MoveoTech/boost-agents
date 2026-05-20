@@ -117,6 +117,7 @@ export interface WhatsAppConfig {
   replyInGroups: boolean;
   replyInDMs: boolean;
   customPrompt?: string;
+  model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
 }
 
 export async function getWhatsAppConfig(): Promise<WhatsAppConfig> {

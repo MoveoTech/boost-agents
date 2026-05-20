@@ -13,7 +13,7 @@ import { commitConfig } from "./configure";
 import type { AgentConfig } from "./config";
 import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets } from "./automations";
 import type { Automation } from "./automations";
-import { connectSession, disconnectSession, getStatus, initAllSessions, sendMessage as waSendMessage, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
+import { connectSession, disconnectSession, getStatus, initAllSessions, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
 import type { Content } from "@google/generative-ai";
 import QRCode from "qrcode";
 
@@ -672,48 +672,7 @@ app.delete("/api/whatsapp", async (req, res) => {
 const waConfigCache = new Map<string, { config: WhatsAppConfig; ts: number }>();
 
 // Cache users data per agentId — changes infrequently, 5 min TTL
-type UserEntry = { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean };
-const usersCache = new Map<string, { users: UserEntry[]; ts: number }>();
-const USERS_CACHE_TTL = 5 * 60 * 1000;
 
-// Cache per-user settings (model preference etc.) — 5 min TTL
-const userSettingsCache = new Map<string, { data: Record<string, any>; ts: number }>();
-
-async function loadUserSettings(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<Record<string, any>> {
-  const key = `${agentId}:${email}`;
-  const cached = userSettingsCache.get(key);
-  if (cached && Date.now() - cached.ts < USERS_CACHE_TTL) return cached.data;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 5_000);
-    const res = await fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(email)}`, {
-      headers: { "x-api-key": oauthServiceKey },
-      signal: ctrl.signal,
-    });
-    clearTimeout(t);
-    const data = res.ok ? await res.json() as Record<string, any> : {};
-    userSettingsCache.set(key, { data, ts: Date.now() });
-    return data;
-  } catch {
-    return cached?.data ?? {};
-  }
-}
-
-async function loadUsersData(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<{ users: UserEntry[] }> {
-  const cached = usersCache.get(agentId);
-  if (cached && Date.now() - cached.ts < USERS_CACHE_TTL) return cached;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 5_000);
-    const res = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey }, signal: ctrl.signal });
-    clearTimeout(t);
-    const data = await res.json() as { users: UserEntry[] };
-    usersCache.set(agentId, { users: data.users, ts: Date.now() });
-    return data;
-  } catch {
-    return cached ?? { users: [] };
-  }
-}
 
 async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<WhatsAppConfig> {
   const cached = waConfigCache.get(email);
@@ -774,10 +733,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
   return async ({ email, fromName, text, isGroup, groupName, isMentioned, recentMessages }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
     try {
-      const [config, usersData] = await Promise.all([
-        loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey),
-        loadUsersData(agentId, oauthServiceUrl, oauthServiceKey),
-      ]);
+      const config = await loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey);
 
       console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs, keyword: config.keyword ?? null }));
 
@@ -810,12 +766,9 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       // Always try all services — getUserAccessToken returns null if not connected,
       // so tools are silently skipped when the user hasn't connected that service.
       // Don't gate on usersData which can be stale/empty when oauth-service is slow.
-      const [mondayToken, userSettings] = await Promise.all([
-        Promise.race([
-          getUserAccessToken("monday", email).catch(() => null),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
-        ]),
-        loadUserSettings(email, agentId, oauthServiceUrl, oauthServiceKey),
+      const mondayToken = await Promise.race([
+        getUserAccessToken("monday", email).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
       ]);
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
@@ -841,7 +794,8 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           config.customPrompt || undefined,
           email,   // gmailUser — token checked inside agent, null if not connected
           email,   // calendarUser
-          (userSettings?.model ?? agentConfig.model) ? { ...(userSettings?.model ?? agentConfig.model), noThinking: true } : undefined,
+          // WhatsApp uses its own model config — defaults to Haiku for speed, ignores user/org model settings
+          { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false },
           mondayToken ?? undefined,
           email,   // tasksUser
           undefined,
