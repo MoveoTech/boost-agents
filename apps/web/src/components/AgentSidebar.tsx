@@ -285,110 +285,13 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
     onUserSettingsChange({ ...userSettings, model: undefined, systemPrompt: undefined });
   };
 
-  // Connection rows — used in both tabs
-  const ConnectionRows = () => (
-    <>
-      {[
-        { key: "gmail" as const,    label: "Gmail",           icon: "📧", service: "gmail" as const },
-        { key: "googleCalendar" as const, label: "Google Calendar",  icon: "📅", service: "calendar" as const },
-        { key: "googleTasks" as const, label: "Google Tasks",     icon: "✅", service: "tasks" as const },
-        { key: "monday" as const,   label: "Monday.com",      icon: "📋", service: "monday" as const },
-      ].map(({ label, icon, service }) => {
-        const connected = service === "gmail" ? gmailConnected : service === "calendar" ? calendarConnected : service === "tasks" ? tasksConnected : mondayConnected;
-        const onDisconnect = service === "gmail" ? onGmailDisconnect : service === "calendar" ? onCalendarDisconnect : service === "tasks" ? onTasksDisconnect : onMondayDisconnect;
-        const href = service === "monday"
-          ? `${BASE}/api/auth/monday/start?returnUrl=${encodeURIComponent(window.location.origin)}`
-          : `${BASE}/api/auth/google/start?service=${service}&returnUrl=${encodeURIComponent(window.location.origin)}`;
-        return (
-          <div key={service} className="sidebar-tool-row">
-            <div className="sidebar-tool-info">
-              <span className="sidebar-tool-icon">{icon}</span>
-              <div className="sidebar-tool-text">
-                <span className="sidebar-tool-name">{label}</span>
-                <span className="sidebar-tool-connection">
-                  {connected
-                    ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
-                    : <a className="sidebar-tool-connect-link" href={href}>Connect</a>}
-                  {connected && <button className="sidebar-tool-disconnect" onClick={onDisconnect}>Disconnect</button>}
-                </span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-      {/* WhatsApp — QR-based, not OAuth */}
-      <div className="sidebar-tool-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 0 }}>
-        <div className="sidebar-tool-info">
-          <span className="sidebar-tool-icon">💬</span>
-          <div className="sidebar-tool-text">
-            <span className="sidebar-tool-name">WhatsApp</span>
-            <span className="sidebar-tool-connection">
-              {whatsappConnected
-                ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
-                : <button className="sidebar-tool-connect-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }} onClick={handleWhatsappConnect}>Connect</button>}
-              {whatsappConnected && <button className="sidebar-tool-disconnect" onClick={onWhatsappDisconnect}>Disconnect</button>}
-            </span>
-          </div>
-        </div>
-
-        {whatsappConnected && (
-          <div className="wa-config">
-            <div className="wa-config-row">
-              <label className="wa-config-label">Reply when</label>
-              <select
-                className="configure-input"
-                value={waConfig.replyTrigger}
-                onChange={(e) => setWaConfig((c) => ({ ...c, replyTrigger: e.target.value as WhatsAppConfig["replyTrigger"] }))}
-              >
-                <option value="mention">@mentioned in a group</option>
-                <option value="keyword">Message contains keyword</option>
-                <option value="always">Any message (all chats)</option>
-              </select>
-            </div>
-
-            {waConfig.replyTrigger === "keyword" && (
-              <input
-                className="configure-input"
-                placeholder="Keyword (e.g. urgent, boost, help)"
-                value={waConfig.keyword ?? ""}
-                onChange={(e) => setWaConfig((c) => ({ ...c, keyword: e.target.value }))}
-              />
-            )}
-
-            <div className="wa-config-row" style={{ gap: 12 }}>
-              <label className="wa-config-label">Reply in</label>
-              <label className="wa-checkbox-label">
-                <input type="checkbox" checked={waConfig.replyInGroups} onChange={(e) => setWaConfig((c) => ({ ...c, replyInGroups: e.target.checked }))} />
-                Groups
-              </label>
-              <label className="wa-checkbox-label">
-                <input type="checkbox" checked={waConfig.replyInDMs} onChange={(e) => setWaConfig((c) => ({ ...c, replyInDMs: e.target.checked }))} />
-                DMs
-              </label>
-            </div>
-
-            <textarea
-              className="configure-textarea"
-              rows={3}
-              placeholder="Custom persona for WhatsApp (optional). E.g. 'Keep replies under 2 sentences. Always be friendly.'"
-              value={waConfig.customPrompt ?? ""}
-              onChange={(e) => setWaConfig((c) => ({ ...c, customPrompt: e.target.value }))}
-              style={{ fontSize: 12 }}
-            />
-
-            <button
-              className="sidebar-save-btn"
-              onClick={handleSaveWaConfig}
-              disabled={waConfigSaving}
-              style={{ marginTop: 4, fontSize: 12 }}
-            >
-              {waConfigSaved ? "Saved ✓" : waConfigSaving ? "Saving…" : "Save settings"}
-            </button>
-          </div>
-        )}
-      </div>
-    </>
-  );
+  // Stable connection service rows data — no sub-component to avoid remount-on-rerender
+  const oauthServices = [
+    { label: "Gmail",            icon: "📧", service: "gmail"     as const, connected: gmailConnected,    onDisconnect: onGmailDisconnect },
+    { label: "Google Calendar",  icon: "📅", service: "calendar"  as const, connected: calendarConnected, onDisconnect: onCalendarDisconnect },
+    { label: "Google Tasks",     icon: "✅", service: "tasks"     as const, connected: tasksConnected,    onDisconnect: onTasksDisconnect },
+    { label: "Monday.com",       icon: "📋", service: "monday"    as const, connected: mondayConnected,   onDisconnect: onMondayDisconnect },
+  ];
 
   return (
     <>
@@ -472,7 +375,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
 
           <SidebarSection title="My Connections">
             {connectionsLoading ? (
-              [1, 2, 3, 4].map((i) => (
+              [1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="sidebar-tool-row" style={{ alignItems: "center" }}>
                   <div className="skeleton" style={{ width: 20, height: 20, borderRadius: 4, flexShrink: 0 }} />
                   <div style={{ flex: 1, marginLeft: 10 }}>
@@ -481,9 +384,101 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                   </div>
                 </div>
               ))
-            ) : (
-              <ConnectionRows />
-            )}
+            ) : (<>
+              {oauthServices.map(({ label, icon, service, connected, onDisconnect }) => {
+                const href = service === "monday"
+                  ? `${BASE}/api/auth/monday/start?returnUrl=${encodeURIComponent(window.location.origin)}`
+                  : `${BASE}/api/auth/google/start?service=${service}&returnUrl=${encodeURIComponent(window.location.origin)}`;
+                return (
+                  <div key={service} className="sidebar-tool-row">
+                    <div className="sidebar-tool-info">
+                      <span className="sidebar-tool-icon">{icon}</span>
+                      <div className="sidebar-tool-text">
+                        <span className="sidebar-tool-name">{label}</span>
+                        <span className="sidebar-tool-connection">
+                          {connected
+                            ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
+                            : <a className="sidebar-tool-connect-link" href={href}>Connect</a>}
+                          {connected && <button className="sidebar-tool-disconnect" onClick={onDisconnect}>Disconnect</button>}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* WhatsApp — QR-based */}
+              <div className="sidebar-tool-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 0 }}>
+                <div className="sidebar-tool-info">
+                  <span className="sidebar-tool-icon">💬</span>
+                  <div className="sidebar-tool-text">
+                    <span className="sidebar-tool-name">WhatsApp</span>
+                    <span className="sidebar-tool-connection">
+                      {whatsappConnected
+                        ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
+                        : <button className="sidebar-tool-connect-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }} onClick={handleWhatsappConnect}>Connect</button>}
+                      {whatsappConnected && <button className="sidebar-tool-disconnect" onClick={onWhatsappDisconnect}>Disconnect</button>}
+                    </span>
+                  </div>
+                </div>
+
+                {whatsappConnected && (
+                  <div className="wa-config">
+                    <div className="wa-config-row">
+                      <label className="wa-config-label">Reply when</label>
+                      <select
+                        className="configure-input"
+                        value={waConfig.replyTrigger}
+                        onChange={(e) => setWaConfig((c) => ({ ...c, replyTrigger: e.target.value as WhatsAppConfig["replyTrigger"] }))}
+                      >
+                        <option value="mention">@mentioned in a group</option>
+                        <option value="keyword">Message contains keyword</option>
+                        <option value="always">Any message (all chats)</option>
+                      </select>
+                    </div>
+
+                    {waConfig.replyTrigger === "keyword" && (
+                      <input
+                        className="configure-input"
+                        placeholder="Keyword (e.g. urgent, boost, help)"
+                        value={waConfig.keyword ?? ""}
+                        onChange={(e) => setWaConfig((c) => ({ ...c, keyword: e.target.value }))}
+                      />
+                    )}
+
+                    <div className="wa-config-row" style={{ gap: 12 }}>
+                      <label className="wa-config-label">Reply in</label>
+                      <label className="wa-checkbox-label">
+                        <input type="checkbox" checked={waConfig.replyInGroups} onChange={(e) => setWaConfig((c) => ({ ...c, replyInGroups: e.target.checked }))} />
+                        Groups
+                      </label>
+                      <label className="wa-checkbox-label">
+                        <input type="checkbox" checked={waConfig.replyInDMs} onChange={(e) => setWaConfig((c) => ({ ...c, replyInDMs: e.target.checked }))} />
+                        DMs
+                      </label>
+                    </div>
+
+                    <textarea
+                      className="configure-textarea"
+                      rows={3}
+                      placeholder="Custom persona for WhatsApp (optional). E.g. 'Keep replies under 2 sentences. Always be friendly.'"
+                      value={waConfig.customPrompt ?? ""}
+                      onChange={(e) => setWaConfig((c) => ({ ...c, customPrompt: e.target.value }))}
+                      style={{ fontSize: 12 }}
+                    />
+
+                    <button
+                      className="sidebar-save-btn"
+                      onClick={handleSaveWaConfig}
+                      disabled={waConfigSaving}
+                      style={{ marginTop: 4, fontSize: 12 }}
+                    >
+                      {waConfigSaved ? "Saved ✓" : waConfigSaving ? "Saving…" : "Save settings"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>)}
           </SidebarSection>
 
           {/* Personal save footer */}
