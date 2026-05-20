@@ -292,7 +292,8 @@ export async function connectSession(
           // a fresh Signal session with the peer on the next retry.
           const detail = args[0] ?? {};
           const errMsg: string = detail?.err?.message ?? detail?.message ?? (typeof detail === "string" ? detail : "");
-          const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already");
+          const errName: string = detail?.err?.name ?? "";
+          const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError";
           if (!isDecryptError) return;
 
           const participant: string = detail?.key?.participant ?? detail?.key?.remoteJid ?? "";
@@ -469,10 +470,12 @@ export async function connectSession(
         });
 
         try {
-          // Show typing indicator immediately so the user sees feedback while the agent runs
-          sock.sendPresenceUpdate("composing", from).catch(() => {});
+          // Show typing indicator — must send "available" first so WhatsApp registers us as active
+          const activeSockForPresence = sessions.get(email)?.socket ?? sock;
+          activeSockForPresence.sendPresenceUpdate("available", from).catch(() => {});
+          activeSockForPresence.sendPresenceUpdate("composing", from).catch(() => {});
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, recentMessages });
-          sock.sendPresenceUpdate("paused", from).catch(() => {});
+          activeSockForPresence.sendPresenceUpdate("paused", from).catch(() => {});
           if (reply) {
             // Use the current active socket — the original may have been replaced by a reconnect
             const activeSock = sessions.get(email)?.socket ?? sock;
