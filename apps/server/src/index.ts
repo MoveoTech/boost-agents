@@ -601,20 +601,39 @@ app.get("/api/whatsapp/qr", async (req, res) => {
     }
   };
 
-  const onConnected = () => {
-    console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "connected — closing QR SSE stream" }));
-    send({ type: "connected" });
+  let done = false;
+  const finish = (data: object) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timeout);
+    clearInterval(statusPoll);
+    send(data);
     res.end();
   };
 
+  const onConnected = () => {
+    console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "connected — closing QR SSE stream" }));
+    finish({ type: "connected" });
+  };
+
+  // Baileys fires a 515 "restart required" on first login, which causes our session to delete
+  // and reconnect — losing the onConnected callback. Poll every second as a safety net so the
+  // QR popup always closes once the session reaches "connected" state.
+  const statusPoll = setInterval(() => {
+    if (getStatus(email) === "connected") {
+      console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "status poll detected connected — closing QR SSE stream" }));
+      finish({ type: "connected" });
+    }
+  }, 1000);
+
   const timeout = setTimeout(() => {
     console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "QR timeout — no scan after 3 minutes" }));
-    send({ type: "timeout" });
-    res.end();
+    finish({ type: "timeout" });
   }, 3 * 60 * 1000);
 
   req.on("close", () => {
     clearTimeout(timeout);
+    clearInterval(statusPoll);
     console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "QR SSE stream closed by client" }));
   });
 
@@ -929,4 +948,13 @@ app.listen(PORT, () => {
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
   const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
   initAllSessions(agentId, oauthServiceUrl, oauthServiceKey, buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey));
+});
+
+// Baileys fires unhandled rejections from internal retry machinery (e.g. sendRetryRequest
+// when the socket closes mid-flight). Catch them so they don't crash the process.
+process.on("unhandledRejection", (reason) => {
+  console.error(JSON.stringify({ tag: "process", msg: "unhandledRejection", reason: String(reason) }));
+});
+process.on("uncaughtException", (err) => {
+  console.error(JSON.stringify({ tag: "process", msg: "uncaughtException", error: err.message, stack: err.stack }));
 });

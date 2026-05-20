@@ -280,6 +280,10 @@ export async function connectSession(
           code, reason, loggedOut, isCryptoError, reconnectAttempt: session.reconnectAttempt,
         });
 
+        // Preserve pending QR/connected listeners before deleting the session so
+        // a 515 restart-required reconnect can still notify the SSE stream.
+        const pendingQRListeners = [...session.qrListeners];
+        const pendingConnectedListeners = [...session.connectedListeners];
         sessions.delete(email);
 
         if (loggedOut) {
@@ -293,8 +297,10 @@ export async function connectSession(
           const attempt = session.reconnectAttempt + 1;
           const backoff = Math.min(5000 * attempt, 60_000);
           waLog("info", email, `reconnecting in ${backoff / 1000}s (attempt ${attempt})`);
+          const carryQR = pendingQRListeners.length ? (qr: string) => pendingQRListeners.forEach((fn) => fn(qr)) : undefined;
+          const carryConnected = pendingConnectedListeners.length ? () => pendingConnectedListeners.forEach((fn) => fn()) : undefined;
           setTimeout(() => {
-            connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler).catch((e) =>
+            connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, carryQR, carryConnected).catch((e) =>
               waLog("error", email, "reconnect failed", { error: e.message })
             );
           }, backoff);
