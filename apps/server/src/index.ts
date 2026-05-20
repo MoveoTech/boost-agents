@@ -829,8 +829,8 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
     } catch (err) {
       const errMsg = (err as Error).message;
       console.error(JSON.stringify({ ...ctx, msg: "message handler threw", error: errMsg }));
-      // Return a fallback so the user knows something went wrong instead of silence
-      return errMsg.includes("timed out") ? "משהו תקע לי — נסה שוב בעוד שנייה 🙏" : null;
+      // Always return a fallback — silent failures leave the user waiting forever
+      return "משהו תקע לי — נסה שוב בעוד שנייה 🙏";
     }
   };
 }
