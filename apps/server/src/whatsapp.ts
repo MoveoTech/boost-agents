@@ -462,6 +462,7 @@ export async function connectSession(
           groupName: groupName ?? null,
           isMentioned,
           myJid,
+          text,
           mentionedJids,
           textLength: text.length,
         });

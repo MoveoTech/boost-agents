@@ -804,7 +804,8 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         }
       }
 
-      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length }));
+      const agentStartMs = Date.now();
+      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length, text }));
 
       // Always try all services — getUserAccessToken returns null if not connected,
       // so tools are silently skipped when the user hasn't connected that service.
@@ -850,8 +851,10 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         agentTimeout,
       ]);
 
-      console.log(JSON.stringify({ ...ctx, msg: "agent reply ready", replyLength: result.reply?.length ?? 0, toolsUsed: result.toolUses?.length ?? 0 }));
-      return result.reply || null;
+      const elapsedSec = Math.round((Date.now() - agentStartMs) / 1000);
+      console.log(JSON.stringify({ ...ctx, msg: "agent reply ready", replyLength: result.reply?.length ?? 0, toolsUsed: result.toolUses?.length ?? 0, elapsedSec }));
+      const reply = result.reply ? `${result.reply}\n\n_(${elapsedSec}s)_` : null;
+      return reply;
     } catch (err) {
       const errMsg = (err as Error).message;
       console.error(JSON.stringify({ ...ctx, msg: "message handler threw", error: errMsg }));
