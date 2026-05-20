@@ -138,13 +138,26 @@ export function subscribeWhatsAppQR(
   onError: (msg: string) => void,
 ): () => void {
   const es = new EventSource(`${BASE}/api/whatsapp/qr`);
+  let resolved = false;
   es.onmessage = (e) => {
     const data = JSON.parse(e.data) as { type: string; qr?: string; message?: string };
     if (data.type === "qr" && data.qr) onQR(data.qr);
-    else if (data.type === "connected") { onConnected(); es.close(); }
-    else if (data.type === "timeout" || data.type === "error") { onError(data.message ?? "Timed out"); es.close(); }
+    else if (data.type === "connected") { resolved = true; onConnected(); es.close(); }
+    else if (data.type === "timeout" || data.type === "error") { resolved = true; onError(data.message ?? "Timed out"); es.close(); }
   };
-  es.onerror = () => { onError("Connection lost"); es.close(); };
+  es.onerror = () => {
+    es.close();
+    if (resolved) return;
+    // Server closes the SSE stream after sending "connected" — the onerror may fire
+    // before or after onmessage. Check actual status before reporting an error.
+    fetch(`${BASE}/api/whatsapp/status`)
+      .then((r) => r.json())
+      .then(({ status }: { status: string }) => {
+        if (status === "connected") { resolved = true; onConnected(); }
+        else if (!resolved) onError("Connection lost");
+      })
+      .catch(() => { if (!resolved) onError("Connection lost"); });
+  };
   return () => es.close();
 }
 
