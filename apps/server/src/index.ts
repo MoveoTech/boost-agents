@@ -700,7 +700,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           .then((r) => r.json() as Promise<{ users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] }>),
       ]);
 
-      console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs }));
+      console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs, keyword: config.keyword ?? null }));
 
       if (isGroup && !config.replyInGroups) {
         console.log(JSON.stringify({ ...ctx, msg: "skipping — group messages disabled in config" }));
@@ -710,8 +710,9 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         console.log(JSON.stringify({ ...ctx, msg: "skipping — DM messages disabled in config" }));
         return null;
       }
-      if (config.replyTrigger === "mention" && !isMentioned) {
-        console.log(JSON.stringify({ ...ctx, msg: "skipping — not mentioned (trigger=mention)" }));
+      // Mention trigger only applies in groups — in a DM you can't @mention, so always reply
+      if (isGroup && config.replyTrigger === "mention" && !isMentioned) {
+        console.log(JSON.stringify({ ...ctx, msg: "skipping — not mentioned in group (trigger=mention)" }));
         return null;
       }
       if (config.replyTrigger === "keyword") {

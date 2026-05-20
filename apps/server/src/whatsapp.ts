@@ -159,7 +159,7 @@ export interface WhatsAppConfig {
 export const DEFAULT_WA_CONFIG: WhatsAppConfig = {
   replyTrigger: "mention",
   replyInGroups: true,
-  replyInDMs: false,
+  replyInDMs: true,
 };
 
 // Handler receives full message context; returns reply text or null (= no reply)
