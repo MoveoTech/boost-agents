@@ -319,7 +319,10 @@ export async function connectSession(
       const myJid = sock.user?.id?.replace(/:.*@/, "@");
 
       for (const msg of messages) {
-        if (msg.key.fromMe) continue;
+        if (msg.key.fromMe) {
+          waLog("info", email, "skipping fromMe message", { remoteJid: msg.key.remoteJid });
+          continue;
+        }
 
         const text =
           msg.message?.conversation ||
@@ -327,7 +330,11 @@ export async function connectSession(
           msg.message?.imageMessage?.caption ||
           "";
 
-        if (!text) continue;
+        if (!text) {
+          const msgTypes = Object.keys(msg.message ?? {}).join(",");
+          waLog("info", email, "skipping message with no text", { msgTypes, remoteJid: msg.key.remoteJid });
+          continue;
+        }
 
         const mentionedJids: string[] =
           msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ?? [];
