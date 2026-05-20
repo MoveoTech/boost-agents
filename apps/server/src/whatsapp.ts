@@ -25,23 +25,22 @@ function waLog(level: "info" | "warn" | "error", email: string, msg: string, ext
 }
 
 // ── Firestore credential helpers ──────────────────────────────────────────────
+// Use Baileys' own BufferJSON format so keys from libsignal round-trip correctly.
+// Baileys uses { type:"Buffer", data:[...] } — never use a custom format here.
 
-function serialize(obj: any): string {
-  return JSON.stringify(obj, (_k, v) => {
-    if (v instanceof Uint8Array || (typeof Buffer !== "undefined" && Buffer.isBuffer(v))) {
-      return { _type: "Buffer", data: Array.from(v as Uint8Array) };
-    }
-    return v;
-  });
+async function getBufferJSON() {
+  const { BufferJSON } = await import("@whiskeysockets/baileys");
+  return BufferJSON;
 }
 
-function deserialize(str: string): any {
-  return JSON.parse(str, (_k, v) => {
-    if (v && v._type === "Buffer" && Array.isArray(v.data)) {
-      return Buffer.from(v.data);
-    }
-    return v;
-  });
+async function serialize(obj: any): Promise<string> {
+  const { replacer } = await getBufferJSON();
+  return JSON.stringify(obj, replacer);
+}
+
+async function deserialize(str: string): Promise<any> {
+  const { reviver } = await getBufferJSON();
+  return JSON.parse(str, reviver);
 }
 
 async function loadCreds(agentId: string, email: string, oauthUrl: string, oauthKey: string): Promise<{ creds: string; keys: string } | null> {
@@ -58,7 +57,7 @@ async function loadCreds(agentId: string, email: string, oauthUrl: string, oauth
   }
 }
 
-async function saveCreds(agentId: string, email: string, oauthUrl: string, oauthKey: string, data: { creds: string; keys: string }): Promise<void> {
+async function saveCredsToFirestore(agentId: string, email: string, oauthUrl: string, oauthKey: string, data: { creds: string; keys: string }): Promise<void> {
   try {
     const res = await fetch(`${oauthUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}`, {
       method: "PUT",
@@ -94,13 +93,14 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
     waLog("info", email, "no saved credentials — generating fresh auth state");
   }
 
-  let creds: any = saved?.creds ? deserialize(saved.creds) : initAuthCreds();
-  const keyMap: Record<string, any> = saved?.keys ? deserialize(saved.keys) : {};
+  // Use Baileys' BufferJSON for correct round-tripping of Curve25519 keys
+  const creds: any = saved?.creds ? await deserialize(saved.creds) : initAuthCreds();
+  const keyMap: Record<string, any> = saved?.keys ? await deserialize(saved.keys) : {};
 
   const persist = async () => {
-    await saveCreds(agentId, email, oauthUrl, oauthKey, {
-      creds: serialize(creds),
-      keys: serialize(keyMap),
+    await saveCredsToFirestore(agentId, email, oauthUrl, oauthKey, {
+      creds: await serialize(creds),
+      keys: await serialize(keyMap),
     });
     waLog("info", email, "credentials persisted to Firestore", { keyCount: Object.keys(keyMap).length });
   };
@@ -110,13 +110,14 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
       creds,
       keys: {
         get: async (type: string, ids: string[]) => {
+          const { reviver } = await getBufferJSON();
           const result: Record<string, any> = {};
           for (const id of ids) {
             const val = keyMap[`${type}-${id}`];
-            if (val !== undefined) result[id] = JSON.parse(serialize(val), (_k, v) => {
-              if (v && v._type === "Buffer" && Array.isArray(v.data)) return Buffer.from(v.data);
-              return v;
-            });
+            if (val !== undefined) {
+              // Deep-clone through JSON to restore any Buffer objects
+              result[id] = JSON.parse(JSON.stringify(val, (await getBufferJSON()).replacer), reviver);
+            }
           }
           return result;
         },
@@ -131,8 +132,11 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
         },
       },
     },
-    saveCreds: async () => { await persist(); },
-    updateCreds: (newCreds: any) => { creds = newCreds; },
+    // Called on every creds.update event — mutates in place (matches Baileys' own pattern)
+    onCredsUpdate: async (update: any) => {
+      Object.assign(creds, update);
+      await persist();
+    },
   };
 }
 
@@ -231,10 +235,10 @@ export async function connectSession(
     session.socket = sock;
     waLog("info", email, "WASocket created — waiting for connection events");
 
+    // Object.assign mutates creds in place — matches Baileys' useMultiFileAuthState pattern exactly
     sock.ev.on("creds.update", async (update: any) => {
       waLog("info", email, "credentials updated by Baileys — persisting");
-      auth.updateCreds({ ...auth.state.creds, ...update });
-      await auth.saveCreds();
+      await auth.onCredsUpdate(update);
     });
 
     sock.ev.on("connection.update", async (update: any) => {
@@ -263,12 +267,11 @@ export async function connectSession(
         const code = err?.output?.statusCode;
         const reason = err?.message ?? "unknown";
         const loggedOut = code === DisconnectReason.loggedOut;
+        // Also treat 515 (restart required) and 408 (connection replaced) as recoverable
+        const isCryptoError = reason?.includes("argument must be of type") || reason?.includes("Received an instance of");
 
         waLog(loggedOut ? "info" : "warn", email, "connection closed", {
-          code,
-          reason,
-          loggedOut,
-          reconnectAttempt: session.reconnectAttempt,
+          code, reason, loggedOut, isCryptoError, reconnectAttempt: session.reconnectAttempt,
         });
 
         sessions.delete(email);
@@ -276,12 +279,15 @@ export async function connectSession(
         if (loggedOut) {
           waLog("info", email, "user logged out from phone — clearing stored credentials");
           await deleteCreds(agentId, email, oauthUrl, oauthKey);
+        } else if (isCryptoError) {
+          // Saved credentials are corrupt — wipe them so next connect uses fresh QR
+          waLog("warn", email, "crypto error on connect — wiping stored credentials, user must re-scan QR");
+          await deleteCreds(agentId, email, oauthUrl, oauthKey);
         } else {
           const attempt = session.reconnectAttempt + 1;
           const backoff = Math.min(5000 * attempt, 60_000);
           waLog("info", email, `reconnecting in ${backoff / 1000}s (attempt ${attempt})`);
           setTimeout(() => {
-            const s = { ...session, reconnectAttempt: attempt };
             connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler).catch((e) =>
               waLog("error", email, "reconnect failed", { error: e.message })
             );
