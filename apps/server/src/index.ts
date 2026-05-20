@@ -781,8 +781,10 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
 
       console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length }));
 
-      const user = usersData.users.find((u) => u.email === email);
-      const mondayToken = user?.monday ? (await getUserAccessToken("monday", email).catch(() => null)) ?? undefined : undefined;
+      // Always try all services — getUserAccessToken returns null if not connected,
+      // so tools are silently skipped when the user hasn't connected that service.
+      // Don't gate on usersData which can be stale/empty when oauth-service is slow.
+      const mondayToken = (await getUserAccessToken("monday", email).catch(() => null)) ?? undefined;
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
 
@@ -800,11 +802,11 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const result = await chat(
         baseContext, [], "tools",
         config.customPrompt || undefined,
-        user?.gmail ? email : undefined,
-        user?.calendar ? email : undefined,
-        { provider: "gemini", modelId: "gemini-2.5-flash" }, // always flash for WhatsApp — speed matters
+        email,   // gmailUser — token checked inside agent, null if not connected
+        email,   // calendarUser
+        { provider: "gemini", modelId: "gemini-2.5-flash" },
         mondayToken,
-        user?.tasks ? email : undefined,
+        email,   // tasksUser
         email,   // memoryUser
         undefined,
         undefined, // no whatsappUser — agent must not call send_message here, reply is returned as text
