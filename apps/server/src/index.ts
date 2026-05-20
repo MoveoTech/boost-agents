@@ -676,6 +676,29 @@ type UserEntry = { email: string; gmail: boolean; calendar: boolean; monday: boo
 const usersCache = new Map<string, { users: UserEntry[]; ts: number }>();
 const USERS_CACHE_TTL = 5 * 60 * 1000;
 
+// Cache per-user settings (model preference etc.) — 5 min TTL
+const userSettingsCache = new Map<string, { data: Record<string, any>; ts: number }>();
+
+async function loadUserSettings(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<Record<string, any>> {
+  const key = `${agentId}:${email}`;
+  const cached = userSettingsCache.get(key);
+  if (cached && Date.now() - cached.ts < USERS_CACHE_TTL) return cached.data;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5_000);
+    const res = await fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(email)}`, {
+      headers: { "x-api-key": oauthServiceKey },
+      signal: ctrl.signal,
+    });
+    clearTimeout(t);
+    const data = res.ok ? await res.json() as Record<string, any> : {};
+    userSettingsCache.set(key, { data, ts: Date.now() });
+    return data;
+  } catch {
+    return cached?.data ?? {};
+  }
+}
+
 async function loadUsersData(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<{ users: UserEntry[] }> {
   const cached = usersCache.get(agentId);
   if (cached && Date.now() - cached.ts < USERS_CACHE_TTL) return cached;
@@ -786,9 +809,12 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       // Always try all services — getUserAccessToken returns null if not connected,
       // so tools are silently skipped when the user hasn't connected that service.
       // Don't gate on usersData which can be stale/empty when oauth-service is slow.
-      const mondayToken = await Promise.race([
-        getUserAccessToken("monday", email).catch(() => null),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+      const [mondayToken, userSettings] = await Promise.all([
+        Promise.race([
+          getUserAccessToken("monday", email).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+        ]),
+        loadUserSettings(email, agentId, oauthServiceUrl, oauthServiceKey),
       ]);
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
@@ -814,7 +840,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           config.customPrompt || undefined,
           email,   // gmailUser — token checked inside agent, null if not connected
           email,   // calendarUser
-          agentConfig.model ? { ...agentConfig.model, noThinking: true } : undefined,
+          (userSettings?.model ?? agentConfig.model) ? { ...(userSettings?.model ?? agentConfig.model), noThinking: true } : undefined,
           mondayToken ?? undefined,
           email,   // tasksUser
           undefined,
