@@ -79,6 +79,17 @@ export async function calendarCheckAvailability(
   return `Free/busy between ${timeMin} and ${timeMax}:\n\n${lines.join("\n\n")}`;
 }
 
+export async function calendarRsvp(accessToken: string, eventId: string, responseStatus: "accepted" | "declined" | "tentative"): Promise<string> {
+  const me = await calendarFetch(accessToken, "/calendars/primary") as { id: string };
+  await calendarFetch(accessToken, `/calendars/primary/events/${eventId}?sendUpdates=all`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      attendees: [{ email: me.id, responseStatus }],
+    }),
+  });
+  return `RSVP updated: you have ${responseStatus} the event.`;
+}
+
 export async function calendarGetEvent(accessToken: string, eventId: string): Promise<string> {
   const e = await calendarFetch(accessToken, `/calendars/primary/events/${eventId}`) as {
     summary?: string;

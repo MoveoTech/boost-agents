@@ -13,7 +13,7 @@ import {
   mondayGetMe, mondayGetUsers,
 } from "./monday";
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
-import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
+import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability, calendarRsvp } from "./calendar";
 import { memorySave, memoryRecall, memoryDelete } from "./memory";
 import { sendMessage as waSendMessage, getStatus as waGetStatus } from "./whatsapp";
 import { getUserAccessToken } from "./google-auth";
@@ -79,6 +79,16 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
         timeMax: { type: "string", description: "End of range in ISO 8601" },
       },
       required: ["emails", "timeMin", "timeMax"],
+    },
+  },
+  calendar_rsvp: {
+    name: "calendar_rsvp", description: "Accept, decline, or tentatively accept a Google Calendar event invitation. Use this — not Monday.com — for any meeting approval or RSVP.",
+    parameters: {
+      properties: {
+        eventId:        { type: "string", description: "Calendar event ID (get it from calendar_list_events or calendar_get_event)" },
+        responseStatus: { type: "string", description: "One of: accepted, declined, tentative" },
+      },
+      required: ["eventId", "responseStatus"],
     },
   },
   whatsapp_send_message: {
@@ -488,7 +498,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
   if (agentConfig.tools.jinaReader ?? true) tools.push(ALL_TOOLS.read_webpage, ALL_TOOLS.search_image);
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
-  if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
+  if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability, ALL_TOOLS.calendar_rsvp);
   if (whatsappUser && waGetStatus(whatsappUser) === "connected") tools.push(ALL_TOOLS.whatsapp_send_message);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
   if (mondayToken)  tools.push(
@@ -535,13 +545,15 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
     case "calendar_list_events":
     case "calendar_create_event":
     case "calendar_get_event":
+    case "calendar_rsvp":
     case "calendar_check_availability": {
       if (!calendarUser) return "User has not connected Google Calendar. Ask them to connect first.";
       const token = await getUserAccessToken("calendar", calendarUser);
       if (!token) return "Could not retrieve Calendar access token. The user may need to reconnect.";
-      if (name === "calendar_list_events")       return calendarListEvents(token, args.maxResults as number | undefined);
-      if (name === "calendar_create_event")      return calendarCreateEvent(token, args.title as string, args.startDateTime as string, args.endDateTime as string, args.description as string | undefined, args.location as string | undefined, args.attendees as string[] | undefined);
+      if (name === "calendar_list_events")        return calendarListEvents(token, args.maxResults as number | undefined);
+      if (name === "calendar_create_event")       return calendarCreateEvent(token, args.title as string, args.startDateTime as string, args.endDateTime as string, args.description as string | undefined, args.location as string | undefined, args.attendees as string[] | undefined);
       if (name === "calendar_check_availability") return calendarCheckAvailability(token, args.emails as string[], args.timeMin as string, args.timeMax as string);
+      if (name === "calendar_rsvp")               return calendarRsvp(token, args.eventId as string, args.responseStatus as "accepted" | "declined" | "tentative");
       return calendarGetEvent(token, args.eventId as string);
     }
 
