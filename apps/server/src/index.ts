@@ -791,7 +791,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
 
       // Build conversation history for context (last 20 messages, excluding the current one)
-      const historyMsgs = recentMessages.slice(-21, -1); // exclude last (current message already in array)
+      const historyMsgs = recentMessages.slice(-6, -1); // last 5 messages for context, keep prompt short
       const historyStr = historyMsgs.length > 0
         ? "\n\nRecent conversation:\n" + historyMsgs.map((m) => {
             const t = new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
@@ -806,10 +806,10 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         config.customPrompt || undefined,
         email,   // gmailUser — token checked inside agent, null if not connected
         email,   // calendarUser
-        { provider: "gemini", modelId: "gemini-2.5-flash" },
+        { provider: "gemini", modelId: "gemini-2.0-flash" },
         mondayToken,
         email,   // tasksUser
-        email,   // memoryUser
+        undefined, // no memoryUser — saves a Firestore round-trip for WhatsApp speed
         undefined,
         undefined, // no whatsappUser — agent must not call send_message here, reply is returned as text
       );
