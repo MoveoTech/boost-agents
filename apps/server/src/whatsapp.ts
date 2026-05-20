@@ -313,6 +313,10 @@ export async function connectSession(
       }
     });
 
+    // Track IDs of messages sent by this bot instance so we can skip them
+    // when they echo back as fromMe messages, preventing reply loops.
+    const sentByBot = new Set<string>();
+
     sock.ev.on("messages.upsert", async ({ messages, type }: any) => {
       waLog("info", email, "messages.upsert fired", { type, count: messages?.length ?? 0 });
       if (type !== "notify") return;
@@ -320,8 +324,11 @@ export async function connectSession(
 
       for (const msg of messages) {
         if (msg.key.fromMe) {
-          waLog("info", email, "skipping fromMe message", { remoteJid: msg.key.remoteJid });
-          continue;
+          if (sentByBot.has(msg.key.id ?? "")) {
+            sentByBot.delete(msg.key.id ?? "");
+            continue; // bot's own reply echoed back — skip to prevent loop
+          }
+          // Message sent from user's phone (same account, different device) — process it
         }
 
         const text =
@@ -373,7 +380,8 @@ export async function connectSession(
             const sendTimeout = new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error("sendMessage timed out after 20s")), 20_000)
             );
-            await Promise.race([sock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
+            const sent: any = await Promise.race([sock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
+            if (sent?.key?.id) sentByBot.add(sent.key.id);
             waLog("info", email, "reply sent successfully");
           } else {
             waLog("info", email, "handler returned null — no reply sent (trigger/filter did not match)");
