@@ -7,11 +7,19 @@ export async function getUserAccessToken(service: "gmail" | "calendar" | "monday
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;
   if (!agentId) return null;
 
-  const res = await fetch(`${OAUTH_SERVICE_URL}/api/access-token/${service}/${agentId}/${userEmail}`, {
-    headers: { "x-api-key": OAUTH_SERVICE_KEY },
-  });
-
-  if (!res.ok) return null;
-  const { accessToken } = await res.json() as { accessToken: string };
-  return accessToken;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const res = await fetch(`${OAUTH_SERVICE_URL}/api/access-token/${service}/${agentId}/${userEmail}`, {
+      headers: { "x-api-key": OAUTH_SERVICE_KEY },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const { accessToken } = await res.json() as { accessToken: string };
+    return accessToken;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }

@@ -283,18 +283,28 @@ export async function connectSession(
         warn:  (...args: any[]) => waLog("warn", email, "baileys-warn", { detail: args[0] }),
         error: (...args: any[]) => {
           waLog("error", email, "baileys-error", { detail: args[0] });
+          // Only auto-purge when the session is actively connected. Errors during
+          // disconnect/reconnect phases must not wipe keys — that empties keyMap in
+          // Firestore and causes "Key never filled" errors on the next reconnect.
+          const isConnected = sessions.get(email)?.status === "connected";
+          if (!isConnected) return;
+
           // Auto-purge corrupted Signal session keys when decryption fails.
-          // The failing contact's JID is in args[0].key.participant or args[0].key.remoteJid.
+          // Baileys calls logger.error({ key, err }, 'message') on decrypt failure.
           const detail = args[0] ?? {};
-          const errMsg: string = detail?.err?.message ?? detail?.message ?? "";
+          const errMsg: string = detail?.err?.message ?? detail?.message ?? (typeof detail === "string" ? detail : "");
           const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already");
+          if (!isDecryptError) return;
+
           const participant: string = detail?.key?.participant ?? detail?.key?.remoteJid ?? "";
-          if (isDecryptError && participant) {
+          if (participant) {
             const jidFragment = participant.split(":")[0].split("@")[0];
             const purged = auth.purgeContactKeys(jidFragment);
-            if (purged > 0) {
-              waLog("warn", email, "auto-purged corrupted session keys — fresh session will be established on next message", { participant, purgedKeys: purged });
-            }
+            waLog("warn", email, "auto-purge triggered", { participant, purgedKeys: purged, errMsg });
+          } else {
+            // No participant info — purge all session-type keys so Baileys rebuilds with everyone
+            const purged = auth.purgeContactKeys("session-");
+            waLog("warn", email, "auto-purge (no participant) — purged all session keys", { purgedKeys: purged, errMsg });
           }
         },
         child: () => ({ trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) }),
