@@ -482,6 +482,7 @@ export async function connectSession(
               );
               const sent: any = await Promise.race([activeSock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
               if (sent?.key?.id) sentByBot.add(sent.key.id);
+              storeRecentMessage(from, "Assistant", reply, Date.now());
               waLog("info", email, "reply sent successfully");
             }
           } else {
