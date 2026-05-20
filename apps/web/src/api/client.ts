@@ -93,13 +93,59 @@ export async function saveUserSettings(settings: Record<string, unknown>): Promi
   });
 }
 
-export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }> {
+export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean; whatsapp: boolean }> {
   const res = await fetch(`${BASE}/api/connections`);
-  return res.ok ? res.json() : { gmail: false, calendar: false, monday: false, tasks: false };
+  return res.ok ? res.json() : { gmail: false, calendar: false, monday: false, tasks: false, whatsapp: false };
 }
 
 export async function disconnectService(service: "gmail" | "calendar" | "monday" | "tasks"): Promise<void> {
   await fetch(`${BASE}/api/connections/${service}`, { method: "DELETE" });
+}
+
+export async function getWhatsAppStatus(): Promise<"connected" | "disconnected" | "connecting" | "qr"> {
+  const res = await fetch(`${BASE}/api/whatsapp/status`);
+  return res.ok ? (await res.json()).status : "disconnected";
+}
+
+export async function disconnectWhatsApp(): Promise<void> {
+  await fetch(`${BASE}/api/whatsapp`, { method: "DELETE" });
+}
+
+export interface WhatsAppConfig {
+  replyTrigger: "mention" | "keyword" | "always";
+  keyword?: string;
+  replyInGroups: boolean;
+  replyInDMs: boolean;
+  customPrompt?: string;
+}
+
+export async function getWhatsAppConfig(): Promise<WhatsAppConfig> {
+  const res = await fetch(`${BASE}/api/whatsapp/config`);
+  return res.ok ? res.json() : { replyTrigger: "mention", replyInGroups: true, replyInDMs: false };
+}
+
+export async function saveWhatsAppConfig(config: WhatsAppConfig): Promise<void> {
+  await fetch(`${BASE}/api/whatsapp/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+
+export function subscribeWhatsAppQR(
+  onQR: (dataUrl: string) => void,
+  onConnected: () => void,
+  onError: (msg: string) => void,
+): () => void {
+  const es = new EventSource(`${BASE}/api/whatsapp/qr`);
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data) as { type: string; qr?: string; message?: string };
+    if (data.type === "qr" && data.qr) onQR(data.qr);
+    else if (data.type === "connected") { onConnected(); es.close(); }
+    else if (data.type === "timeout" || data.type === "error") { onError(data.message ?? "Timed out"); es.close(); }
+  };
+  es.onerror = () => { onError("Connection lost"); es.close(); };
+  return () => es.close();
 }
 
 export async function triggerAutomation(id: string): Promise<void> {

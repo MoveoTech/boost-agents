@@ -164,7 +164,7 @@ jobs:
           service: ${{ inputs.service_name }}
           region: us-central1
           image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
-          flags: '--allow-unauthenticated'
+          flags: '--allow-unauthenticated --min-instances 1 --max-instances 1'
           env_vars: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             API_KEY=${{ env.API_KEY }}

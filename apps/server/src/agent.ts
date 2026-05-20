@@ -15,6 +15,7 @@ import {
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability } from "./calendar";
 import { memorySave, memoryRecall, memoryDelete } from "./memory";
+import { sendMessage as waSendMessage, getStatus as waGetStatus } from "./whatsapp";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
 
@@ -78,6 +79,17 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
         timeMax: { type: "string", description: "End of range in ISO 8601" },
       },
       required: ["emails", "timeMin", "timeMax"],
+    },
+  },
+  whatsapp_send_message: {
+    name: "whatsapp_send_message",
+    description: "Send a WhatsApp message to a phone number on behalf of the user. Only available when the user has connected WhatsApp.",
+    parameters: {
+      properties: {
+        to:      { type: "string", description: "Recipient phone number with country code, e.g. +972501234567" },
+        message: { type: "string", description: "The message text to send" },
+      },
+      required: ["to", "message"],
     },
   },
   slack_send_message: {
@@ -470,13 +482,14 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   return `${base}${skillsBlock}${additionBlock}${capsBlock}`;
 }
 
-function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string): ToolDecl[] {
+function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
   if (agentConfig.tools.jinaReader ?? true) tools.push(ALL_TOOLS.read_webpage, ALL_TOOLS.search_image);
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
   if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability);
+  if (whatsappUser && waGetStatus(whatsappUser) === "connected") tools.push(ALL_TOOLS.whatsapp_send_message);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
   if (mondayToken)  tools.push(
     ALL_TOOLS.monday_list_boards, ALL_TOOLS.monday_get_board, ALL_TOOLS.monday_create_board,
@@ -498,7 +511,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string): Promise<string | null> {
+async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string): Promise<string | null> {
   switch (name) {
     case "fetch_url":
       return fetchUrl(args.url as string);
@@ -626,6 +639,11 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       if (!memoryUser) return "Memory requires a logged-in user.";
       return memoryDelete(memoryUser, args.key as string);
 
+    case "whatsapp_send_message":
+      if (!whatsappUser) return "WhatsApp is not connected. Ask the user to connect WhatsApp first.";
+      await waSendMessage(whatsappUser, args.to as string, args.message as string);
+      return `WhatsApp message sent to ${args.to}`;
+
     default:
       return null; // not a builtin tool
   }
@@ -658,6 +676,7 @@ async function runChat(
   tasksUser?: string,
   memoryUser?: string,
   image?: ImageAttachment,
+  whatsappUser?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
   const builtPrompt = buildSystemPrompt(systemPrompt);
@@ -676,11 +695,11 @@ async function runChat(
     return { reply: result.response.text(), toolUses: [] };
   }
 
-  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser, memoryUser);
+  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser);
   const nativeSearch = agentConfig.tools.googleSearch;
 
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
-    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser);
+    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser);
     return result ?? "Tool not implemented";
   };
 
@@ -703,8 +722,9 @@ export async function chat(
   tasksUser?: string,
   memoryUser?: string,
   image?: ImageAttachment,
+  whatsappUser?: string,
 ): Promise<ChatResult> {
-  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image);
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image, whatsappUser);
 }
 
 export async function chatStream(
@@ -720,8 +740,9 @@ export async function chatStream(
   tasksUser?: string,
   memoryUser?: string,
   image?: ImageAttachment,
+  whatsappUser?: string,
 ): Promise<ToolUse[]> {
-  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image);
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image, whatsappUser);
   return result.toolUses;
 }
 

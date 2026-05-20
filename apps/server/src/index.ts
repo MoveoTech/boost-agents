@@ -13,7 +13,9 @@ import { commitConfig } from "./configure";
 import type { AgentConfig } from "./config";
 import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets } from "./automations";
 import type { Automation } from "./automations";
+import { connectSession, disconnectSession, getStatus, initAllSessions, sendMessage as waSendMessage, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
 import type { Content } from "@google/generative-ai";
+import QRCode from "qrcode";
 
 const app = express();
 
@@ -508,7 +510,7 @@ app.get("/api/connections", async (req, res) => {
     });
     const { users } = await r.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
     const user = users.find((u) => u.email === email);
-    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks });
+    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks, whatsapp: getStatus(email) === "connected" });
   } catch { res.json({ gmail: false, calendar: false }); }
 });
 
@@ -567,6 +569,158 @@ app.post("/api/configure", requireAdmin, async (req, res) => {
     res.status(500).json({ error: (err as Error).message });
   }
 });
+
+// ── WhatsApp ──────────────────────────────────────────────────────────────────
+
+// SSE: streams QR codes then a "connected" event to the client
+app.get("/api/whatsapp/qr", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.status(401).end(); return; }
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL ?? "";
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  const onQR = async (qr: string) => {
+    try {
+      const dataUrl = await QRCode.toDataURL(qr, { width: 280, margin: 2 });
+      send({ type: "qr", qr: dataUrl });
+    } catch { /* ignore */ }
+  };
+
+  const onConnected = () => {
+    send({ type: "connected" });
+    res.end();
+  };
+
+  // Timeout after 3 minutes if no scan
+  const timeout = setTimeout(() => { send({ type: "timeout" }); res.end(); }, 3 * 60 * 1000);
+  req.on("close", () => clearTimeout(timeout));
+
+  try {
+    const mentionHandler = buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey);
+    await connectSession(email, agentId, oauthServiceUrl, oauthServiceKey, mentionHandler, onQR, onConnected);
+  } catch (err) {
+    send({ type: "error", message: (err as Error).message });
+    res.end();
+  }
+});
+
+app.get("/api/whatsapp/status", (req, res) => {
+  const email = getSessionEmail(req);
+  res.json({ status: email ? getStatus(email) : "disconnected" });
+});
+
+app.delete("/api/whatsapp", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL ?? "";
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
+  try {
+    await disconnectSession(email, agentId, oauthServiceUrl, oauthServiceKey);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── WhatsApp config endpoints ─────────────────────────────────────────────────
+
+async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<WhatsAppConfig> {
+  try {
+    const res = await fetch(`${oauthServiceUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}`, {
+      headers: { "x-api-key": oauthServiceKey },
+    });
+    if (!res.ok) return DEFAULT_WA_CONFIG;
+    const data = await res.json() as { config?: string } | null;
+    if (!data?.config) return DEFAULT_WA_CONFIG;
+    return { ...DEFAULT_WA_CONFIG, ...JSON.parse(data.config) };
+  } catch { return DEFAULT_WA_CONFIG; }
+}
+
+app.get("/api/whatsapp/config", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL ?? "";
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
+  res.json(await loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey));
+});
+
+app.put("/api/whatsapp/config", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL ?? "";
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
+  const config = req.body as WhatsAppConfig;
+  try {
+    await fetch(`${oauthServiceUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}/config`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-api-key": oauthServiceKey },
+      body: JSON.stringify({ config: JSON.stringify(config) }),
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Build the message handler — applies user config to decide when to reply, runs agent with all tools
+function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
+  return async ({ email, fromName, text, isGroup, groupName, isMentioned }) => {
+    try {
+      // Load config + connected services in parallel
+      const [config, usersData] = await Promise.all([
+        loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey),
+        fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey } })
+          .then((r) => r.json() as Promise<{ users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] }>),
+      ]);
+
+      // Apply group / DM filter
+      if (isGroup && !config.replyInGroups) return null;
+      if (!isGroup && !config.replyInDMs) return null;
+
+      // Apply trigger filter
+      if (config.replyTrigger === "mention" && !isMentioned) return null;
+      if (config.replyTrigger === "keyword") {
+        const kw = (config.keyword ?? "").trim().toLowerCase();
+        if (!kw || !text.toLowerCase().includes(kw)) return null;
+      }
+      // "always" → fall through
+
+      const user = usersData.users.find((u) => u.email === email);
+      const mondayToken = user?.monday ? (await getUserAccessToken("monday", email).catch(() => null)) ?? undefined : undefined;
+
+      const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
+      const baseContext = `${fromName} sent a message in ${location}: "${text}"\n\nReply briefly and naturally, as if texting. Do not use markdown formatting.`;
+
+      const result = await chat(
+        baseContext, [], "tools",
+        config.customPrompt || undefined,
+        user?.gmail ? email : undefined,
+        user?.calendar ? email : undefined,
+        undefined,
+        mondayToken,
+        user?.tasks ? email : undefined,
+        email,        // memoryUser
+        undefined,    // image
+        email,        // whatsappUser — agent can send WA messages too
+      );
+      return result.reply || null;
+    } catch (err) {
+      console.error("[whatsapp] message handler error:", err);
+      return null;
+    }
+  };
+}
 
 // In-memory feedback store (keyed by messageId)
 const feedbackStore = new Map<string, { rating: number; comment?: string }>();
@@ -681,6 +835,7 @@ app.post("/api/chat", async (req, res) => {
 
     const mondayTokenStream = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
     const tasksUserStream   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
+    const waUserStream      = sessionEmail && getStatus(sessionEmail) === "connected" ? sessionEmail : undefined;
     try {
       await chatStream(
         effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model,
@@ -700,6 +855,7 @@ app.post("/api/chat", async (req, res) => {
         tasksUserStream,
         sessionEmail,
         imageAttachment,
+        waUserStream,
       );
       send({ type: "done", toolUses });
       trackUsage(modelId, toolUses.map((t) => t.name), Date.now() - t0);
@@ -714,7 +870,8 @@ app.post("/api/chat", async (req, res) => {
   try {
     const mondayToken = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
     const tasksUser   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
-    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail, imageAttachment);
+    const waUser      = sessionEmail && getStatus(sessionEmail) === "connected" ? sessionEmail : undefined;
+    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail, imageAttachment, waUser);
     trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
   } catch (err) {
@@ -731,7 +888,9 @@ app.get("*", (_req, res) => {
 const PORT = process.env.PORT ?? 8080;
 app.listen(PORT, () => {
   console.log(`Server running on :${PORT}`);
-  // Patch all Cloud Scheduler jobs with the current AUTOMATION_SECRET so
-  // previously-created automations don't fail with 401 after a redeploy.
   resyncAutomationSecrets();
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL ?? "";
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
+  initAllSessions(agentId, oauthServiceUrl, oauthServiceKey, buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey));
 });

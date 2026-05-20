@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import SidebarSection from "./SidebarSection";
 import SkillsModal from "./SkillsModal";
 import UsageAnalytics from "./UsageAnalytics";
-import { saveConfig, applyConfigLive, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders } from "../api/client";
+import { saveConfig, applyConfigLive, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders, subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, type WhatsAppConfig } from "../api/client";
 import type { AgentConfig, Automation, Skill, UserSettings } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
@@ -75,17 +75,20 @@ interface Props {
   calendarConnected: boolean;
   mondayConnected: boolean;
   tasksConnected: boolean;
+  whatsappConnected: boolean;
   onGmailDisconnect: () => void;
   onCalendarDisconnect: () => void;
   onMondayDisconnect: () => void;
   onTasksDisconnect: () => void;
+  onWhatsappConnected: () => void;
+  onWhatsappDisconnect: () => void;
   connectionsLoading?: boolean;
   className?: string;
   onFeedback?: (messageId: string, rating: 1 | -1) => void;
   isResponding?: boolean;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, connectionsLoading, className, isResponding }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, whatsappConnected, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, onWhatsappConnected, onWhatsappDisconnect, connectionsLoading, className, isResponding }: Props) {
   const merged = agentConfig ? {
     ...agentConfig,
     ...(userSettings.model ? { model: userSettings.model } : {}),
@@ -107,6 +110,55 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   const [providers, setProviders] = useState({ gemini: true, claude: false, openai: false, slack: false });
   const [settingsTab, setSettingsTab] = useState<"personal" | "org">("personal");
   const [draftInstructions, setDraftInstructions] = useState<string | undefined>(userSettings.systemPrompt);
+  const [showQR, setShowQR] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrError, setQrError] = useState<string | null>(null);
+  const closeQRRef = useRef<(() => void) | null>(null);
+  const [waConfig, setWaConfig] = useState<WhatsAppConfig>({ replyTrigger: "mention", replyInGroups: true, replyInDMs: false });
+  const [waConfigSaving, setWaConfigSaving] = useState(false);
+  const [waConfigSaved, setWaConfigSaved] = useState(false);
+
+  // Load config when already connected on mount
+  useEffect(() => {
+    if (whatsappConnected) {
+      getWhatsAppConfig().then(setWaConfig).catch(() => {});
+    }
+  }, [whatsappConnected]);
+
+  const handleSaveWaConfig = useCallback(async () => {
+    setWaConfigSaving(true);
+    try {
+      await saveWhatsAppConfig(waConfig);
+      setWaConfigSaved(true);
+      setTimeout(() => setWaConfigSaved(false), 2000);
+    } finally {
+      setWaConfigSaving(false);
+    }
+  }, [waConfig]);
+
+  const handleWhatsappConnect = useCallback(() => {
+    setShowQR(true);
+    setQrDataUrl(null);
+    setQrError(null);
+    const unsub = subscribeWhatsAppQR(
+      (url) => setQrDataUrl(url),
+      () => {
+        setShowQR(false);
+        onWhatsappConnected();
+        unsub();
+        getWhatsAppConfig().then(setWaConfig).catch(() => {});
+      },
+      (msg) => { setQrError(msg); },
+    );
+    closeQRRef.current = unsub;
+  }, [onWhatsappConnected]);
+
+  const handleQRClose = useCallback(() => {
+    closeQRRef.current?.();
+    setShowQR(false);
+    setQrDataUrl(null);
+    setQrError(null);
+  }, []);
   const [personalSaved, setPersonalSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -264,10 +316,82 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
           </div>
         );
       })}
+      {/* WhatsApp — QR-based, not OAuth */}
+      <div className="sidebar-tool-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 0 }}>
+        <div className="sidebar-tool-info">
+          <span className="sidebar-tool-icon">💬</span>
+          <div className="sidebar-tool-text">
+            <span className="sidebar-tool-name">WhatsApp</span>
+            <span className="sidebar-tool-connection">
+              {whatsappConnected
+                ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
+                : <button className="sidebar-tool-connect-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }} onClick={handleWhatsappConnect}>Connect</button>}
+              {whatsappConnected && <button className="sidebar-tool-disconnect" onClick={onWhatsappDisconnect}>Disconnect</button>}
+            </span>
+          </div>
+        </div>
+
+        {whatsappConnected && (
+          <div className="wa-config">
+            <div className="wa-config-row">
+              <label className="wa-config-label">Reply when</label>
+              <select
+                className="configure-input"
+                value={waConfig.replyTrigger}
+                onChange={(e) => setWaConfig((c) => ({ ...c, replyTrigger: e.target.value as WhatsAppConfig["replyTrigger"] }))}
+              >
+                <option value="mention">@mentioned in a group</option>
+                <option value="keyword">Message contains keyword</option>
+                <option value="always">Any message (all chats)</option>
+              </select>
+            </div>
+
+            {waConfig.replyTrigger === "keyword" && (
+              <input
+                className="configure-input"
+                placeholder="Keyword (e.g. urgent, boost, help)"
+                value={waConfig.keyword ?? ""}
+                onChange={(e) => setWaConfig((c) => ({ ...c, keyword: e.target.value }))}
+              />
+            )}
+
+            <div className="wa-config-row" style={{ gap: 12 }}>
+              <label className="wa-config-label">Reply in</label>
+              <label className="wa-checkbox-label">
+                <input type="checkbox" checked={waConfig.replyInGroups} onChange={(e) => setWaConfig((c) => ({ ...c, replyInGroups: e.target.checked }))} />
+                Groups
+              </label>
+              <label className="wa-checkbox-label">
+                <input type="checkbox" checked={waConfig.replyInDMs} onChange={(e) => setWaConfig((c) => ({ ...c, replyInDMs: e.target.checked }))} />
+                DMs
+              </label>
+            </div>
+
+            <textarea
+              className="configure-textarea"
+              rows={3}
+              placeholder="Custom persona for WhatsApp (optional). E.g. 'Keep replies under 2 sentences. Always be friendly.'"
+              value={waConfig.customPrompt ?? ""}
+              onChange={(e) => setWaConfig((c) => ({ ...c, customPrompt: e.target.value }))}
+              style={{ fontSize: 12 }}
+            />
+
+            <button
+              className="sidebar-save-btn"
+              onClick={handleSaveWaConfig}
+              disabled={waConfigSaving}
+              style={{ marginTop: 4, fontSize: 12 }}
+            >
+              {waConfigSaved ? "Saved ✓" : waConfigSaving ? "Saving…" : "Save settings"}
+            </button>
+          </div>
+        )}
+      </div>
     </>
   );
 
   return (
+    <>
     <aside className={`agent-sidebar${className ? ` ${className}` : ""}`}>
       {/* Identity header — always visible */}
       <div className="sidebar-identity">
@@ -615,5 +739,26 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
         </>
       )}
     </aside>
+
+    {/* WhatsApp QR Modal */}
+    {showQR && (
+      <div className="modal-overlay" onClick={handleQRClose}>
+        <div className="modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 340, textAlign: "center" }}>
+          <h3 style={{ marginBottom: 12, fontSize: 16 }}>Connect WhatsApp</h3>
+          <p className="mcp-hint" style={{ marginBottom: 16 }}>
+            Open WhatsApp on your phone → Linked Devices → Link a device → scan this QR code.
+          </p>
+          {qrError ? (
+            <div style={{ color: "var(--error, #ef4444)", marginBottom: 12 }}>{qrError}</div>
+          ) : qrDataUrl ? (
+            <img src={qrDataUrl} alt="WhatsApp QR code" style={{ width: 240, height: 240, borderRadius: 8, display: "block", margin: "0 auto 16px" }} />
+          ) : (
+            <div className="skeleton" style={{ width: 240, height: 240, borderRadius: 8, margin: "0 auto 16px" }} />
+          )}
+          <button className="automation-cancel-btn" onClick={handleQRClose}>Cancel</button>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

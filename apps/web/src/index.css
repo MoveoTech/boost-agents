@@ -2305,6 +2305,41 @@ body {
 .feedback-btn.active.positive { background: #f0fdf4; border-color: #86efac; }
 .feedback-btn.active.negative { background: #fef2f2; border-color: #fca5a5; }
 
+/* ── WhatsApp config panel ───────────────────────────────────── */
+
+.wa-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 4px 30px;
+}
+
+.wa-config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wa-config-label {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  min-width: 62px;
+}
+
+.wa-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wa-checkbox-label input[type="checkbox"] {
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
 .feedback-divider {
   width: 1px;
   height: 18px;

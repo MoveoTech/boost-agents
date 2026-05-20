@@ -439,6 +439,60 @@ app.delete("/api/memories/:agentId/:userId/:key", async (req, res) => {
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
+// ── WhatsApp Credentials ──────────────────────────────────────────────────────
+
+function waRef(agentId: string, userId: string) {
+  return db.collection("whatsapp").doc(agentId).collection("sessions").doc(userId);
+}
+
+app.get("/api/whatsapp/:agentId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId } = req.params;
+  try {
+    const snap = await db.collection("whatsapp").doc(agentId).collection("sessions").get();
+    res.json({ users: snap.docs.map((d) => d.id) });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.get("/api/whatsapp/:agentId/:userId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId } = req.params;
+  try {
+    const snap = await waRef(agentId, userId).get();
+    if (!snap.exists) { res.json(null); return; }
+    res.json(snap.data());
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.put("/api/whatsapp/:agentId/:userId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId } = req.params;
+  const { creds, keys } = req.body as { creds: string; keys: string };
+  try {
+    await waRef(agentId, userId).set({ creds, keys, updatedAt: new Date().toISOString() });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.patch("/api/whatsapp/:agentId/:userId/config", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId } = req.params;
+  const { config } = req.body as { config: string };
+  try {
+    await waRef(agentId, userId).set({ config, updatedAt: new Date().toISOString() }, { merge: true });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.delete("/api/whatsapp/:agentId/:userId", async (req, res) => {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { agentId, userId } = req.params;
+  try {
+    await waRef(agentId, userId).delete();
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // ── Feedback ──────────────────────────────────────────────────────────────────
 
 function feedbackRef(agentId: string) {
