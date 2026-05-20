@@ -732,8 +732,11 @@ app.put("/api/whatsapp/config", async (req, res) => {
 function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
   return async ({ email, fromName, text, isGroup, groupName, isMentioned, recentMessages }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
+    const tHandler = Date.now();
     try {
+      const tConfig0 = Date.now();
       const config = await loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey);
+      console.log(JSON.stringify({ ...ctx, msg: "timing: loadWAConfig", ms: Date.now() - tConfig0 }));
 
       console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs, keyword: config.keyword ?? null }));
 
@@ -761,15 +764,14 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       }
 
       const agentStartMs = Date.now();
-      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length, text }));
+      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length, text, msSinceHandlerStart: agentStartMs - tHandler }));
 
-      // Always try all services — getUserAccessToken returns null if not connected,
-      // so tools are silently skipped when the user hasn't connected that service.
-      // Don't gate on usersData which can be stale/empty when oauth-service is slow.
+      const tMonday0 = Date.now();
       const mondayToken = await Promise.race([
         getUserAccessToken("monday", email).catch(() => null),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
       ]);
+      console.log(JSON.stringify({ ...ctx, msg: "timing: mondayToken", ms: Date.now() - tMonday0, cached: mondayToken !== null }));
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
 
@@ -782,12 +784,13 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           }).join("\n")
         : "";
 
-      const baseContext = `You are a WhatsApp assistant in ${location}.${historyStr}\n\n[${new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}] ${fromName}: ${text}\n\nReply to ${fromName}'s last message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply will be delivered automatically.`;
+      const baseContext = `You are a WhatsApp assistant in ${location}.${historyStr}\n\n[${new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}] ${fromName}: ${text}\n\nReply to ${fromName}'s last message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply will be delivered automatically.\n\nCRITICAL RULES:\n- You have ONE response. There is no follow-up message. Act NOW or not at all.\n- NEVER say "one sec", "let me check", "creating now", "I'll do that" without immediately calling the tool in THIS response.\n- If a tool fails or is not available, say so honestly. Never confirm success unless the tool returned success.\n- If you need info to complete an action, ask ONE question. If you have everything, do it immediately.`;
 
       const agentTimeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("agent timed out after 55s")), 55_000)
       );
 
+      const tChat0 = Date.now();
       const result = await Promise.race([
         chat(
           baseContext, [], "tools",
@@ -806,6 +809,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       ]);
 
       const elapsedSec = Math.round((Date.now() - agentStartMs) / 1000);
+      console.log(JSON.stringify({ ...ctx, msg: "timing: chat()", ms: Date.now() - tChat0, toolsUsed: result.toolUses?.length ?? 0 }));
       console.log(JSON.stringify({ ...ctx, msg: "agent reply ready", replyLength: result.reply?.length ?? 0, toolsUsed: result.toolUses?.length ?? 0, elapsedSec }));
       const reply = result.reply ? `${result.reply}\n\n_(${elapsedSec}s)_` : null;
       return reply;

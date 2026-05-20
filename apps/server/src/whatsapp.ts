@@ -471,12 +471,14 @@ export async function connectSession(
         });
 
         try {
+          const t0 = Date.now();
           // Show typing indicator — must send "available" first so WhatsApp registers us as active
           const activeSockForPresence = sessions.get(email)?.socket ?? sock;
           activeSockForPresence.sendPresenceUpdate("available", from).catch(() => {});
           activeSockForPresence.sendPresenceUpdate("composing", from).catch(() => {});
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, recentMessages });
           activeSockForPresence.sendPresenceUpdate("paused", from).catch(() => {});
+          waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
           if (reply) {
             // Use the current active socket — the original may have been replaced by a reconnect
             const activeSock = sessions.get(email)?.socket ?? sock;
