@@ -805,7 +805,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const baseContext = `You are a WhatsApp assistant in ${location}.${historyStr}\n\n[${new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}] ${fromName}: ${text}\n\nReply to ${fromName}'s last message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply will be delivered automatically.`;
 
       const agentTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("agent timed out after 25s")), 25_000)
+        setTimeout(() => reject(new Error("agent timed out after 55s")), 55_000)
       );
 
       const result = await Promise.race([
