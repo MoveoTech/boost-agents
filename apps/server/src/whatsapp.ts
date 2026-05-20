@@ -186,6 +186,21 @@ export const DEFAULT_WA_CONFIG: WhatsAppConfig = {
   replyInDMs: true,
 };
 
+// Recent message buffer — keeps last 30 messages per JID for conversation context
+const recentMsgBuffer = new Map<string, Array<{ from: string; text: string; ts: number }>>();
+const RECENT_MSG_LIMIT = 30;
+
+export function getRecentMessages(jid: string): Array<{ from: string; text: string; ts: number }> {
+  return recentMsgBuffer.get(jid) ?? [];
+}
+
+function storeRecentMessage(jid: string, from: string, text: string, ts: number) {
+  const buf = recentMsgBuffer.get(jid) ?? [];
+  buf.push({ from, text, ts });
+  if (buf.length > RECENT_MSG_LIMIT) buf.shift();
+  recentMsgBuffer.set(jid, buf);
+}
+
 // Handler receives full message context; returns reply text or null (= no reply)
 export type MessageHandler = (params: {
   email: string;
@@ -195,6 +210,7 @@ export type MessageHandler = (params: {
   isGroup: boolean;
   groupName?: string;
   isMentioned: boolean;
+  recentMessages: Array<{ from: string; text: string; ts: number }>;
 }) => Promise<string | null>;
 
 export type MentionHandler = MessageHandler;
@@ -403,6 +419,11 @@ export async function connectSession(
           } catch { /* no metadata */ }
         }
 
+        // Store in buffer BEFORE logging so the current message is included in context
+        const storageTs = msgTs || Date.now();
+        storeRecentMessage(from, fromName, text, storageTs);
+        const recentMessages = getRecentMessages(from);
+
         waLog("info", email, "incoming message", {
           from,
           fromName,
@@ -415,7 +436,7 @@ export async function connectSession(
         });
 
         try {
-          const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned });
+          const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, recentMessages });
           if (reply) {
             waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
             const isLid = from.endsWith("@lid");

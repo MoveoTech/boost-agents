@@ -668,16 +668,26 @@ app.delete("/api/whatsapp", async (req, res) => {
 
 // ── WhatsApp config endpoints ─────────────────────────────────────────────────
 
+// Cache config per user — falls back to stale cache when oauth-service is unreachable
+const waConfigCache = new Map<string, { config: WhatsAppConfig; ts: number }>();
+
 async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<WhatsAppConfig> {
   try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5_000);
     const res = await fetch(`${oauthServiceUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}`, {
       headers: { "x-api-key": oauthServiceKey },
+      signal: ctrl.signal,
     });
-    if (!res.ok) return DEFAULT_WA_CONFIG;
+    clearTimeout(t);
+    if (!res.ok) return waConfigCache.get(email)?.config ?? DEFAULT_WA_CONFIG;
     const data = await res.json() as { config?: string } | null;
-    if (!data?.config) return DEFAULT_WA_CONFIG;
-    return { ...DEFAULT_WA_CONFIG, ...JSON.parse(data.config) };
-  } catch { return DEFAULT_WA_CONFIG; }
+    const config = data?.config ? { ...DEFAULT_WA_CONFIG, ...JSON.parse(data.config) } : DEFAULT_WA_CONFIG;
+    waConfigCache.set(email, { config, ts: Date.now() });
+    return config;
+  } catch {
+    return waConfigCache.get(email)?.config ?? DEFAULT_WA_CONFIG;
+  }
 }
 
 app.get("/api/whatsapp/config", async (req, res) => {
@@ -715,14 +725,17 @@ app.put("/api/whatsapp/config", async (req, res) => {
 
 // Build the message handler — applies user config to decide when to reply, runs agent with all tools
 function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
-  return async ({ email, fromName, text, isGroup, groupName, isMentioned }) => {
+  return async ({ email, fromName, text, isGroup, groupName, isMentioned, recentMessages }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
     try {
+      const usersCtrl = new AbortController();
+      const usersTimeout = setTimeout(() => usersCtrl.abort(), 5_000);
       const [config, usersData] = await Promise.all([
         loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey),
-        fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey } })
-          .then((r) => r.json() as Promise<{ users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] }>)
+        fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey }, signal: usersCtrl.signal })
+          .then((r) => { clearTimeout(usersTimeout); return r.json() as Promise<{ users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] }>; })
           .catch((err) => {
+            clearTimeout(usersTimeout);
             console.warn(JSON.stringify({ ...ctx, msg: "failed to load users — proceeding without user tools", error: (err as Error).message }));
             return { users: [] as { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
           }),
@@ -759,7 +772,17 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const mondayToken = user?.monday ? (await getUserAccessToken("monday", email).catch(() => null)) ?? undefined : undefined;
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
-      const baseContext = `${fromName} sent a message in ${location}: "${text}"\n\nReply directly to this message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply will be delivered automatically.`;
+
+      // Build conversation history for context (last 20 messages, excluding the current one)
+      const historyMsgs = recentMessages.slice(-21, -1); // exclude last (current message already in array)
+      const historyStr = historyMsgs.length > 0
+        ? "\n\nRecent conversation:\n" + historyMsgs.map((m) => {
+            const t = new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
+            return `[${t}] ${m.from}: ${m.text}`;
+          }).join("\n")
+        : "";
+
+      const baseContext = `You are a WhatsApp assistant in ${location}.${historyStr}\n\n[${new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}] ${fromName}: ${text}\n\nReply to ${fromName}'s last message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply will be delivered automatically.`;
 
       const result = await chat(
         baseContext, [], "tools",
