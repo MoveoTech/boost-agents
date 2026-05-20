@@ -693,6 +693,8 @@ async function loadUsersData(agentId: string, oauthServiceUrl: string, oauthServ
 }
 
 async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<WhatsAppConfig> {
+  const cached = waConfigCache.get(email);
+  if (cached && Date.now() - cached.ts < 60_000) return cached.config;
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 5_000);
@@ -701,13 +703,13 @@ async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: str
       signal: ctrl.signal,
     });
     clearTimeout(t);
-    if (!res.ok) return waConfigCache.get(email)?.config ?? DEFAULT_WA_CONFIG;
+    if (!res.ok) return cached?.config ?? DEFAULT_WA_CONFIG;
     const data = await res.json() as { config?: string } | null;
     const config = data?.config ? { ...DEFAULT_WA_CONFIG, ...JSON.parse(data.config) } : DEFAULT_WA_CONFIG;
     waConfigCache.set(email, { config, ts: Date.now() });
     return config;
   } catch {
-    return waConfigCache.get(email)?.config ?? DEFAULT_WA_CONFIG;
+    return cached?.config ?? DEFAULT_WA_CONFIG;
   }
 }
 
