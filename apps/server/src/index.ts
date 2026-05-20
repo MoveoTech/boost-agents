@@ -786,7 +786,10 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       // Always try all services — getUserAccessToken returns null if not connected,
       // so tools are silently skipped when the user hasn't connected that service.
       // Don't gate on usersData which can be stale/empty when oauth-service is slow.
-      const mondayToken = (await getUserAccessToken("monday", email).catch(() => null)) ?? undefined;
+      const mondayToken = await Promise.race([
+        getUserAccessToken("monday", email).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+      ]);
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
 
