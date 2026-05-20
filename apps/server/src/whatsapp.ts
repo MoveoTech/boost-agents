@@ -548,22 +548,29 @@ export async function initAllSessions(
     console.log(JSON.stringify({ tag: "whatsapp", msg: "initAllSessions skipped — missing config", agentId: !!agentId, oauthUrl: !!oauthUrl, oauthKey: !!oauthKey }));
     return;
   }
-  try {
-    const res = await fetch(`${oauthUrl}/api/whatsapp/${agentId}`, {
-      headers: { "x-api-key": oauthKey },
-    });
-    if (!res.ok) {
-      console.warn(JSON.stringify({ tag: "whatsapp", msg: "initAllSessions — oauth-service returned non-ok", status: res.status }));
+  // Retry up to 5 times with exponential backoff — the oauth-service may be cold-starting
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      const res = await fetch(`${oauthUrl}/api/whatsapp/${agentId}`, {
+        headers: { "x-api-key": oauthKey },
+      });
+      if (!res.ok) {
+        console.warn(JSON.stringify({ tag: "whatsapp", msg: "initAllSessions — oauth-service returned non-ok", status: res.status }));
+        return;
+      }
+      const { users } = await res.json() as { users: string[] };
+      console.log(JSON.stringify({ tag: "whatsapp", msg: `startup: restoring ${users.length} session(s)`, users }));
+      for (const email of users) {
+        connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler).catch((err) =>
+          waLog("error", email, "startup restore failed", { error: (err as Error).message })
+        );
+      }
       return;
+    } catch (err) {
+      const delay = attempt * 5_000;
+      console.warn(JSON.stringify({ tag: "whatsapp", msg: `initAllSessions attempt ${attempt} failed — retrying in ${delay / 1000}s`, error: (err as Error).message }));
+      if (attempt < 5) await new Promise((r) => setTimeout(r, delay));
     }
-    const { users } = await res.json() as { users: string[] };
-    console.log(JSON.stringify({ tag: "whatsapp", msg: `startup: restoring ${users.length} session(s)`, users }));
-    for (const email of users) {
-      connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler).catch((err) =>
-        waLog("error", email, "startup restore failed", { error: (err as Error).message })
-      );
-    }
-  } catch (err) {
-    console.warn(JSON.stringify({ tag: "whatsapp", msg: "initAllSessions failed (non-fatal)", error: (err as Error).message }));
   }
+  console.warn(JSON.stringify({ tag: "whatsapp", msg: "initAllSessions gave up after 5 attempts" }));
 }
