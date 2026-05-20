@@ -411,13 +411,14 @@ export async function connectSession(
       const myJid = sock.user?.id?.replace(/:.*@/, "@");
 
       for (const msg of messages) {
-        // Deduplicate: same message can arrive from multiple JID formats simultaneously
+        // Deduplicate: same message can arrive from multiple JID formats simultaneously.
+        // We only mark as processed AFTER confirming text exists — if decryption fails
+        // (empty message), don't block future retries once the Signal session establishes.
         const msgId = msg.key.id ?? "";
         if (msgId && processedMsgIds.has(msgId)) {
           waLog("info", email, "skipping duplicate message", { id: msgId });
           continue;
         }
-        if (msgId) processedMsgIds.add(msgId);
 
         // Skip backlogged messages sent before this session connected (delivered on reconnect)
         const msgTs = ((msg.messageTimestamp as number) ?? 0) * 1000;
@@ -442,10 +443,14 @@ export async function connectSession(
           "";
 
         if (!text) {
+          // Don't mark as processed — allow WhatsApp's retry to succeed once session establishes
           const msgTypes = Object.keys(msg.message ?? {}).join(",");
           waLog("info", email, "skipping message with no text", { msgTypes, remoteJid: msg.key.remoteJid });
           continue;
         }
+
+        // Text confirmed — mark processed now to prevent duplicate handling
+        if (msgId) processedMsgIds.add(msgId);
 
         const mentionedJids: string[] =
           msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ?? [];
