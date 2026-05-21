@@ -789,16 +789,39 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
 
-      // Build conversation history for context (last 20 messages, excluding the current one)
-      const historyMsgs = recentMessages.slice(-6, -1); // last 5 messages for context, keep prompt short
-      const historyStr = historyMsgs.length > 0
-        ? "\n\nRecent conversation:\n" + historyMsgs.map((m) => {
-            const t = new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
-            return `[${t}] ${m.from}: ${m.text}`;
-          }).join("\n")
-        : "";
+      // Build proper alternating conversation history from the recent message buffer.
+      // Consecutive messages from the same role are merged so Claude sees clean turns.
+      const historyRaw = recentMessages.slice(0, -1); // exclude current message
+      const history: Content[] = [];
+      for (const m of historyRaw) {
+        if (!m.text) continue;
+        const role: "user" | "model" = m.from === "Assistant" ? "model" : "user";
+        const content = m.from === "Assistant" ? m.text : `${m.from}: ${m.text}`;
+        const last = history[history.length - 1];
+        if (last && last.role === role) {
+          // Merge consecutive same-role messages
+          (last.parts[0] as { text: string }).text += `\n${content}`;
+        } else {
+          history.push({ role, parts: [{ text: content }] });
+        }
+      }
+      // Anthropic requires history to start with a user turn and end with a user or model turn
+      // before the new user message. Drop a leading model turn if present.
+      if (history.length > 0 && history[0].role === "model") history.shift();
 
-      const baseContext = `You are a WhatsApp assistant in ${location}.${historyStr}\n\n[${new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}] ${fromName}: ${text}\n\nReply to ${fromName}'s last message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply will be delivered automatically.\n\nCRITICAL RULES (override all other instructions):\n- You have ONE response. There is no follow-up. Act NOW or not at all.\n- NEVER say "one sec", "let me check", "I'll do that", "creating now" without calling the tool immediately in this same response.\n- When the user provides all info needed (title, time, attendees, etc.) — execute the action immediately. Do NOT ask for confirmation.\n- If a tool fails, say so honestly. Never claim success unless the tool returned success.\n- Only ask a question if a required piece of info is genuinely missing. Ask at most ONE question per response.\n- Default timezone: Israel (Asia/Jerusalem, UTC+3) unless the user specifies otherwise.`;
+      const now = new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
+      const systemPrompt = [
+        `You are a WhatsApp assistant in ${location}. Current time: ${now}.`,
+        `Reply to ${fromName}'s latest message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply is delivered automatically.`,
+        `CRITICAL RULES (override all other instructions):`,
+        `- You have ONE response. There is no follow-up. Act NOW or not at all.`,
+        `- NEVER say "one sec", "let me check", "I'll do that", "creating now" without calling the tool immediately in this same response.`,
+        `- When the user provides all info needed — execute immediately. Do NOT ask for confirmation.`,
+        `- If a tool fails, say so honestly. Never claim success unless the tool returned success.`,
+        `- Only ask a question if a required piece of info is genuinely missing. Ask at most ONE question per response.`,
+        `- Default timezone: Israel (Asia/Jerusalem, UTC+3) unless the user specifies otherwise.`,
+        config.customPrompt || "",
+      ].filter(Boolean).join("\n");
 
       const agentTimeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("agent timed out after 55s")), 55_000)
@@ -807,11 +830,12 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const tChat0 = Date.now();
       const result = await Promise.race([
         chat(
-          baseContext, [], "tools",
-          config.customPrompt || undefined,
-          email,   // gmailUser — token checked inside agent, null if not connected
+          `${fromName}: ${text}`,
+          history,
+          "tools",
+          systemPrompt,
+          email,   // gmailUser
           email,   // calendarUser
-          // WhatsApp uses its own model config — defaults to Haiku for speed, ignores user/org model settings
           { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false },
           mondayToken ?? undefined,
           email,   // tasksUser
