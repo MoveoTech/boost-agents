@@ -413,6 +413,10 @@ export async function connectSession(
           // Saved credentials are corrupt — wipe them so next connect uses fresh QR
           waLog("warn", email, "crypto error on connect — wiping stored credentials, user must re-scan QR");
           await deleteCreds(agentId, email, oauthUrl, oauthKey);
+        } else if (reason?.includes("QR refs attempts ended") || reason?.includes("QR timeout")) {
+          // QR was generated but nobody scanned it — stop reconnecting to avoid an
+          // infinite QR loop. User must reconnect explicitly via the settings UI.
+          waLog("info", email, "QR scan timed out — stopping reconnect loop, user must reconnect via settings");
         } else {
           const attempt = session.reconnectAttempt + 1;
           const backoff = Math.min(5000 * attempt, 60_000);
