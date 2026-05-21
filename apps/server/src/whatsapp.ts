@@ -434,10 +434,9 @@ export async function connectSession(
 
     sock.ev.on("messages.upsert", async ({ messages, type }: any) => {
       waLog("info", email, "messages.upsert fired", { type, count: messages?.length ?? 0 });
-      // Process both "notify" (new messages) and "append" (recent messages delivered
-      // slightly late or via group history). The backlog timestamp filter below handles
-      // true history-sync messages (which are old and get skipped).
-      if (type !== "notify" && type !== "append") return;
+      // Only process real-time messages. "append" is WhatsApp's history-sync delivery
+      // on reconnect — those are always backlogged and should never trigger a reply.
+      if (type !== "notify") return;
       const myJid = sock.user?.id?.replace(/:.*@/, "@");
 
       for (const msg of messages) {
@@ -450,11 +449,12 @@ export async function connectSession(
           continue;
         }
 
-        // Skip backlogged messages sent before this session connected (delivered on reconnect)
+        // Skip any message older than 60 seconds — catches stale "notify" messages that
+        // WhatsApp occasionally delivers late, regardless of when the session connected.
         const msgTs = ((msg.messageTimestamp as number) ?? 0) * 1000;
-        const connectedAt = session.connectedAt ?? 0;
-        if (msgTs && connectedAt && msgTs < connectedAt - 30_000) {
-          waLog("info", email, "skipping backlogged message", { sentMsAgo: Date.now() - msgTs });
+        const ageMsec = msgTs ? Date.now() - msgTs : 0;
+        if (ageMsec > 60_000) {
+          waLog("info", email, "skipping stale message", { sentMsAgo: ageMsec });
           continue;
         }
 
