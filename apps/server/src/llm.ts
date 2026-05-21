@@ -3,10 +3,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import type { ToolUse, ChatResult } from "./agent";
 
-// Singleton clients — share the underlying HTTP connection pool across all calls.
-// Creating a new client per call forces a fresh TCP+TLS handshake every time (~10-12s penalty).
-const anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
-const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
+// Lazy singleton clients — created on first use so optional API keys (OPENAI_API_KEY)
+// don't crash the server at startup when not configured.
+let _anthropicClient: Anthropic | undefined;
+let _openaiClient: OpenAI | undefined;
+function getAnthropicClient(): Anthropic {
+  if (!_anthropicClient) _anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _anthropicClient;
+}
+function getOpenAIClient(): OpenAI {
+  if (!_openaiClient) _openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openaiClient;
+}
 
 export interface ModelConfig {
   provider: "gemini" | "claude" | "openai";
@@ -130,7 +138,7 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
 async function chatClaude(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment): Promise<ChatResult> {
   const t0claude = Date.now();
   console.log(JSON.stringify({ tag: "llm", msg: "chatClaude entered", model: modelId }));
-  const client = anthropicClient;
+  const client = getAnthropicClient();
   const toolUses: ToolUse[] = [];
 
   const claudeTools = tools.map((t) => ({
@@ -204,7 +212,7 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
 // ── OpenAI ───────────────────────────────────────────────────────────────────
 
 async function chatOpenAI(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, image?: ImageAttachment): Promise<ChatResult> {
-  const client = openaiClient;
+  const client = getOpenAIClient();
   const toolUses: ToolUse[] = [];
 
   const openAITools: OpenAI.ChatCompletionTool[] = tools.map((t) => ({
@@ -317,7 +325,7 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
 }
 
 async function chatClaudeStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean, image?: ImageAttachment): Promise<ToolUse[]> {
-  const client = anthropicClient;
+  const client = getAnthropicClient();
   const toolUses: ToolUse[] = [];
 
   const claudeTools = tools.map((t) => ({
@@ -384,7 +392,7 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
 }
 
 async function chatOpenAIStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, image?: ImageAttachment): Promise<ToolUse[]> {
-  const client = openaiClient;
+  const client = getOpenAIClient();
   const toolUses: ToolUse[] = [];
 
   const openAITools: OpenAI.ChatCompletionTool[] = tools.map((t) => ({
