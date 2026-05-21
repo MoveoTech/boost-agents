@@ -25,7 +25,7 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 // email → auth state (for external purge access)
-const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number }>();
+const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void> }>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -138,7 +138,10 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
   const creds: any = saved?.creds ? await deserialize(saved.creds) : initAuthCreds();
   const keyMap: Record<string, any> = saved?.keys ? await deserialize(saved.keys) : {};
 
+  let credsSaveEnabled = true;
+
   const persist = async () => {
+    if (!credsSaveEnabled) return;
     await saveCredsToFirestore(agentId, email, oauthUrl, oauthKey, {
       creds: await serialize(creds),
       keys: await serialize(keyMap),
@@ -185,6 +188,12 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
       toDelete.forEach((k) => delete keyMap[k]);
       if (toDelete.length > 0) persist().catch(() => {});
       return toDelete.length;
+    },
+    // Wipe all credentials from Firestore and prevent further saves — called when the noise
+    // session is irreparably corrupt (e.g. "Unsupported state or unable to authenticate data")
+    deleteAllCreds: async () => {
+      credsSaveEnabled = false;
+      await deleteCreds(agentId, email, oauthUrl, oauthKey);
     },
   };
 }
@@ -276,7 +285,7 @@ export async function connectSession(
     waLog("info", email, "Baileys loaded", { version: version.join(".") });
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
-    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys });
+    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds });
 
     waLog("info", email, "creating WASocket");
     const sock = makeWASocket({
@@ -536,14 +545,18 @@ export async function connectSession(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 // Called from global unhandledRejection handler when a native crypto error fires
-// during session setup — purges all session-type keys for every connecting session.
+// during session setup — wipes all credentials so the next reconnect forces a fresh QR scan.
 export function purgeConnectingSessionKeys(): void {
   for (const [email, session] of sessions.entries()) {
     if (session.status === "connecting") {
       const auth = authRegistry.get(email);
       if (auth) {
-        const purged = auth.purgeContactKeys("session-");
-        waLog("warn", email, "purged all session keys due to native crypto error", { purgedKeys: purged });
+        waLog("warn", email, "native crypto error during connect — wiping all credentials, user must re-scan QR");
+        sessions.delete(email); // remove first to prevent duplicate calls on rapid re-fire
+        auth.deleteAllCreds().catch(() => {});
+        // Close socket — the connection.update handler will schedule a reconnect which will
+        // find no credentials in Firestore and generate a fresh QR
+        try { session.socket?.end?.(); } catch {}
       }
     }
   }
