@@ -26,7 +26,9 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 // email → auth state (for external purge access)
-const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void> }>();
+const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; freezeCredsSave: () => void }>();
+// consecutive crypto-error count per email — wipe only after 3 failures
+const cryptoRetryCount = new Map<string, number>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -190,8 +192,11 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
       if (toDelete.length > 0) persist().catch(() => {});
       return toDelete.length;
     },
+    // Stop any further saves from this socket instance immediately — call on disconnect
+    // to prevent the old socket's in-flight saves from corrupting the next session's creds.
+    freezeCredsSave: () => { credsSaveEnabled = false; },
     // Wipe all credentials from Firestore and prevent further saves — called when the noise
-    // session is irreparably corrupt (e.g. "Unsupported state or unable to authenticate data")
+    // session is irreparably corrupt after N retries.
     deleteAllCreds: async () => {
       credsSaveEnabled = false;
       await deleteCreds(agentId, email, oauthUrl, oauthKey);
@@ -291,7 +296,7 @@ export async function connectSession(
     waLog("info", email, "Baileys loaded", { version: version.join(".") });
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
-    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds });
+    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, freezeCredsSave: auth.freezeCredsSave });
 
     waLog("info", email, "creating WASocket");
     const sock = makeWASocket({
@@ -381,6 +386,7 @@ export async function connectSession(
         session.qr = undefined;
         session.reconnectAttempt = 0;
         session.connectedAt = Date.now();
+        cryptoRetryCount.delete(email); // successful connect — reset retry counter
         waLog("info", email, "connected successfully", { jid: sock.user?.id });
         session.connectedListeners.forEach((fn) => fn());
         session.qrListeners = [];
@@ -389,6 +395,10 @@ export async function connectSession(
       }
 
       if (connection === "close") {
+        // Immediately stop the old socket from saving credentials — prevents race-condition
+        // corruption where in-flight saves overwrite fresh credentials on the new session.
+        auth.freezeCredsSave();
+
         const err = lastDisconnect?.error as InstanceType<typeof Boom> | undefined;
         const code = err?.output?.statusCode;
         const reason = err?.message ?? "unknown";
@@ -569,17 +579,27 @@ export async function connectSession(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 // Called from global unhandledRejection handler when a native crypto error fires
-// during session setup — wipes all credentials so the next reconnect forces a fresh QR scan.
+// during session setup. Retries up to 2 times with existing credentials (error is often
+// transient); only wipes credentials on the 3rd consecutive failure.
 export function purgeConnectingSessionKeys(): void {
   for (const [email, session] of sessions.entries()) {
     if (session.status === "connecting") {
       const auth = authRegistry.get(email);
-      if (auth) {
-        waLog("warn", email, "native crypto error during connect — wiping all credentials, user must re-scan QR");
-        sessions.delete(email); // remove first to prevent duplicate calls on rapid re-fire
+      if (!auth) continue;
+      const attempt = (cryptoRetryCount.get(email) ?? 0) + 1;
+      cryptoRetryCount.set(email, attempt);
+      sessions.delete(email); // remove first to prevent duplicate calls on rapid re-fire
+      if (attempt < 3) {
+        // Transient error — close socket and let connection.update schedule a reconnect
+        // with the same credentials. The race-condition fix (freezeCredsSave) means the
+        // credentials saved so far are clean.
+        waLog("warn", email, `native crypto error (attempt ${attempt}/3) — closing socket, will retry with existing credentials`);
+        try { session.socket?.end?.(); } catch {}
+      } else {
+        // 3 consecutive failures — credentials are genuinely corrupt, force fresh QR
+        waLog("warn", email, "native crypto error (3 consecutive) — wiping credentials, user must re-scan QR");
+        cryptoRetryCount.delete(email);
         auth.deleteAllCreds().catch(() => {});
-        // Close socket — the connection.update handler will schedule a reconnect which will
-        // find no credentials in Firestore and generate a fresh QR
         try { session.socket?.end?.(); } catch {}
       }
     }
