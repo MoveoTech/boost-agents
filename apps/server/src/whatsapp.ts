@@ -27,7 +27,9 @@ interface Session {
 const sessions = new Map<string, Session>();
 // email → auth state (for external purge access)
 const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; freezeCredsSave: () => void }>();
-// consecutive crypto-error count per email — wipe only after 3 failures
+// persistent reconnect attempt counter — survives session object recreation so backoff grows correctly
+const reconnectAttempts = new Map<string, number>();
+// consecutive crypto error counter — reset on successful connect
 const cryptoRetryCount = new Map<string, number>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
@@ -386,7 +388,8 @@ export async function connectSession(
         session.qr = undefined;
         session.reconnectAttempt = 0;
         session.connectedAt = Date.now();
-        cryptoRetryCount.delete(email); // successful connect — reset retry counter
+        reconnectAttempts.delete(email); // reset persistent backoff counter on successful connect
+        cryptoRetryCount.delete(email);  // reset crypto retry counter
         waLog("info", email, "connected successfully", { jid: sock.user?.id });
         session.connectedListeners.forEach((fn) => fn());
         session.qrListeners = [];
@@ -428,7 +431,8 @@ export async function connectSession(
           // infinite QR loop. User must reconnect explicitly via the settings UI.
           waLog("info", email, "QR scan timed out — stopping reconnect loop, user must reconnect via settings");
         } else {
-          const attempt = session.reconnectAttempt + 1;
+          const attempt = (reconnectAttempts.get(email) ?? 0) + 1;
+          reconnectAttempts.set(email, attempt);
           const backoff = Math.min(5000 * attempt, 60_000);
           waLog("info", email, `reconnecting in ${backoff / 1000}s (attempt ${attempt})`);
           const carryQR = pendingQRListeners.length ? (qr: string) => pendingQRListeners.forEach((fn) => fn(qr)) : undefined;
@@ -595,29 +599,18 @@ export async function connectSession(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 // Called from global unhandledRejection handler when a native crypto error fires
-// during session setup. Retries up to 2 times with existing credentials (error is often
-// transient); only wipes credentials on the 3rd consecutive failure.
+// during session setup. Closes the socket so connection.update schedules a reconnect
+// with the SAME credentials — the phone still has the linked device, so credentials
+// are valid on WhatsApp's server. Never wipes credentials here; only a 401 logout
+// from WhatsApp should cause a credential wipe.
 export function purgeConnectingSessionKeys(): void {
   for (const [email, session] of sessions.entries()) {
     if (session.status === "connecting") {
-      const auth = authRegistry.get(email);
-      if (!auth) continue;
       const attempt = (cryptoRetryCount.get(email) ?? 0) + 1;
       cryptoRetryCount.set(email, attempt);
-      sessions.delete(email); // remove first to prevent duplicate calls on rapid re-fire
-      if (attempt < 3) {
-        // Transient error — close socket and let connection.update schedule a reconnect
-        // with the same credentials. The race-condition fix (freezeCredsSave) means the
-        // credentials saved so far are clean.
-        waLog("warn", email, `native crypto error (attempt ${attempt}/3) — closing socket, will retry with existing credentials`);
-        try { session.socket?.end?.(); } catch {}
-      } else {
-        // 3 consecutive failures — credentials are genuinely corrupt, force fresh QR
-        waLog("warn", email, "native crypto error (3 consecutive) — wiping credentials, user must re-scan QR");
-        cryptoRetryCount.delete(email);
-        auth.deleteAllCreds().catch(() => {});
-        try { session.socket?.end?.(); } catch {}
-      }
+      sessions.delete(email); // prevent duplicate calls on rapid re-fire
+      waLog("warn", email, `native crypto error during connect (attempt ${attempt}) — closing socket, will retry with existing credentials`);
+      try { session.socket?.end?.(); } catch {}
     }
   }
 }
