@@ -466,10 +466,16 @@ export async function connectSession(
           continue;
         }
 
-        // Skip any message older than 60 seconds — catches stale "notify" messages that
-        // WhatsApp occasionally delivers late, regardless of when the session connected.
-        const msgTs = ((msg.messageTimestamp as number) ?? 0) * 1000;
-        const ageMsec = msgTs ? Date.now() - msgTs : 0;
+        // Skip any message older than 60 seconds.
+        // Use Number() to coerce protobuf Long objects — casting as number gives NaN,
+        // which makes the age check always pass (NaN > 60_000 = false).
+        const msgTs = Number(msg.messageTimestamp ?? 0) * 1000;
+        if (!msgTs || isNaN(msgTs)) {
+          // No parseable timestamp — skip, can't determine if fresh or historical.
+          waLog("info", email, "skipping message with no timestamp", { id: msgId });
+          continue;
+        }
+        const ageMsec = Date.now() - msgTs;
         if (ageMsec > 60_000) {
           waLog("info", email, "skipping stale message", { sentMsAgo: ageMsec });
           continue;
