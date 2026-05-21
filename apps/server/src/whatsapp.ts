@@ -20,6 +20,7 @@ interface Session {
   connectedListeners: Array<() => void>;
   reconnectAttempt: number;
   connectedAt?: number;
+  onEveryConnect?: () => void;
 }
 
 // email → session
@@ -252,6 +253,7 @@ export async function connectSession(
   mentionHandler: MentionHandler,
   onQR?: (qr: string) => void,
   onConnected?: () => void,
+  onEveryConnect?: () => void,
 ): Promise<void> {
   const existing = sessions.get(email);
   if (existing) {
@@ -263,6 +265,7 @@ export async function connectSession(
     waLog("info", email, `session already ${existing.status} — attaching new listeners`);
     if (onQR) existing.qrListeners.push(onQR);
     if (onConnected) existing.connectedListeners.push(onConnected);
+    if (onEveryConnect) existing.onEveryConnect = onEveryConnect;
     if (existing.status === "qr" && existing.qr && onQR) onQR(existing.qr);
     return;
   }
@@ -273,6 +276,7 @@ export async function connectSession(
     qrListeners: onQR ? [onQR] : [],
     connectedListeners: onConnected ? [onConnected] : [],
     reconnectAttempt: 0,
+    onEveryConnect,
   };
   sessions.set(email, session);
   waLog("info", email, "starting new Baileys session");
@@ -363,6 +367,7 @@ export async function connectSession(
         session.connectedListeners.forEach((fn) => fn());
         session.qrListeners = [];
         session.connectedListeners = [];
+        session.onEveryConnect?.(); // prewarm caches on every connect, including reconnects
       }
 
       if (connection === "close") {
@@ -396,8 +401,9 @@ export async function connectSession(
           waLog("info", email, `reconnecting in ${backoff / 1000}s (attempt ${attempt})`);
           const carryQR = pendingQRListeners.length ? (qr: string) => pendingQRListeners.forEach((fn) => fn(qr)) : undefined;
           const carryConnected = pendingConnectedListeners.length ? () => pendingConnectedListeners.forEach((fn) => fn()) : undefined;
+          const carryEveryConnect = session.onEveryConnect;
           setTimeout(() => {
-            connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, carryQR, carryConnected).catch((e) =>
+            connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, carryQR, carryConnected, carryEveryConnect).catch((e) =>
               waLog("error", email, "reconnect failed", { error: e.message })
             );
           }, backoff);
@@ -600,6 +606,7 @@ export async function initAllSessions(
   oauthKey: string,
   mentionHandler: MentionHandler,
   onSessionConnected?: (email: string) => void,
+  onSessionEveryConnect?: (email: string) => void,
 ): Promise<void> {
   if (!agentId || !oauthUrl || !oauthKey) {
     console.log(JSON.stringify({ tag: "whatsapp", msg: "initAllSessions skipped — missing config", agentId: !!agentId, oauthUrl: !!oauthUrl, oauthKey: !!oauthKey }));
@@ -619,7 +626,8 @@ export async function initAllSessions(
       console.log(JSON.stringify({ tag: "whatsapp", msg: `startup: restoring ${users.length} session(s)`, users }));
       for (const email of users) {
         const onConnected = onSessionConnected ? () => onSessionConnected(email) : undefined;
-        connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, onConnected).catch((err) =>
+        const onEveryConnect = onSessionEveryConnect ? () => onSessionEveryConnect(email) : undefined;
+        connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, onConnected, onEveryConnect).catch((err) =>
           waLog("error", email, "startup restore failed", { error: (err as Error).message })
         );
       }

@@ -677,7 +677,7 @@ const waConfigCache = new Map<string, { config: WhatsAppConfig; ts: number }>();
 
 async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<WhatsAppConfig> {
   const cached = waConfigCache.get(email);
-  if (cached && Date.now() - cached.ts < 60_000) return cached.config;
+  if (cached && Date.now() - cached.ts < 5 * 60_000) return cached.config;
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 5_000);
@@ -1003,6 +1003,7 @@ app.listen(PORT, () => {
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
   const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
   initAllSessions(agentId, oauthServiceUrl, oauthServiceKey, buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey),
+    (email) => prewarmWASession(email, agentId, oauthServiceUrl, oauthServiceKey),
     (email) => prewarmWASession(email, agentId, oauthServiceUrl, oauthServiceKey));
 });
 
