@@ -311,13 +311,17 @@ export async function connectSession(
         info:  (..._args: any[]) => {},
         warn:  (...args: any[]) => waLog("warn", email, "baileys-warn", { detail: args[0] }),
         error: (...args: any[]) => {
-          waLog("error", email, "baileys-error", { detail: args[0] });
+          const detail = args[0] ?? {};
+          // fetchProps / executeInitQueries timing out is a known Baileys background
+          // query that WhatsApp sometimes doesn't answer. It doesn't affect messaging.
+          const stack: string = detail?.err?.data?.stack ?? detail?.trace ?? "";
+          if (stack.includes("fetchProps") || stack.includes("executeInitQueries")) return;
+          waLog("error", email, "baileys-error", { detail });
           // Auto-purge corrupted Signal session keys when decryption fails.
           // Baileys calls logger.error({ key, err }, 'message') on decrypt failure.
           // We purge at any point (connecting or connected) — corrupted keys are
           // useless regardless of phase, and purging them lets Baileys re-establish
           // a fresh Signal session with the peer on the next retry.
-          const detail = args[0] ?? {};
           const errMsg: string = detail?.err?.message ?? detail?.message ?? (typeof detail === "string" ? detail : "");
           const errName: string = detail?.err?.name ?? "";
           const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError";
