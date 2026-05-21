@@ -502,8 +502,15 @@ export async function connectSession(
           continue;
         }
 
-        // Text confirmed — mark processed now to prevent duplicate handling
-        if (msgId) processedMsgIds.add(msgId);
+        // Text confirmed — mark processed now to prevent duplicate handling.
+        // Cap at 5000 entries and evict oldest 1000 to prevent unbounded growth.
+        if (msgId) {
+          processedMsgIds.add(msgId);
+          if (processedMsgIds.size > 5000) {
+            const evict = [...processedMsgIds].slice(0, 1000);
+            evict.forEach((id) => processedMsgIds.delete(id));
+          }
+        }
 
         const mentionedJids: string[] =
           msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ?? [];
@@ -547,8 +554,6 @@ export async function connectSession(
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages });
           waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
           if (reply) {
-            // Use the current active socket — the original may have been replaced by a reconnect
-            const activeSock = sessions.get(email)?.socket ?? sock;
             if (sessions.get(email)?.status !== "connected") {
               waLog("warn", email, "session no longer connected — dropping reply", { to: from });
             } else {
@@ -558,8 +563,13 @@ export async function connectSession(
               const sendTimeout = new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)), timeoutMs)
               );
-              const sent: any = await Promise.race([activeSock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
-              if (sent?.key?.id) sentByBot.add(sent.key.id);
+              const currentSock = sessions.get(email)?.socket ?? sock;
+              const sent: any = await Promise.race([currentSock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
+              if (sent?.key?.id) {
+                sentByBot.add(sent.key.id);
+                // Auto-expire after 30s — echo-back arrives within ms; stale IDs block future replies
+                setTimeout(() => sentByBot.delete(sent.key.id), 30_000);
+              }
               storeRecentMessage(from, "Assistant", reply, Date.now());
               waLog("info", email, "reply sent successfully");
             }
