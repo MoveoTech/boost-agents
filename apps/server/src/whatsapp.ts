@@ -317,7 +317,10 @@ export async function connectSession(
           // fetchProps / executeInitQueries timing out is a known Baileys background
           // query that WhatsApp sometimes doesn't answer. It doesn't affect messaging.
           const stack: string = detail?.err?.data?.stack ?? detail?.trace ?? "";
+          // Suppress Baileys-internal background timeouts — any "Timed Out" that only has
+          // Baileys frames (no /app/src/ frame) is a non-actionable background operation.
           if (stack.includes("fetchProps") || stack.includes("executeInitQueries")) return;
+          if (stack.includes("Timed Out") && !stack.includes("/app/src/")) return;
           waLog("error", email, "baileys-error", { detail });
           // Auto-purge corrupted Signal session keys when decryption fails.
           // Baileys calls logger.error({ key, err }, 'message') on decrypt failure.
