@@ -458,6 +458,14 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                       </label>
                     </div>
 
+                    <div className="wa-config-row" style={{ gap: 12 }}>
+                      <label className="wa-config-label">Sender</label>
+                      <label className="wa-checkbox-label">
+                        <input type="checkbox" checked={!!waConfig.ownerOnly} onChange={(e) => setWaConfig((c) => ({ ...c, ownerOnly: e.target.checked }))} />
+                        Only reply to my own messages
+                      </label>
+                    </div>
+
                     <div className="wa-config-row">
                       <label className="wa-config-label">Model</label>
                       <select

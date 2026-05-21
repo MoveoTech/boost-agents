@@ -740,7 +740,7 @@ function prewarmWASession(email: string, agentId: string, oauthServiceUrl: strin
 }
 
 function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
-  return async ({ email, fromName, text, isGroup, groupName, isMentioned, recentMessages }) => {
+  return async ({ email, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
     const tHandler = Date.now();
     try {
@@ -748,8 +748,12 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const config = await loadWAConfig(email, agentId, oauthServiceUrl, oauthServiceKey);
       console.log(JSON.stringify({ ...ctx, msg: "timing: loadWAConfig", ms: Date.now() - tConfig0 }));
 
-      console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs, keyword: config.keyword ?? null }));
+      console.log(JSON.stringify({ ...ctx, msg: "evaluating reply trigger", trigger: config.replyTrigger, replyInGroups: config.replyInGroups, replyInDMs: config.replyInDMs, ownerOnly: !!config.ownerOnly, keyword: config.keyword ?? null }));
 
+      if (config.ownerOnly && !fromMe) {
+        console.log(JSON.stringify({ ...ctx, msg: "skipping — ownerOnly mode, message not from account owner" }));
+        return null;
+      }
       if (isGroup && !config.replyInGroups) {
         console.log(JSON.stringify({ ...ctx, msg: "skipping — group messages disabled in config" }));
         return null;

@@ -116,6 +116,7 @@ export interface WhatsAppConfig {
   keyword?: string;
   replyInGroups: boolean;
   replyInDMs: boolean;
+  ownerOnly?: boolean;
   customPrompt?: string;
   model?: { provider: "gemini" | "claude" | "openai"; modelId: string };
 }
