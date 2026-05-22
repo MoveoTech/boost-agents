@@ -428,11 +428,12 @@ IMPORTANT: Use real column IDs from monday_get_board — never guess. Same value
   },
   monday_get_users: {
     name: "monday_get_users",
-    description: "Look up Monday.com users by name or email to get their numeric ID. REQUIRED before setting a person column — the id field in personsAndTeams must be the numeric user ID returned here, never an email or display name.",
+    description: "Look up Monday.com users to get their numeric ID. Search by name (fuzzy) or exact emails. REQUIRED before setting a person column — personsAndTeams.id must be the numeric user ID, never an email or display name.",
     parameters: {
       properties: {
-        limit: { type: "number", description: "Max users to return (default 50)" },
-        name:  { type: "string", description: "Fuzzy search by name or email" },
+        name:   { type: "string", description: "Fuzzy search by name" },
+        emails: { type: "array", items: { type: "string" }, description: "Exact email addresses to look up" },
+        limit:  { type: "number", description: "Max users to return (default 50)" },
       },
       required: [],
     },
@@ -632,7 +633,7 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       if (name === "monday_create_update")    return mondayCreateUpdate(token, args.itemId as string, args.body as string);
       if (name === "monday_delete_update")    return mondayDeleteUpdate(token, args.updateId as string);
       if (name === "monday_get_me")           return mondayGetMe(token);
-      return mondayGetUsers(token, args.limit as number | undefined, args.name as string | undefined);
+      return mondayGetUsers(token, args.limit as number | undefined, args.name as string | undefined, args.emails as string[] | undefined);
     }
 
     case "tasks_list_tasklists":

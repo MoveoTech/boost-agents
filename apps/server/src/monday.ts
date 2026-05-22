@@ -268,12 +268,26 @@ export async function mondayGetMe(token: string): Promise<string> {
   return json(data.me);
 }
 
-export async function mondayGetUsers(token: string, limit = 50, name?: string): Promise<string> {
-  const data = await gql(token, `
-    query($limit: Int!, $name: String) {
-      users(limit: $limit, name: $name) {
-        id name email
-      }
-    }`, { limit, name });
+export async function mondayGetUsers(token: string, limit = 50, name?: string, emails?: string[]): Promise<string> {
+  const hasEmails = emails && emails.length > 0;
+  const hasName = name && name.length > 0;
+
+  // Build query with only the arguments that are actually provided —
+  // passing undefined/null for list variables causes Monday API errors.
+  let query: string;
+  let variables: Record<string, unknown>;
+
+  if (hasEmails) {
+    query = `query($emails: [String]) { users(emails: $emails) { id name email } }`;
+    variables = { emails };
+  } else if (hasName) {
+    query = `query($limit: Int, $name: String) { users(limit: $limit, name: $name) { id name email } }`;
+    variables = { limit, name };
+  } else {
+    query = `query($limit: Int) { users(limit: $limit) { id name email } }`;
+    variables = { limit };
+  }
+
+  const data = await gql(token, query, variables);
   return json(data.users);
 }
