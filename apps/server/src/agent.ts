@@ -206,7 +206,7 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
   },
   monday_get_board: {
     name: "monday_get_board",
-    description: "Get full schema of a Monday.com board: all columns (with their IDs and types) and all groups. Call this before filtering or updating items so you know the correct column IDs.",
+    description: "Get full schema of a Monday.com board: columns (id, title, type) and groups. Always call this before creating or updating items. Users refer to columns by title (e.g. 'working hours', 'work day') — match those titles to the column id field, then use the id in columnValues.",
     parameters: {
       properties: { boardId: { type: "string", description: "Board ID" } },
       required: ["boardId"],
@@ -268,25 +268,37 @@ OPERATOR RULES:
   },
   monday_create_item: {
     name: "monday_create_item",
-    description: "Create a new item on a Monday.com board. Use monday_get_board first to find column IDs. Column values format: { \"status\": {\"label\":\"Done\"}, \"date4\": {\"date\":\"2025-06-01\"} }",
+    description: `Create a new item on a Monday.com board.
+IMPORTANT: You MUST call monday_get_board first to get the real column IDs — never guess them. Column IDs look like "date4", "numbers7", "status", etc.
+Column value formats by type:
+- date: {"date":"2025-05-24"}
+- numbers/hour: 4  (plain number)
+- status: {"label":"Done"}
+- text/long_text: "value"
+- dropdown: {"labels":["Option1"]}
+- checkbox: {"checked":"true"}
+- timeline: {"from":"2025-05-24","to":"2025-05-30"}
+- person: {"personsAndTeams":[{"id":12345,"kind":"person"}]}
+Only include columns that have actual values — omit the rest.`,
     parameters: {
       properties: {
         boardId:      { type: "string", description: "Board ID" },
         itemName:     { type: "string", description: "Item name" },
         groupId:      { type: "string", description: "Group ID to create item in (optional)" },
-        columnValues: { type: "object", description: "Column values as { columnId: value } (optional)" },
+        columnValues: { type: "object", description: "Column values as { columnId: value } using real IDs from monday_get_board" },
       },
       required: ["boardId", "itemName"],
     },
   },
   monday_update_item: {
     name: "monday_update_item",
-    description: "Update one or more column values of an existing Monday.com item.",
+    description: `Update one or more column values of an existing Monday.com item.
+IMPORTANT: Use real column IDs from monday_get_board — never guess. Same value formats as monday_create_item.`,
     parameters: {
       properties: {
         boardId:      { type: "string", description: "Board ID" },
         itemId:       { type: "string", description: "Item ID" },
-        columnValues: { type: "object", description: "Columns to update as { columnId: value }" },
+        columnValues: { type: "object", description: "Columns to update as { columnId: value } using real IDs from monday_get_board" },
       },
       required: ["boardId", "itemId", "columnValues"],
     },
