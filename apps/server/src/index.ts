@@ -833,35 +833,24 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         setTimeout(() => reject(new Error("agent timed out after 55s")), 55_000)
       );
 
-      const primaryModel = { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false };
-      const fallbackModel = { provider: "gemini" as const, modelId: "gemini-2.5-flash", noThinking: true };
-      const callChat = (modelToUse: typeof primaryModel | typeof fallbackModel) => chat(
-        `${fromName}: ${text}`,
-        history,
-        "tools",
-        systemPrompt,
-        email,   // gmailUser
-        email,   // calendarUser
-        modelToUse,
-        mondayToken ?? undefined,
-        email,   // tasksUser
-        undefined,
-        undefined,
-        undefined,
-      );
-
       const tChat0 = Date.now();
-      let result;
-      try {
-        result = await Promise.race([callChat(primaryModel), agentTimeout]);
-      } catch (firstErr) {
-        // ANY error from the primary model (Claude) — fall back to Gemini Flash.
-        // Gemini runs on Google's network (same as Cloud Run) and is more reliable
-        // than waiting for Anthropic to recover from overload/outage.
-        const errMsg = (firstErr as Error).message;
-        console.log(JSON.stringify({ ...ctx, msg: "primary model failed — falling back to Gemini Flash", error: errMsg.slice(0, 200) }));
-        result = await Promise.race([callChat(fallbackModel), agentTimeout]);
-      }
+      const result = await Promise.race([
+        chat(
+          `${fromName}: ${text}`,
+          history,
+          "tools",
+          systemPrompt,
+          email,   // gmailUser
+          email,   // calendarUser
+          { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false },
+          mondayToken ?? undefined,
+          email,   // tasksUser
+          undefined,
+          undefined,
+          undefined,
+        ),
+        agentTimeout,
+      ]);
 
       const elapsedSec = Math.round((Date.now() - agentStartMs) / 1000);
       console.log(JSON.stringify({ ...ctx, msg: "timing: chat()", ms: Date.now() - tChat0, toolsUsed: result.toolUses?.length ?? 0 }));

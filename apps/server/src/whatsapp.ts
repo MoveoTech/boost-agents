@@ -245,7 +245,8 @@ const recentMsgBuffer = new Map<string, Array<{ from: string; text: string; ts: 
 const RECENT_MSG_LIMIT = 30;
 
 export function getRecentMessages(jid: string): Array<{ from: string; text: string; ts: number }> {
-  return recentMsgBuffer.get(jid) ?? [];
+  // Return a snapshot (copy) so callers can't be affected by buffer mutations during async work.
+  return [...(recentMsgBuffer.get(jid) ?? [])];
 }
 
 function storeRecentMessage(jid: string, from: string, text: string, ts: number) {
