@@ -175,14 +175,33 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
   const keyMap: Record<string, any> = saved?.keys ? await deserialize(saved.keys) : {};
 
   let credsSaveEnabled = true;
+  let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const persist = async () => {
+  const doSave = async () => {
     if (!credsSaveEnabled) return;
     await saveCredsToFirestore(agentId, email, oauthUrl, oauthKey, {
       creds: await serialize(creds),
       keys: await serialize(keyMap),
     });
     waLog("info", email, "credentials persisted to Firestore", { keyCount: Object.keys(keyMap).length });
+  };
+
+  // Immediate save — used for account credential changes (creds.update).
+  const persistNow = async () => {
+    if (saveDebounceTimer) { clearTimeout(saveDebounceTimer); saveDebounceTimer = null; }
+    await doSave();
+  };
+
+  // Debounced save — used for Signal key changes (keys.set fires for every group participant).
+  // In a busy group, keys.set can fire 50+ times/second; saving on each call floods the
+  // oauth-service and stalls the event loop, causing sendMessage to time out.
+  const persist = () => {
+    if (!credsSaveEnabled) return;
+    if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = setTimeout(() => {
+      saveDebounceTimer = null;
+      doSave().catch(() => {});
+    }, 2_000);
   };
 
   return {
@@ -208,26 +227,29 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
               else delete keyMap[`${category}-${id}`];
             }
           }
-          await persist();
+          persist(); // debounced — batches rapid key updates from group participants
         },
       },
     },
-    // Called on every creds.update event — mutates in place (matches Baileys' own pattern)
+    // Called on every creds.update event — save immediately (these are account credentials)
     onCredsUpdate: async (update: any) => {
       Object.assign(creds, update);
-      await persist();
+      await persistNow();
     },
     // Purge all session keys for a specific contact JID fragment (e.g. "48460183113911")
     // Called when Bad MAC / MessageCounterError is detected to force fresh session establishment
     purgeContactKeys: (jidFragment: string): number => {
       const toDelete = Object.keys(keyMap).filter((k) => k.includes(jidFragment));
       toDelete.forEach((k) => delete keyMap[k]);
-      if (toDelete.length > 0) persist().catch(() => {});
+      if (toDelete.length > 0) persist();
       return toDelete.length;
     },
     // Stop any further saves from this socket instance immediately — call on disconnect
     // to prevent the old socket's in-flight saves from corrupting the next session's creds.
-    freezeCredsSave: () => { credsSaveEnabled = false; },
+    freezeCredsSave: () => {
+      credsSaveEnabled = false;
+      if (saveDebounceTimer) { clearTimeout(saveDebounceTimer); saveDebounceTimer = null; }
+    },
     // Wipe all credentials from Firestore and prevent further saves — called when the noise
     // session is irreparably corrupt after N retries.
     deleteAllCreds: async () => {
@@ -385,8 +407,8 @@ export async function connectSession(
       shouldSyncHistoryMessage: () => false,
       keepAliveIntervalMs: 20_000,    // ping WhatsApp every 20s to prevent 408 connection-lost drops
       defaultQueryTimeoutMs: 120_000, // give WhatsApp 2min to respond to fetchProps on init (default 60s too tight)
-      maxMsgRetryCount: 5,            // allow up to 5 retries to re-establish Signal session with sender
-      retryRequestDelayMs: 2000, // 2s between retries — fast enough to recover within ~10s
+      maxMsgRetryCount: 2,            // limit Signal session retries — more retries = more key saves = more event loop pressure
+      retryRequestDelayMs: 3000, // 3s between retries — gives Signal sessions time to stabilise
       logger: {
         level: "warn",
         trace: (..._args: any[]) => {},
@@ -791,7 +813,7 @@ export async function connectSession(
             } else {
               waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
               const isLid = from.endsWith("@lid");
-              const timeoutMs = (isGroup || isLid) ? 60_000 : 20_000;
+              const timeoutMs = (isGroup || isLid) ? 30_000 : 20_000;
               const sendTimeout = new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)), timeoutMs)
               );
@@ -809,7 +831,14 @@ export async function connectSession(
             waLog("info", email, "handler returned null — no reply sent (trigger/filter did not match)");
           }
         } catch (err) {
-          waLog("error", email, "message handler threw an error", { error: (err as Error).message, stack: (err as Error).stack });
+          const errMsg = (err as Error).message ?? "";
+          waLog("error", email, "message handler threw an error", { error: errMsg, stack: (err as Error).stack });
+          // sendMessage timeout means the socket's Signal layer is frozen — close it so
+          // connection.update fires and the backoff reconnect loop re-establishes cleanly.
+          if (errMsg.includes("sendMessage timed out")) {
+            waLog("warn", email, "sendMessage frozen — closing socket to trigger reconnect");
+            try { sessions.get(email)?.socket?.end?.(); } catch {}
+          }
         }
       }
     });
