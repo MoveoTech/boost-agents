@@ -805,9 +805,11 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           history.push({ role, parts: [{ text: content }] });
         }
       }
-      // Anthropic requires history to start with a user turn and end with a user or model turn
-      // before the new user message. Drop a leading model turn if present.
+      // Claude requires alternating turns. Drop any leading model turn, then drop any
+      // trailing user turns — they have no bot reply and would create consecutive user
+      // turns when the current message is appended (→ 400 from the API).
       if (history.length > 0 && history[0].role === "model") history.shift();
+      while (history.length > 0 && history[history.length - 1].role === "user") history.pop();
 
       const now = new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
       const systemPrompt = [
