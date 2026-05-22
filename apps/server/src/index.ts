@@ -762,12 +762,15 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         console.log(JSON.stringify({ ...ctx, msg: "skipping — DM messages disabled in config" }));
         return null;
       }
-      // Mention trigger only applies in groups — in a DM you can't @mention, so always reply
-      if (isGroup && config.replyTrigger === "mention" && !isMentioned) {
-        console.log(JSON.stringify({ ...ctx, msg: "skipping — not mentioned in group (trigger=mention)" }));
-        return null;
-      }
-      if (config.replyTrigger === "keyword") {
+      if (config.replyTrigger === "mention") {
+        // In groups: require an @mention. In DMs: no @mention possible, so treat as "always".
+        // But with ownerOnly:true this still means every DM you send triggers the agent,
+        // which causes replies in private conversations. Prefer "keyword" trigger with ownerOnly.
+        if (isGroup && !isMentioned) {
+          console.log(JSON.stringify({ ...ctx, msg: "skipping — not mentioned in group (trigger=mention)" }));
+          return null;
+        }
+      } else if (config.replyTrigger === "keyword") {
         const kw = (config.keyword ?? "").trim();
         const kwLower = kw.toLowerCase();
         const found = kw && (text.toLowerCase().includes(kwLower) || text.includes(kw));
@@ -776,6 +779,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           return null;
         }
       }
+      // "always" trigger: no additional check needed
 
       const agentStartMs = Date.now();
       console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length, text, msSinceHandlerStart: agentStartMs - tHandler }));
