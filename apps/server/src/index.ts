@@ -45,6 +45,7 @@ const IS_PROD = process.env.NODE_ENV === "production";
 
 app.use(cors());
 app.use(express.json({
+  limit: "20mb", // large enough for base64-encoded PDF/image attachments (~10MB file → ~13MB base64)
   verify: (req: any, _res, buf) => { req.rawBody = buf; },
 }));
 app.use(cookieParser(COOKIE_SECRET));
@@ -991,14 +992,35 @@ app.post("/api/chat", async (req, res) => {
   };
 
   const sessionEmail = getSessionEmail(req) ?? bodyEmail;
+  // Extract text from Word documents before further processing.
+  // Reuses the same mammoth library the WhatsApp connector uses.
+  let processedAttachment = attachment;
+  if (attachment) {
+    const isDocx = attachment.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      || attachment.mimeType === "application/msword"
+      || /\.(docx|doc)$/i.test(attachment.name);
+    if (isDocx) {
+      try {
+        const mammoth = await import("mammoth");
+        const buf = Buffer.from(attachment.data, "base64");
+        const { value } = await mammoth.extractRawText({ buffer: buf });
+        processedAttachment = {
+          data: Buffer.from(value.slice(0, 100_000)).toString("base64"),
+          mimeType: "text/plain",
+          name: attachment.name,
+        };
+      } catch { /* extraction failed — fall through, will be treated as unsupported binary */ }
+    }
+  }
+
   // PDFs and images are passed as binary to the multimodal LLM layer.
-  // Everything else (text, JSON, CSV, etc.) is decoded and inlined into the message.
-  const isBinaryAttachment = !!attachment && (attachment.mimeType.startsWith("image/") || attachment.mimeType === "application/pdf");
-  const effectiveMessage = attachment && !isBinaryAttachment
-    ? buildMessageWithAttachment(message, attachment)
+  // Everything else (text, JSON, CSV, docx-extracted-to-text, etc.) is decoded and inlined into the message.
+  const isBinaryAttachment = !!processedAttachment && (processedAttachment.mimeType.startsWith("image/") || processedAttachment.mimeType === "application/pdf");
+  const effectiveMessage = processedAttachment && !isBinaryAttachment
+    ? buildMessageWithAttachment(message, processedAttachment)
     : message;
   const imageAttachment: ImageAttachment | undefined = isBinaryAttachment
-    ? { data: attachment!.data, mimeType: attachment!.mimeType }
+    ? { data: processedAttachment!.data, mimeType: processedAttachment!.mimeType }
     : undefined;
 
   if (!effectiveMessage?.trim()) {
