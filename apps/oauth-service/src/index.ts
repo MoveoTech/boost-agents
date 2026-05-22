@@ -228,7 +228,7 @@ app.get("/auth/monday/start", (req, res) => {
     client_id: MONDAY_CLIENT_ID,
     redirect_uri: getMondayRedirectUri(req),
     response_type: "code",
-    scope: "boards:read boards:write updates:write me:read",
+    scope: "boards:read boards:write updates:read updates:write me:read users:read teams:read",
     state,
   });
   res.redirect(`https://auth.monday.com/oauth2/authorize?${params}`);

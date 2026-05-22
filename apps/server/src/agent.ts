@@ -279,7 +279,8 @@ Column value formats by type:
 - checkbox: {"checked":"true"}
 - timeline: {"from":"2025-05-24","to":"2025-05-30"}
 - person: {"personsAndTeams":[{"id":12345,"kind":"person"}]}
-Only include columns that have actual values — omit the rest.`,
+Only include columns that have actual values — omit the rest.
+ALWAYS include the item ID from the result in your reply (e.g. "Created item ID 123456789") so it can be referenced in follow-up requests.`,
     parameters: {
       properties: {
         boardId:      { type: "string", description: "Board ID" },
@@ -332,7 +333,7 @@ IMPORTANT: Use real column IDs from monday_get_board — never guess. Same value
   },
   monday_duplicate_item: {
     name: "monday_duplicate_item",
-    description: "Duplicate an existing Monday.com item.",
+    description: "Duplicate an existing Monday.com item. Always include the new item ID in your reply.",
     parameters: {
       properties: {
         boardId:     { type: "string",  description: "Board ID" },
@@ -344,7 +345,7 @@ IMPORTANT: Use real column IDs from monday_get_board — never guess. Same value
   },
   monday_create_subitem: {
     name: "monday_create_subitem",
-    description: "Create a sub-item under an existing Monday.com item.",
+    description: "Create a sub-item under an existing Monday.com item. Always include the new subitem ID in your reply.",
     parameters: {
       properties: {
         parentItemId: { type: "string", description: "Parent item ID" },

@@ -1,5 +1,5 @@
 const MONDAY_API = "https://api.monday.com/v2";
-const MONDAY_API_VERSION = "2025-10";
+const MONDAY_API_VERSION = "2026-04";
 
 async function gql(token: string, query: string, variables?: Record<string, unknown>): Promise<any> {
   const res = await fetch(MONDAY_API, {
@@ -264,7 +264,7 @@ export async function mondayDeleteUpdate(token: string, updateId: string): Promi
 
 export async function mondayGetMe(token: string): Promise<string> {
   const data = await gql(token, `
-    { me { id name email title phone mobile_phone time_zone_identifier account { id name } } }`);
+    { me { id name email title time_zone_identifier account { id name } } }`);
   return json(data.me);
 }
 
@@ -272,8 +272,7 @@ export async function mondayGetUsers(token: string, limit = 50, name?: string): 
   const data = await gql(token, `
     query($limit: Int!, $name: String) {
       users(limit: $limit, name: $name) {
-        id name email title phone mobile_phone
-        teams { id name }
+        id name email
       }
     }`, { limit, name });
   return json(data.users);
