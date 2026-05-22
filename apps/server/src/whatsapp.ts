@@ -359,6 +359,18 @@ export async function connectSession(
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
     authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, freezeCredsSave: auth.freezeCredsSave });
 
+    // Per-socket message store — Baileys calls getMessage when it needs to retry-decrypt
+    // a failed message (Signal retries are very common). Returning undefined makes every
+    // retry fail, which feeds the Bad MAC / SessionError cycle. Storing the last 300
+    // messages gives Baileys enough material to re-establish sessions without using disk.
+    const socketMsgStore = new Map<string, any>();
+    const SOCKET_MSG_STORE_MAX = 300;
+
+    // Per-socket group metadata cache — groupMetadata() makes a network request and
+    // WhatsApp rate-limits it. Cache for 5 minutes to avoid hitting that limit.
+    const groupMetaCache = new Map<string, { subject: string; ts: number }>();
+    const GROUP_META_TTL_MS = 5 * 60_000;
+
     waLog("info", email, "creating WASocket");
     const sock = makeWASocket({
       version,
@@ -367,7 +379,10 @@ export async function connectSession(
       browser: ["Chrome", "Chrome", "120.0.0"],
       syncFullHistory: false,
       markOnlineOnConnect: false,
-      getMessage: async () => undefined,
+      // Return stored messages so Baileys can retry-decrypt Signal failures instead of giving up
+      getMessage: async (key) => socketMsgStore.get(key.id ?? "") ?? undefined,
+      // Never process history messages — we only want real-time messages
+      shouldSyncHistoryMessage: () => false,
       keepAliveIntervalMs: 20_000,    // ping WhatsApp every 20s to prevent 408 connection-lost drops
       defaultQueryTimeoutMs: 120_000, // give WhatsApp 2min to respond to fetchProps on init (default 60s too tight)
       maxMsgRetryCount: 5,            // allow up to 5 retries to re-establish Signal session with sender
@@ -529,6 +544,16 @@ export async function connectSession(
       const myJid = sock.user?.id?.replace(/:.*@/, "@");
 
       for (const msg of messages) {
+        // Store in getMessage cache regardless of whether we process this message.
+        // Baileys needs this for retry-decryption of Signal failures from any sender.
+        if (msg.key.id && msg.message) {
+          socketMsgStore.set(msg.key.id, msg);
+          if (socketMsgStore.size > SOCKET_MSG_STORE_MAX) {
+            const evict = [...socketMsgStore.keys()].slice(0, 50);
+            evict.forEach((k) => socketMsgStore.delete(k));
+          }
+        }
+
         // Deduplicate: same message can arrive from multiple JID formats simultaneously.
         // We only mark as processed AFTER confirming text exists — if decryption fails
         // (empty message), don't block future retries once the Signal session establishes.
@@ -616,10 +641,16 @@ export async function connectSession(
         const fromName = msg.pushName ?? from.split("@")[0];
 
         if (isGroup) {
-          try {
-            const meta = await sock.groupMetadata(from);
-            groupName = meta.subject;
-          } catch { /* no metadata */ }
+          const cached = groupMetaCache.get(from);
+          if (cached && Date.now() - cached.ts < GROUP_META_TTL_MS) {
+            groupName = cached.subject;
+          } else {
+            try {
+              const meta = await sock.groupMetadata(from);
+              groupName = meta.subject;
+              groupMetaCache.set(from, { subject: groupName, ts: Date.now() });
+            } catch { /* no metadata */ }
+          }
         }
 
         // Store in buffer BEFORE logging so the current message is included in context
