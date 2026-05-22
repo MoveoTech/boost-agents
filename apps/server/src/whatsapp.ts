@@ -521,9 +521,11 @@ export async function connectSession(
 
     sock.ev.on("messages.upsert", async ({ messages, type }: any) => {
       waLog("info", email, "messages.upsert fired", { type, count: messages?.length ?? 0 });
-      // Only process real-time messages. "append" is WhatsApp's history-sync delivery
-      // on reconnect — those are always backlogged and should never trigger a reply.
-      if (type !== "notify") return;
+      // Process both "notify" (real-time) and "append" (retry/late delivery). Baileys
+      // routes some legitimate fresh messages as "append" after reconnects or Signal
+      // session re-establishments. Genuinely stale messages are filtered downstream by
+      // the timestamp checks (ageMsec > 5min + msgTs < connectedAt - 5s).
+      if (type !== "notify" && type !== "append") return;
       const myJid = sock.user?.id?.replace(/:.*@/, "@");
 
       for (const msg of messages) {
