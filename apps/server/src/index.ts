@@ -833,14 +833,16 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         setTimeout(() => reject(new Error("agent timed out after 55s")), 55_000)
       );
 
-      const callChat = () => chat(
+      const primaryModel = { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false };
+      const fallbackModel = { provider: "gemini" as const, modelId: "gemini-2.5-flash", noThinking: true };
+      const callChat = (modelToUse: typeof primaryModel | typeof fallbackModel) => chat(
         `${fromName}: ${text}`,
         history,
         "tools",
         systemPrompt,
         email,   // gmailUser
         email,   // calendarUser
-        { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false },
+        modelToUse,
         mondayToken ?? undefined,
         email,   // tasksUser
         undefined,
@@ -851,17 +853,14 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const tChat0 = Date.now();
       let result;
       try {
-        result = await Promise.race([callChat(), agentTimeout]);
+        result = await Promise.race([callChat(primaryModel), agentTimeout]);
       } catch (firstErr) {
-        const msg = (firstErr as Error).message;
-        // Anthropic 529 = server overloaded — retry once after 3s
-        if (msg.includes("overloaded") || msg.includes("529")) {
-          console.log(JSON.stringify({ ...ctx, msg: "Anthropic overloaded — retrying in 3s" }));
-          await new Promise((r) => setTimeout(r, 3000));
-          result = await Promise.race([callChat(), agentTimeout]);
-        } else {
-          throw firstErr;
-        }
+        // ANY error from the primary model (Claude) — fall back to Gemini Flash.
+        // Gemini runs on Google's network (same as Cloud Run) and is more reliable
+        // than waiting for Anthropic to recover from overload/outage.
+        const errMsg = (firstErr as Error).message;
+        console.log(JSON.stringify({ ...ctx, msg: "primary model failed — falling back to Gemini Flash", error: errMsg.slice(0, 200) }));
+        result = await Promise.race([callChat(fallbackModel), agentTimeout]);
       }
 
       const elapsedSec = Math.round((Date.now() - agentStartMs) / 1000);
