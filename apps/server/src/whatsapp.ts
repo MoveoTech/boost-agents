@@ -640,32 +640,40 @@ export async function connectSession(
           textLength: text.length,
         });
 
-        // Detect and download attached image or document. Capped at 10MB; oversize files
-        // get reported back to the user as an error reply (handled inside the handler).
+        // Detect and download attached image or document. Capped at 10MB.
+        // Looks at both direct attachments AND attachments inside the message the user
+        // is replying to (quoted message) — so "boost analyze this" as a reply works.
         let attachment: WhatsAppAttachment | undefined;
         let attachmentError: string | undefined;
-        const imageMsg = msg.message?.imageMessage;
-        const docMsg = msg.message?.documentMessage;
+        const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const imageMsg = msg.message?.imageMessage ?? quoted?.imageMessage;
+        const docMsg = msg.message?.documentMessage ?? quoted?.documentMessage;
         const mediaMsg = imageMsg || docMsg;
+        const isQuoted = !msg.message?.imageMessage && !msg.message?.documentMessage && !!mediaMsg;
         if (mediaMsg) {
           const fileLength = Number(mediaMsg.fileLength ?? 0);
           const MAX_BYTES = 10 * 1024 * 1024;
           const mimetype = (mediaMsg.mimetype || (imageMsg ? "image/jpeg" : "application/octet-stream")) as string;
           if (fileLength > MAX_BYTES) {
             attachmentError = `File too large (${Math.round(fileLength / 1024 / 1024)}MB). Max is 10MB.`;
-            waLog("info", email, "attachment too large", { fileLength, mimetype });
+            waLog("info", email, "attachment too large", { fileLength, mimetype, quoted: isQuoted });
           } else if (docMsg && mimetype !== "application/pdf") {
             attachmentError = "Only PDF documents are supported. Try converting to PDF first.";
-            waLog("info", email, "unsupported document type", { mimetype });
+            waLog("info", email, "unsupported document type", { mimetype, quoted: isQuoted });
           } else {
             try {
               const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
-              const buffer = await downloadMediaMessage(msg, "buffer", {}) as Buffer;
+              // For quoted media we synthesize a tiny pseudo-message so downloadMediaMessage
+              // resolves the media keys against the quoted payload, not the wrapper message.
+              const target = isQuoted
+                ? { key: msg.key, message: quoted } as typeof msg
+                : msg;
+              const buffer = await downloadMediaMessage(target, "buffer", {}) as Buffer;
               attachment = { data: buffer.toString("base64"), mimeType: mimetype };
-              waLog("info", email, "attachment downloaded", { mimetype, sizeBytes: buffer.length });
+              waLog("info", email, "attachment downloaded", { mimetype, sizeBytes: buffer.length, quoted: isQuoted });
             } catch (err) {
               attachmentError = "Couldn't download the attachment. Please try sending it again.";
-              waLog("warn", email, "attachment download failed", { error: (err as Error).message });
+              waLog("warn", email, "attachment download failed", { error: (err as Error).message, quoted: isQuoted });
             }
           }
         }
