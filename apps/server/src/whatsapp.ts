@@ -271,7 +271,7 @@ function storeRecentMessage(jid: string, from: string, text: string, ts: number)
   recentMsgBuffer.set(jid, buf);
 }
 
-// Image or PDF attached to an incoming WhatsApp message
+// Image or PDF attached to an incoming WhatsApp message — passed to multimodal AI
 export interface WhatsAppAttachment {
   data: string;     // base64
   mimeType: string; // e.g. "image/jpeg", "application/pdf"
@@ -288,7 +288,9 @@ export type MessageHandler = (params: {
   isMentioned: boolean;
   fromMe: boolean;
   recentMessages: Array<{ from: string; text: string; ts: number }>;
-  attachment?: WhatsAppAttachment;
+  attachment?: WhatsAppAttachment;   // binary attachment for vision (image / PDF)
+  attachmentText?: string;            // extracted text from docx / txt / csv etc.
+  attachmentName?: string;            // original filename if available
   attachmentError?: string;
 }) => Promise<string | null>;
 
@@ -644,6 +646,8 @@ export async function connectSession(
         // Looks at both direct attachments AND attachments inside the message the user
         // is replying to (quoted message) — so "boost analyze this" as a reply works.
         let attachment: WhatsAppAttachment | undefined;
+        let attachmentText: string | undefined;
+        let attachmentName: string | undefined;
         let attachmentError: string | undefined;
         const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
         const imageMsg = msg.message?.imageMessage ?? quoted?.imageMessage;
@@ -654,11 +658,20 @@ export async function connectSession(
           const fileLength = Number(mediaMsg.fileLength ?? 0);
           const MAX_BYTES = 10 * 1024 * 1024;
           const mimetype = (mediaMsg.mimetype || (imageMsg ? "image/jpeg" : "application/octet-stream")) as string;
+          attachmentName = (docMsg as { fileName?: string } | undefined)?.fileName;
+          // Supported document types: PDF (native), docx (extract text), doc (extract text),
+          // plain text / csv / markdown / json / html (read as text).
+          const isPdf = mimetype === "application/pdf";
+          const isDocx = mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+          const isDoc = mimetype === "application/msword";
+          const isTextish = mimetype.startsWith("text/") || mimetype === "application/json" || mimetype === "application/xml";
+          const supportedDoc = isPdf || isDocx || isDoc || isTextish;
+
           if (fileLength > MAX_BYTES) {
             attachmentError = `File too large (${Math.round(fileLength / 1024 / 1024)}MB). Max is 10MB.`;
             waLog("info", email, "attachment too large", { fileLength, mimetype, quoted: isQuoted });
-          } else if (docMsg && mimetype !== "application/pdf") {
-            attachmentError = "Only PDF documents are supported. Try converting to PDF first.";
+          } else if (docMsg && !supportedDoc) {
+            attachmentError = `File type ${mimetype} is not supported. Try PDF, Word, or a plain-text file.`;
             waLog("info", email, "unsupported document type", { mimetype, quoted: isQuoted });
           } else {
             try {
@@ -669,11 +682,27 @@ export async function connectSession(
                 ? { key: msg.key, message: quoted } as typeof msg
                 : msg;
               const buffer = await downloadMediaMessage(target, "buffer", {}) as Buffer;
-              attachment = { data: buffer.toString("base64"), mimeType: mimetype };
-              waLog("info", email, "attachment downloaded", { mimetype, sizeBytes: buffer.length, quoted: isQuoted });
+
+              if (imageMsg || isPdf) {
+                // Pass binary to multimodal AI directly.
+                attachment = { data: buffer.toString("base64"), mimeType: mimetype };
+              } else if (isDocx || isDoc) {
+                // Extract text from Word docs via mammoth.
+                const mammoth = await import("mammoth");
+                const result = await mammoth.extractRawText({ buffer });
+                attachmentText = result.value;
+              } else if (isTextish) {
+                // Plain text — decode as UTF-8.
+                attachmentText = buffer.toString("utf-8");
+              }
+              // Cap extracted text at ~100k chars (~25k tokens) to avoid context blowup.
+              if (attachmentText && attachmentText.length > 100_000) {
+                attachmentText = attachmentText.slice(0, 100_000) + "\n\n[...truncated]";
+              }
+              waLog("info", email, "attachment downloaded", { mimetype, sizeBytes: buffer.length, quoted: isQuoted, asText: !!attachmentText, textLen: attachmentText?.length });
             } catch (err) {
-              attachmentError = "Couldn't download the attachment. Please try sending it again.";
-              waLog("warn", email, "attachment download failed", { error: (err as Error).message, quoted: isQuoted });
+              attachmentError = "Couldn't download or parse the attachment. Please try sending it again.";
+              waLog("warn", email, "attachment download failed", { error: (err as Error).message, mimetype, quoted: isQuoted });
             }
           }
         }
@@ -681,7 +710,7 @@ export async function connectSession(
         try {
           const t0 = Date.now();
           const fromMe = !!msg.key.fromMe;
-          const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentError });
+          const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentText, attachmentName, attachmentError });
           waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
           if (reply) {
             // If a newer message has arrived in this conversation while we were processing,

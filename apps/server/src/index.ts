@@ -767,7 +767,7 @@ function prewarmWASession(email: string, agentId: string, oauthServiceUrl: strin
 }
 
 function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
-  return async ({ email, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentError }) => {
+  return async ({ email, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentText, attachmentName, attachmentError }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
     const tHandler = Date.now();
     try {
@@ -867,10 +867,16 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         setTimeout(() => reject(new Error("agent timed out after 55s")), 55_000)
       );
 
+      // If a document was extracted to text (docx/txt/etc.), prepend its content to the
+      // user's message so the AI sees it as part of the request.
+      const effectiveMessage = attachmentText
+        ? `${text}\n\n[Attached document${attachmentName ? `: ${attachmentName}` : ""}]\n${attachmentText}`
+        : text;
+
       const tChat0 = Date.now();
       const result = await Promise.race([
         chat(
-          text,
+          effectiveMessage,
           history,
           "tools",
           systemPrompt,
