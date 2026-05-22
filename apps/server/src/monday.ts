@@ -51,17 +51,12 @@ export async function mondayGetBoard(token: string, boardId: string): Promise<st
   const data = await gql(token, `
     query($boardId: ID!) {
       boards(ids: [$boardId]) {
-        id name description state board_kind permissions url
-        updated_at items_count items_limit item_terminology
+        id name description state board_kind url
+        updated_at items_count
         creator { id name email }
-        owners { id name email }
-        team_owners { id name }
         workspace { id name }
-        board_folder_id
-        columns { id title type description settings revision }
+        columns { id title type description settings }
         groups { id title color position }
-        tags { id name }
-        top_group { id }
       }
     }`, { boardId });
   return json(data.boards?.[0] ?? "Board not found");
