@@ -77,6 +77,7 @@ interface Props {
   tasksConnected: boolean;
   whatsappConnected: boolean;
   whatsappStatus?: "connected" | "disconnected" | "connecting" | "qr";
+  whatsappOwners?: string[];
   onGmailDisconnect: () => void;
   onCalendarDisconnect: () => void;
   onMondayDisconnect: () => void;
@@ -89,7 +90,8 @@ interface Props {
   isResponding?: boolean;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, whatsappConnected, whatsappStatus, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, onWhatsappConnected, onWhatsappDisconnect, connectionsLoading, className, isResponding }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, whatsappConnected, whatsappStatus, whatsappOwners, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, onWhatsappConnected, onWhatsappDisconnect, connectionsLoading, className, isResponding }: Props) {
+  const otherWhatsappOwner = whatsappOwners?.find((o) => o !== userEmail) ?? null;
   const merged = agentConfig ? {
     ...agentConfig,
     ...(userSettings.model ? { model: userSettings.model } : {}),
@@ -419,6 +421,8 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                         <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
                       ) : whatsappStatus === "connecting" || whatsappStatus === "qr" ? (
                         <span style={{ opacity: 0.7 }}>⟳ establishing connection…</span>
+                      ) : otherWhatsappOwner ? (
+                        <span style={{ opacity: 0.6, fontStyle: "italic" }}>Already connected to {otherWhatsappOwner}</span>
                       ) : (
                         <button className="sidebar-tool-connect-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }} onClick={handleWhatsappConnect}>Connect</button>
                       )}

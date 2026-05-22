@@ -72,7 +72,7 @@ export default function App() {
         if (email) setUserEmail(email);
         getConfig().then(setAgentConfig).catch(() => {});
         getConnections()
-          .then(({ gmail, calendar, monday, tasks, whatsapp, whatsappStatus }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); setWhatsappStatus(whatsappStatus); })
+          .then(({ gmail, calendar, monday, tasks, whatsapp, whatsappStatus, whatsappOwners }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); setWhatsappStatus(whatsappStatus); setWhatsappOwners(whatsappOwners); })
           .catch(() => {})
           .finally(() => setConnectionsLoading(false));
         getUserSettings().then((s) => setUserSettings(s as UserSettings)).catch(() => {});
@@ -96,7 +96,7 @@ export default function App() {
     }
     if (params.get("google_connected") === "true" || params.get("monday_connected") === "true") {
       window.history.replaceState({}, "", window.location.pathname);
-      getConnections().then(({ gmail, calendar, monday, tasks, whatsapp, whatsappStatus }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); setWhatsappStatus(whatsappStatus); }).catch(() => {});
+      getConnections().then(({ gmail, calendar, monday, tasks, whatsapp, whatsappStatus, whatsappOwners }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); setWhatsappStatus(whatsappStatus); setWhatsappOwners(whatsappOwners); }).catch(() => {});
     }
     checkSession();
   }, [checkSession]);
@@ -397,6 +397,7 @@ export default function App() {
         onTasksDisconnect={() => disconnectService("tasks").then(() => setTasksConnected(false))}
         whatsappConnected={whatsappConnected}
         whatsappStatus={whatsappStatus}
+        whatsappOwners={whatsappOwners}
         onWhatsappConnected={() => { setWhatsappConnected(true); setWhatsappStatus("connected"); }}
         onWhatsappDisconnect={() => disconnectWhatsApp().then(() => { setWhatsappConnected(false); setWhatsappStatus("disconnected"); })}
         className={mobileTab !== "settings" ? "mobile-hidden" : ""}
