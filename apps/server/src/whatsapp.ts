@@ -7,7 +7,12 @@
 const _origConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
   const first = String(args[0] ?? "");
-  if (first.startsWith("Closing session") || first.startsWith("Closing open session")) return;
+  if (
+    first.startsWith("Closing session") ||
+    first.startsWith("Closing open session") ||
+    first.startsWith("Session error:") ||          // libsignal Bad MAC / decryption failures
+    first.startsWith("No session for")             // libsignal missing session warnings
+  ) return;
   _origConsoleLog(...args);
 };
 
