@@ -681,15 +681,27 @@ export async function connectSession(
               const target = isQuoted
                 ? { key: msg.key, message: quoted } as typeof msg
                 : msg;
-              const buffer = await downloadMediaMessage(target, "buffer", {}) as Buffer;
+              // Hard timeout — downloadMediaMessage can hang indefinitely for quoted media
+              // when key resolution fails. Without this, the entire handler stalls.
+              const downloadTimeoutMs = 30_000;
+              const buffer = await Promise.race([
+                downloadMediaMessage(target, "buffer", {}) as Promise<Buffer>,
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error(`attachment download timed out after ${downloadTimeoutMs / 1000}s`)), downloadTimeoutMs)
+                ),
+              ]);
 
               if (imageMsg || isPdf) {
                 // Pass binary to multimodal AI directly.
                 attachment = { data: buffer.toString("base64"), mimeType: mimetype };
               } else if (isDocx || isDoc) {
-                // Extract text from Word docs via mammoth.
+                // Extract text from Word docs via mammoth. Wrap in timeout to avoid hangs
+                // on malformed docs.
                 const mammoth = await import("mammoth");
-                const result = await mammoth.extractRawText({ buffer });
+                const result = await Promise.race([
+                  mammoth.extractRawText({ buffer }),
+                  new Promise<never>((_, reject) => setTimeout(() => reject(new Error("docx extraction timed out")), 15_000)),
+                ]);
                 attachmentText = result.value;
               } else if (isTextish) {
                 // Plain text — decode as UTF-8.
