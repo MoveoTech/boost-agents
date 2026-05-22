@@ -1054,8 +1054,8 @@ app.post("/api/chat", async (req, res) => {
           },
           onToolComplete: (name, output) => {
             const t = toolUses.find((x) => x.name === name && x.output === "");
-            if (t) t.output = output.slice(0, 500);
-            send({ type: "tool_complete", tool: { name, output: output.slice(0, 500) } });
+            if (t) t.output = output.slice(0, 2000);
+            send({ type: "tool_complete", tool: { name, output: output.slice(0, 2000) } });
           },
         },
         mondayTokenStream,

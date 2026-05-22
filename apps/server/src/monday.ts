@@ -37,11 +37,9 @@ export async function mondayListBoards(token: string, limit = 50): Promise<strin
   const data = await gql(token, `
     query($limit: Int!) {
       boards(limit: $limit, order_by: created_at) {
-        id name description state board_kind url
+        id name description state
         items_count updated_at
         workspace { id name }
-        groups { id title color position }
-        creator { id name email }
       }
     }`, { limit });
   return json(data.boards);
@@ -51,12 +49,9 @@ export async function mondayGetBoard(token: string, boardId: string): Promise<st
   const data = await gql(token, `
     query($boardId: ID!) {
       boards(ids: [$boardId]) {
-        id name description state board_kind url
-        updated_at items_count
-        creator { id name email }
-        workspace { id name }
+        id name
         columns { id title type }
-        groups { id title color position }
+        groups { id title }
       }
     }`, { boardId });
   return json(data.boards?.[0] ?? "Board not found");

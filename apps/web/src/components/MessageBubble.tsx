@@ -54,6 +54,27 @@ const TOOL_LABEL: Record<string, string> = {
   slack_send_message: "Sent Slack Message",
   slack_list_channels: "Listed Channels",
   slack_lookup_user: "Looked Up User",
+  monday_list_boards: "Listed Boards",
+  monday_get_board: "Got Board Schema",
+  monday_create_board: "Created Board",
+  monday_get_items: "Listed Items",
+  monday_get_item: "Got Item",
+  monday_create_item: "Created Item",
+  monday_update_item: "Updated Item",
+  monday_delete_item: "Deleted Item",
+  monday_archive_item: "Archived Item",
+  monday_move_item_to_group: "Moved Item",
+  monday_duplicate_item: "Duplicated Item",
+  monday_create_subitem: "Created Subitem",
+  monday_create_group: "Created Group",
+  monday_delete_group: "Deleted Group",
+  monday_create_column: "Created Column",
+  monday_get_updates: "Got Updates",
+  monday_create_update: "Posted Update",
+  monday_delete_update: "Deleted Update",
+  monday_get_me: "Got User Info",
+  monday_get_users: "Listed Users",
+  monday_graphql: "GraphQL Query",
 };
 
 function toolLabel(name: string): string {
@@ -140,35 +161,43 @@ export default function MessageBubble({ message, onFeedback, onRetry, onEditRetr
 
             {!!message.toolUses?.length && (
               <div className="tool-uses">
-                {message.toolUses.map((t, i) => (
-                  <details key={i} className="tool-card tool-card-animated">
-                    <summary>
-                      <span className="tool-icon">⚡</span>
-                      {toolLabel(t.name)}
-                      {!t.output && <span className="tool-spinner" />}
-                    </summary>
-                    {t.input && (
-                      <div className="tool-detail-wrap">
-                        <pre className="tool-detail tool-input">{
-                          (() => { try { return JSON.stringify(JSON.parse(t.input), null, 2); } catch { return t.input; } })()
-                        }</pre>
-                        <button className="tool-copy-btn" onClick={() => copyTool(i * 2, t.input!)}>
-                          {copiedIdx === i * 2 ? "✓" : "Copy"}
-                        </button>
-                      </div>
-                    )}
-                    {t.output && (
-                      <div className="tool-detail-wrap">
-                        <pre className="tool-detail tool-output">
-                          {t.output.length > 600 ? t.output.slice(0, 600) + "…" : t.output}
-                        </pre>
-                        <button className="tool-copy-btn" onClick={() => copyTool(i * 2 + 1, t.output!)}>
-                          {copiedIdx === i * 2 + 1 ? "✓" : "Copy"}
-                        </button>
-                      </div>
-                    )}
-                  </details>
-                ))}
+                {message.toolUses.map((t, i) => {
+                  const isError = !!t.output && /^Error:|^error:/i.test(t.output.trimStart());
+                  const statusIcon = !t.output ? null : isError ? "✗" : "✓";
+                  const statusClass = !t.output ? "" : isError ? " tool-error" : " tool-success";
+                  return (
+                    <details key={i} className={`tool-card tool-card-animated${statusClass}`}>
+                      <summary>
+                        <span className="tool-icon">⚡</span>
+                        {toolLabel(t.name)}
+                        {!t.output && <span className="tool-spinner" />}
+                        {statusIcon && <span className={`tool-status-icon${isError ? " error" : " success"}`}>{statusIcon}</span>}
+                      </summary>
+                      {t.input && (
+                        <div className="tool-detail-wrap">
+                          <div className="tool-detail-label">Input</div>
+                          <pre className="tool-detail tool-input">{
+                            (() => { try { return JSON.stringify(JSON.parse(t.input), null, 2); } catch { return t.input; } })()
+                          }</pre>
+                          <button className="tool-copy-btn" onClick={() => copyTool(i * 2, t.input!)}>
+                            {copiedIdx === i * 2 ? "✓" : "Copy"}
+                          </button>
+                        </div>
+                      )}
+                      {t.output && (
+                        <div className="tool-detail-wrap">
+                          <div className="tool-detail-label">{isError ? "Error" : "Output"}</div>
+                          <pre className={`tool-detail tool-output${isError ? " tool-output-error" : ""}`}>
+                            {t.output.length > 2000 ? t.output.slice(0, 2000) + "…" : t.output}
+                          </pre>
+                          <button className="tool-copy-btn" onClick={() => copyTool(i * 2 + 1, t.output!)}>
+                            {copiedIdx === i * 2 + 1 ? "✓" : "Copy"}
+                          </button>
+                        </div>
+                      )}
+                    </details>
+                  );
+                })}
               </div>
             )}
 
