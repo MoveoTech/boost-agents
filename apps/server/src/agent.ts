@@ -278,7 +278,7 @@ Column value formats by type:
 - dropdown: {"labels":["Option1"]}
 - checkbox: {"checked":"true"}
 - timeline: {"from":"2025-05-24","to":"2025-05-30"}
-- person: {"personsAndTeams":[{"id":12345,"kind":"person"}]}
+- person: {"personsAndTeams":[{"id":12345678,"kind":"person"}]}  ← id MUST be the numeric user ID, never an email. Call monday_get_users first to resolve a name/email to an id.
 Only include columns that have actual values — omit the rest.
 ALWAYS include the item ID from the result in your reply (e.g. "Created item ID 123456789") so it can be referenced in follow-up requests.`,
     parameters: {
@@ -428,11 +428,11 @@ IMPORTANT: Use real column IDs from monday_get_board — never guess. Same value
   },
   monday_get_users: {
     name: "monday_get_users",
-    description: "List Monday.com users. Optionally filter by name. Useful for finding user IDs for assigning items.",
+    description: "Look up Monday.com users by name or email to get their numeric ID. REQUIRED before setting a person column — the id field in personsAndTeams must be the numeric user ID returned here, never an email or display name.",
     parameters: {
       properties: {
         limit: { type: "number", description: "Max users to return (default 50)" },
-        name:  { type: "string", description: "Filter by name (optional)" },
+        name:  { type: "string", description: "Fuzzy search by name or email" },
       },
       required: [],
     },
