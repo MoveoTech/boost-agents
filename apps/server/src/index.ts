@@ -833,24 +833,36 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         setTimeout(() => reject(new Error("agent timed out after 55s")), 55_000)
       );
 
+      const callChat = () => chat(
+        `${fromName}: ${text}`,
+        history,
+        "tools",
+        systemPrompt,
+        email,   // gmailUser
+        email,   // calendarUser
+        { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false },
+        mondayToken ?? undefined,
+        email,   // tasksUser
+        undefined,
+        undefined,
+        undefined,
+      );
+
       const tChat0 = Date.now();
-      const result = await Promise.race([
-        chat(
-          `${fromName}: ${text}`,
-          history,
-          "tools",
-          systemPrompt,
-          email,   // gmailUser
-          email,   // calendarUser
-          { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false },
-          mondayToken ?? undefined,
-          email,   // tasksUser
-          undefined,
-          undefined,
-          undefined,
-        ),
-        agentTimeout,
-      ]);
+      let result;
+      try {
+        result = await Promise.race([callChat(), agentTimeout]);
+      } catch (firstErr) {
+        const msg = (firstErr as Error).message;
+        // Anthropic 529 = server overloaded — retry once after 3s
+        if (msg.includes("overloaded") || msg.includes("529")) {
+          console.log(JSON.stringify({ ...ctx, msg: "Anthropic overloaded — retrying in 3s" }));
+          await new Promise((r) => setTimeout(r, 3000));
+          result = await Promise.race([callChat(), agentTimeout]);
+        } else {
+          throw firstErr;
+        }
+      }
 
       const elapsedSec = Math.round((Date.now() - agentStartMs) / 1000);
       console.log(JSON.stringify({ ...ctx, msg: "timing: chat()", ms: Date.now() - tChat0, toolsUsed: result.toolUses?.length ?? 0 }));
@@ -860,7 +872,6 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
     } catch (err) {
       const errMsg = (err as Error).message;
       console.error(JSON.stringify({ ...ctx, msg: "message handler threw", error: errMsg }));
-      // Always return a fallback — silent failures leave the user waiting forever
       return "🤖 Something went wrong — try again in a moment.";
     }
   };
