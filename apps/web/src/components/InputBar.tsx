@@ -19,16 +19,53 @@ interface SlashCommand {
 }
 
 const BUILTIN_COMMANDS: SlashCommand[] = [
+  // ── Monday.com ───────────────────────────────────────────────────────────────
+  { name: "monday-item",    icon: "📋", desc: "Create a Monday.com item",        category: "Monday",
+    prefix: "Create a Monday item:\nBoard: \nItem name: \nGroup: \nWork day: \nWorking hours: \nOwner: \nStatus: " },
+  { name: "monday-update",  icon: "✏️", desc: "Update a Monday.com item",        category: "Monday",
+    prefix: "Update Monday item ID  on board :\nSet  to " },
+  { name: "monday-find",    icon: "🔎", desc: "Find a Monday.com item",          category: "Monday",
+    prefix: "Find Monday items on board  where " },
+
+  // ── Calendar ─────────────────────────────────────────────────────────────────
+  { name: "new-event",      icon: "📅", desc: "Create a calendar event",         category: "Calendar",
+    prefix: "Create a calendar event:\nTitle: \nDate: \nTime: \nDuration: \nAttendees: \nDescription: " },
+  { name: "today",          icon: "🌅", desc: "What's on my agenda today",       category: "Calendar",
+    prefix: "What's on my calendar and task list today?" },
+  { name: "week",           icon: "📆", desc: "Show this week's schedule",       category: "Calendar",
+    prefix: "Show me everything on my calendar and tasks for this week." },
+  { name: "availability",   icon: "🕐", desc: "Check calendar availability",     category: "Calendar",
+    prefix: "Check my calendar availability on  between  and " },
+
+  // ── Gmail ────────────────────────────────────────────────────────────────────
+  { name: "email",          icon: "✉️", desc: "Draft and send an email",         category: "Gmail",
+    prefix: "Send an email:\nTo: \nSubject: \nMessage:\n" },
+  { name: "reply-email",    icon: "↩️", desc: "Draft a reply to an email",       category: "Gmail",
+    prefix: "Draft a reply to the latest email from  about " },
+
+  // ── Tasks ────────────────────────────────────────────────────────────────────
+  { name: "new-task",       icon: "✅", desc: "Create a Google Task",            category: "Tasks",
+    prefix: "Create a task:\nTitle: \nDue date: \nNotes: " },
+  { name: "tasks",          icon: "📌", desc: "Show my open tasks",              category: "Tasks",
+    prefix: "Show me all my open tasks." },
+
+  // ── Tools ────────────────────────────────────────────────────────────────────
   { name: "image",     icon: "🖼️",  desc: "Find an image of...",           category: "Tools",   prefix: "Find an image of: " },
   { name: "search",    icon: "🔍",  desc: "Search the web for...",          category: "Tools",   prefix: "Search the web for: " },
   { name: "think",     icon: "🧠",  desc: "Reason step by step",            category: "Tools",   prefix: "Think through this step by step:\n\n", providers: ["gemini", "claude"] },
+
+  // ── Writing ──────────────────────────────────────────────────────────────────
   { name: "summarize", icon: "📝",  desc: "Summarize content or this chat", category: "Writing", prefix: "Summarize the following:\n\n" },
   { name: "improve",   icon: "✨",  desc: "Improve writing quality",         category: "Writing", prefix: "Improve the following text:\n\n" },
   { name: "translate", icon: "🌍",  desc: "Translate to another language",  category: "Writing", prefix: "Translate to [language]: " },
   { name: "explain",   icon: "💡",  desc: "Explain in simple terms",        category: "Writing", prefix: "Explain this in simple terms:\n\n" },
   { name: "bullets",   icon: "📋",  desc: "Format as bullet points",        category: "Writing", prefix: "Convert to concise bullet points:\n\n" },
+
+  // ── Dev ──────────────────────────────────────────────────────────────────────
   { name: "code",      icon: "💻",  desc: "Write or review code",           category: "Dev",     prefix: "Write code for: " },
   { name: "debug",     icon: "🐛",  desc: "Debug this code",                category: "Dev",     prefix: "Debug the following code and explain the issue:\n\n" },
+
+  // ── Chat ─────────────────────────────────────────────────────────────────────
   { name: "new",       icon: "➕",  desc: "Start a new chat",               category: "Chat",    action: "new" },
 ];
 

@@ -767,6 +767,32 @@ function prewarmWASession(email: string, agentId: string, oauthServiceUrl: strin
   ]).catch(() => {});
 }
 
+// Slash command expansions for WhatsApp — mirrors the UI slash command palette.
+// When a message contains one of these after the trigger keyword, the command is
+// replaced with its full natural-language prompt before being sent to the agent.
+const WA_SLASH_COMMANDS: Record<string, string> = {
+  "/today":         "What's on my calendar and task list today?",
+  "/week":          "Show me everything on my calendar and tasks for this week.",
+  "/tasks":         "Show me all my open tasks.",
+  "/new-event":     "Create a calendar event:\nTitle: \nDate: \nTime: \nDuration: \nAttendees: \nDescription: ",
+  "/availability":  "Check my calendar availability on [date] between [time] and [time]",
+  "/email":         "Send an email:\nTo: \nSubject: \nMessage:\n",
+  "/new-task":      "Create a task:\nTitle: \nDue date: \nNotes: ",
+  "/monday-item":   "Create a Monday item:\nBoard: \nItem name: \nGroup: \nWork day: \nWorking hours: \nOwner: \nStatus: ",
+  "/monday-update": "Update Monday item ID [id] on board [boardId]:\nSet [column] to [value]",
+  "/monday-find":   "Find Monday items on board [boardId] where [condition]",
+};
+
+function expandWASlashCommand(text: string): string {
+  const match = text.match(/\/[\w-]+/);
+  if (!match) return text;
+  const expansion = WA_SLASH_COMMANDS[match[0].toLowerCase()];
+  if (!expansion) return text;
+  // Replace the command token with the expansion, preserve anything the user typed after it
+  const after = text.slice(match.index! + match[0].length).trim();
+  return after ? `${expansion}\n${after}` : expansion;
+}
+
 function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
   return async ({ email, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentText, attachmentName, attachmentError }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
@@ -809,6 +835,12 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       }
       // "always" trigger: no additional check needed
 
+      // Expand slash commands — "boost /week" → full calendar prompt
+      const resolvedText = expandWASlashCommand(text);
+      if (resolvedText !== text) {
+        console.log(JSON.stringify({ ...ctx, msg: "slash command expanded", from: text, to: resolvedText }));
+      }
+
       // If the trigger matched but the attachment failed (too large, unsupported type,
       // download error), report it to the user instead of running the agent without media.
       if (attachmentError) {
@@ -817,7 +849,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       }
 
       const agentStartMs = Date.now();
-      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length, text, msSinceHandlerStart: agentStartMs - tHandler, hasAttachment: !!attachment, attachmentMime: attachment?.mimeType }));
+      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: resolvedText.length, text: resolvedText, msSinceHandlerStart: agentStartMs - tHandler, hasAttachment: !!attachment, attachmentMime: attachment?.mimeType }));
 
       const tMonday0 = Date.now();
       const mondayToken = await Promise.race([
@@ -871,8 +903,8 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       // If a document was extracted to text (docx/txt/etc.), prepend its content to the
       // user's message so the AI sees it as part of the request.
       const effectiveMessage = attachmentText
-        ? `${text}\n\n[Attached document${attachmentName ? `: ${attachmentName}` : ""}]\n${attachmentText}`
-        : text;
+        ? `${resolvedText}\n\n[Attached document${attachmentName ? `: ${attachmentName}` : ""}]\n${attachmentText}`
+        : resolvedText;
 
       const tChat0 = Date.now();
       const result = await Promise.race([

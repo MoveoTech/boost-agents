@@ -883,8 +883,18 @@ export function purgeConnectingSessionKeys(): void {
       const attempt = (cryptoRetryCount.get(email) ?? 0) + 1;
       cryptoRetryCount.set(email, attempt);
       sessions.delete(email); // prevent duplicate calls on rapid re-fire
-      waLog("warn", email, `native crypto error during connect (attempt ${attempt}) — closing socket, will retry with existing credentials`);
-      try { session.socket?.end?.(); } catch {}
+
+      if (attempt >= 3) {
+        // Three consecutive crypto errors on connect = credentials are corrupt.
+        // Wipe them so the next session starts clean and prompts for a new QR scan.
+        cryptoRetryCount.delete(email);
+        waLog("warn", email, `crypto error on connect attempt ${attempt} — wiping corrupt credentials, user must re-scan QR`);
+        authRegistry.get(email)?.deleteAllCreds().catch(() => {});
+      } else {
+        waLog("warn", email, `native crypto error during connect (attempt ${attempt}) — closing socket, will retry`);
+        // Pass the error so connection.update sees isCryptoError=true if it fires
+        try { session.socket?.end?.(new Error("Unsupported state or unable to authenticate data")); } catch {}
+      }
     }
   }
 }
