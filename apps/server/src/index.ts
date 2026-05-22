@@ -851,13 +851,13 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const elapsedSec = Math.round((Date.now() - agentStartMs) / 1000);
       console.log(JSON.stringify({ ...ctx, msg: "timing: chat()", ms: Date.now() - tChat0, toolsUsed: result.toolUses?.length ?? 0 }));
       console.log(JSON.stringify({ ...ctx, msg: "agent reply ready", replyLength: result.reply?.length ?? 0, toolsUsed: result.toolUses?.length ?? 0, elapsedSec }));
-      const reply = result.reply ? `${result.reply}\n\n_(${elapsedSec}s)_` : null;
+      const reply = result.reply ? `🤖 ${result.reply}\n\n_(${elapsedSec}s)_` : null;
       return reply;
     } catch (err) {
       const errMsg = (err as Error).message;
       console.error(JSON.stringify({ ...ctx, msg: "message handler threw", error: errMsg }));
       // Always return a fallback — silent failures leave the user waiting forever
-      return "משהו תקע לי — נסה שוב בעוד שנייה 🙏";
+      return "🤖 Something went wrong — try again in a moment.";
     }
   };
 }
