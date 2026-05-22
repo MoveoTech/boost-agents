@@ -709,7 +709,21 @@ export async function connectSession(
 
         try {
           const t0 = Date.now();
-          const fromMe = !!msg.key.fromMe;
+          // Detect "own message" robustly: msg.key.fromMe is unreliable in groups because
+          // the participant field uses the account's LID (anonymized) rather than its phone
+          // JID, and Baileys doesn't always match them. Fallback to comparing the participant
+          // (and remoteJid for DMs) against the bot's own phone-number and LID.
+          const userObj = sock.user as { id?: string; lid?: string } | undefined;
+          const myPhoneKey = userObj?.id?.split(":")[0].split("@")[0] ?? "";
+          const myLidKey = userObj?.lid?.split(":")[0].split("@")[0] ?? "";
+          const participant = (msg.key.participant ?? msg.key.remoteJid ?? "") as string;
+          const participantKey = participant.split(":")[0].split("@")[0];
+          const fromMe = !!msg.key.fromMe ||
+            (!!myPhoneKey && participantKey === myPhoneKey) ||
+            (!!myLidKey && participantKey === myLidKey);
+          if (!msg.key.fromMe && fromMe) {
+            waLog("info", email, "identified own message via participant match", { participantKey, myPhoneKey, myLidKey });
+          }
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentText, attachmentName, attachmentError });
           waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
           if (reply) {
