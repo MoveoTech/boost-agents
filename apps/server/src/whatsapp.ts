@@ -727,7 +727,7 @@ export async function connectSession(
               // Without this, any media older than a few hours silently hangs forever.
               const downloadTimeoutMs = 30_000;
               const buffer = await Promise.race([
-                downloadMediaMessage(target, "buffer", {}, { reuploadRequest: sock.updateMediaMessage }) as Promise<Buffer>,
+                downloadMediaMessage(target, "buffer", {}, { logger: { level: "silent", trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) } as any, reuploadRequest: sock.updateMediaMessage }) as Promise<Buffer>,
                 new Promise<never>((_, reject) =>
                   setTimeout(() => reject(new Error(`attachment download timed out after ${downloadTimeoutMs / 1000}s`)), downloadTimeoutMs)
                 ),
