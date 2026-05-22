@@ -47,6 +47,9 @@ const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => numbe
 const reconnectAttempts = new Map<string, number>();
 // consecutive crypto error counter — reset on successful connect
 const cryptoRetryCount = new Map<string, number>();
+// Latest message timestamp per conversation. Used to skip sending stale replies when
+// a newer message arrived in the same conversation while we were still processing.
+const latestMsgTsPerJid = new Map<string, number>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -561,6 +564,14 @@ export async function connectSession(
           msg.message?.imageMessage?.caption ||
           "";
 
+        // Defensive: if a fromMe message starts with our bot prefix, it's the bot's own
+        // reply echoing back. sentByBot tracks msgIds but msgIds sometimes differ between
+        // the sent message and the echo. Skip on prefix match to prevent self-processing loops.
+        if (msg.key.fromMe && text.startsWith("🤖")) {
+          waLog("info", email, "skipping bot's own reply echo", { textPreview: text.slice(0, 40) });
+          continue;
+        }
+
         if (!text) {
           // Don't mark as processed — allow WhatsApp's retry to succeed once session establishes
           const msgTypes = Object.keys(msg.message ?? {}).join(",");
@@ -602,6 +613,12 @@ export async function connectSession(
         storeRecentMessage(from, fromName, text, storageTs);
         const recentMessages = getRecentMessages(from);
 
+        // Track this as the latest message in the conversation. If a newer message arrives
+        // (in a separate concurrent handler) during this one's processing, we'll skip sending
+        // this reply since it's been superseded by the newer message.
+        const prevLatest = latestMsgTsPerJid.get(from) ?? 0;
+        if (msgTs > prevLatest) latestMsgTsPerJid.set(from, msgTs);
+
         waLog("info", email, "incoming message", {
           from,
           fromName,
@@ -620,7 +637,12 @@ export async function connectSession(
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages });
           waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
           if (reply) {
-            if (sessions.get(email)?.status !== "connected") {
+            // If a newer message has arrived in this conversation while we were processing,
+            // skip this stale reply — only the latest message gets answered.
+            const latestNow = latestMsgTsPerJid.get(from) ?? 0;
+            if (msgTs < latestNow) {
+              waLog("info", email, "skipping stale reply — newer message arrived during processing", { msgTs, latest: latestNow, ageMs: latestNow - msgTs });
+            } else if (sessions.get(email)?.status !== "connected") {
               waLog("warn", email, "session no longer connected — dropping reply", { to: from });
             } else {
               waLog("info", email, "sending reply", { to: from, replyLength: reply.length });

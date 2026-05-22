@@ -511,7 +511,17 @@ app.get("/api/connections", async (req, res) => {
     const { users } = await r.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
     const user = users.find((u) => u.email === email);
     const waStatus = getStatus(email);
-    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks, whatsapp: waStatus === "connected", whatsappStatus: waStatus });
+    // Fetch all WhatsApp users registered to this agent so the UI can show whether
+    // another user has already connected (we only allow one WhatsApp owner per agent).
+    let whatsappOwners: string[] = [];
+    try {
+      const waRes = await fetch(`${oauthServiceUrl}/api/whatsapp/${agentId}`, { headers: { "x-api-key": oauthServiceKey } });
+      if (waRes.ok) {
+        const data = await waRes.json() as { users?: string[] };
+        whatsappOwners = data.users ?? [];
+      }
+    } catch { /* non-fatal — UI just won't show the lockout message */ }
+    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks, whatsapp: waStatus === "connected", whatsappStatus: waStatus, whatsappOwners });
   } catch { res.json({ gmail: false, calendar: false }); }
 });
 
@@ -580,6 +590,20 @@ app.get("/api/whatsapp/qr", async (req, res) => {
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL ?? "";
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
   const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
+
+  // Enforce single-owner: refuse if a different user already owns WhatsApp on this agent.
+  try {
+    const waRes = await fetch(`${oauthServiceUrl}/api/whatsapp/${agentId}`, { headers: { "x-api-key": oauthServiceKey } });
+    if (waRes.ok) {
+      const data = await waRes.json() as { users?: string[] };
+      const otherOwner = (data.users ?? []).find((u) => u !== email);
+      if (otherOwner) {
+        console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "QR connect blocked — already owned by another user", otherOwner }));
+        res.status(409).json({ error: `WhatsApp is already connected to ${otherOwner}. Only one WhatsApp account per agent.` });
+        return;
+      }
+    }
+  } catch { /* non-fatal — proceed with normal flow */ }
 
   console.log(JSON.stringify({ tag: "whatsapp", user: email, msg: "QR SSE stream opened" }));
 

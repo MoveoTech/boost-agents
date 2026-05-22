@@ -33,6 +33,7 @@ export default function App() {
   const [tasksConnected, setTasksConnected] = useState(false);
   const [whatsappConnected, setWhatsappConnected] = useState(false);
   const [whatsappStatus, setWhatsappStatus] = useState<"connected" | "disconnected" | "connecting" | "qr">("disconnected");
+  const [whatsappOwners, setWhatsappOwners] = useState<string[]>([]);
 
   // Poll status while in transient states so the UI updates without manual refresh.
   useEffect(() => {

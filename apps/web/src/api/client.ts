@@ -95,9 +95,9 @@ export async function saveUserSettings(settings: Record<string, unknown>): Promi
 
 export type WhatsAppStatus = "connected" | "disconnected" | "connecting" | "qr";
 
-export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean; whatsapp: boolean; whatsappStatus: WhatsAppStatus }> {
+export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean; whatsapp: boolean; whatsappStatus: WhatsAppStatus; whatsappOwners: string[] }> {
   const res = await fetch(`${BASE}/api/connections`);
-  return res.ok ? res.json() : { gmail: false, calendar: false, monday: false, tasks: false, whatsapp: false, whatsappStatus: "disconnected" };
+  return res.ok ? res.json() : { gmail: false, calendar: false, monday: false, tasks: false, whatsapp: false, whatsappStatus: "disconnected", whatsappOwners: [] };
 }
 
 export async function disconnectService(service: "gmail" | "calendar" | "monday" | "tasks"): Promise<void> {
