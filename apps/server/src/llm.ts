@@ -154,7 +154,12 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
     : claudeTools;
 
   const firstUserContent: Anthropic.MessageParam["content"] = image
-    ? [{ type: "image", source: { type: "base64", media_type: image.mimeType as never, data: image.data } }, { type: "text", text: message }]
+    ? [
+        image.mimeType === "application/pdf"
+          ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: image.data } } as never
+          : { type: "image", source: { type: "base64", media_type: image.mimeType as never, data: image.data } },
+        { type: "text", text: message },
+      ]
     : message;
 
   const msgs: Anthropic.MessageParam[] = [
@@ -338,7 +343,12 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
     : claudeTools;
 
   const firstUserContent: Anthropic.MessageParam["content"] = image
-    ? [{ type: "image", source: { type: "base64", media_type: image.mimeType as never, data: image.data } }, { type: "text", text: message }]
+    ? [
+        image.mimeType === "application/pdf"
+          ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: image.data } } as never
+          : { type: "image", source: { type: "base64", media_type: image.mimeType as never, data: image.data } },
+        { type: "text", text: message },
+      ]
     : message;
 
   const msgs: Anthropic.MessageParam[] = [

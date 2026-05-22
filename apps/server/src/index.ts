@@ -767,7 +767,7 @@ function prewarmWASession(email: string, agentId: string, oauthServiceUrl: strin
 }
 
 function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServiceKey: string): MentionHandler {
-  return async ({ email, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages }) => {
+  return async ({ email, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentError }) => {
     const ctx = { tag: "whatsapp", user: email, fromName, isGroup, groupName: groupName ?? null, isMentioned };
     const tHandler = Date.now();
     try {
@@ -808,8 +808,15 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       }
       // "always" trigger: no additional check needed
 
+      // If the trigger matched but the attachment failed (too large, unsupported type,
+      // download error), report it to the user instead of running the agent without media.
+      if (attachmentError) {
+        console.log(JSON.stringify({ ...ctx, msg: "responding with attachment error", attachmentError }));
+        return `🤖 ${attachmentError}`;
+      }
+
       const agentStartMs = Date.now();
-      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length, text, msSinceHandlerStart: agentStartMs - tHandler }));
+      console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: text.length, text, msSinceHandlerStart: agentStartMs - tHandler, hasAttachment: !!attachment, attachmentMime: attachment?.mimeType }));
 
       const tMonday0 = Date.now();
       const mondayToken = await Promise.race([
@@ -872,9 +879,9 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           { ...(config.model ?? { provider: "gemini" as const, modelId: "gemini-2.5-flash" }), noThinking: true },
           mondayToken ?? undefined,
           email,   // tasksUser
-          undefined,
-          undefined,
-          undefined,
+          undefined, // memoryUser
+          attachment, // image / PDF attachment from WhatsApp
+          undefined, // whatsappUser
         ),
         agentTimeout,
       ]);

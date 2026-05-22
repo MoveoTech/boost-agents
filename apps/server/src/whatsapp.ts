@@ -271,6 +271,12 @@ function storeRecentMessage(jid: string, from: string, text: string, ts: number)
   recentMsgBuffer.set(jid, buf);
 }
 
+// Image or PDF attached to an incoming WhatsApp message
+export interface WhatsAppAttachment {
+  data: string;     // base64
+  mimeType: string; // e.g. "image/jpeg", "application/pdf"
+}
+
 // Handler receives full message context; returns reply text or null (= no reply)
 export type MessageHandler = (params: {
   email: string;
@@ -282,6 +288,8 @@ export type MessageHandler = (params: {
   isMentioned: boolean;
   fromMe: boolean;
   recentMessages: Array<{ from: string; text: string; ts: number }>;
+  attachment?: WhatsAppAttachment;
+  attachmentError?: string;
 }) => Promise<string | null>;
 
 export type MentionHandler = MessageHandler;
@@ -562,6 +570,7 @@ export async function connectSession(
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
           msg.message?.imageMessage?.caption ||
+          msg.message?.documentMessage?.caption ||
           "";
 
         // Defensive: if a fromMe message starts with our bot prefix, it's the bot's own
@@ -631,10 +640,40 @@ export async function connectSession(
           textLength: text.length,
         });
 
+        // Detect and download attached image or document. Capped at 10MB; oversize files
+        // get reported back to the user as an error reply (handled inside the handler).
+        let attachment: WhatsAppAttachment | undefined;
+        let attachmentError: string | undefined;
+        const imageMsg = msg.message?.imageMessage;
+        const docMsg = msg.message?.documentMessage;
+        const mediaMsg = imageMsg || docMsg;
+        if (mediaMsg) {
+          const fileLength = Number(mediaMsg.fileLength ?? 0);
+          const MAX_BYTES = 10 * 1024 * 1024;
+          const mimetype = (mediaMsg.mimetype || (imageMsg ? "image/jpeg" : "application/octet-stream")) as string;
+          if (fileLength > MAX_BYTES) {
+            attachmentError = `File too large (${Math.round(fileLength / 1024 / 1024)}MB). Max is 10MB.`;
+            waLog("info", email, "attachment too large", { fileLength, mimetype });
+          } else if (docMsg && mimetype !== "application/pdf") {
+            attachmentError = "Only PDF documents are supported. Try converting to PDF first.";
+            waLog("info", email, "unsupported document type", { mimetype });
+          } else {
+            try {
+              const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
+              const buffer = await downloadMediaMessage(msg, "buffer", {}) as Buffer;
+              attachment = { data: buffer.toString("base64"), mimeType: mimetype };
+              waLog("info", email, "attachment downloaded", { mimetype, sizeBytes: buffer.length });
+            } catch (err) {
+              attachmentError = "Couldn't download the attachment. Please try sending it again.";
+              waLog("warn", email, "attachment download failed", { error: (err as Error).message });
+            }
+          }
+        }
+
         try {
           const t0 = Date.now();
           const fromMe = !!msg.key.fromMe;
-          const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages });
+          const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentError });
           waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
           if (reply) {
             // If a newer message has arrived in this conversation while we were processing,
