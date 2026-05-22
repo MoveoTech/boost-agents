@@ -842,7 +842,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           systemPrompt,
           email,   // gmailUser
           email,   // calendarUser
-          { ...(config.model ?? { provider: "claude" as const, modelId: "claude-haiku-4-5-20251001" }), noThinking: false },
+          { ...(config.model ?? { provider: "gemini" as const, modelId: "gemini-2.5-flash" }), noThinking: true },
           mondayToken ?? undefined,
           email,   // tasksUser
           undefined,

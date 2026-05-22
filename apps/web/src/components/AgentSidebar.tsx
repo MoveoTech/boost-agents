@@ -481,10 +481,10 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                           }
                         }}
                       >
-                        <option value="">Haiku (default — fastest)</option>
-                        <option value="claude:claude-sonnet-4-6">Claude Sonnet 4.6</option>
-                        <option value="claude:claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                        <option value="">Gemini Flash (default — most reliable)</option>
                         <option value="gemini:gemini-2.5-flash">Gemini 2.5 Flash</option>
+                        <option value="claude:claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                        <option value="claude:claude-sonnet-4-6">Claude Sonnet 4.6</option>
                       </select>
                     </div>
 
