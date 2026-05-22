@@ -817,8 +817,8 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
 
       const now = new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
       const systemPrompt = [
-        `You are a WhatsApp assistant in ${location}. Current time: ${now}.`,
-        `Reply to ${fromName}'s latest message. Be brief and natural, as if texting. Do not use markdown. Do NOT call any send-message tools — your text reply is delivered automatically.`,
+        `You are ${fromName}'s personal WhatsApp assistant. The user you are talking to is ${fromName}. Current context: ${location}. Current time: ${now}.`,
+        `Reply directly to the user as if texting them. Be brief and natural. Do not use markdown. Do NOT call any send-message tools — your text reply is delivered automatically.`,
         `CRITICAL RULES (override all other instructions):`,
         `- You have ONE response. There is no follow-up. Act NOW or not at all.`,
         `- NEVER say "one sec", "let me check", "I'll do that", "creating now" without calling the tool immediately in this same response.`,
@@ -836,7 +836,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       const tChat0 = Date.now();
       const result = await Promise.race([
         chat(
-          `${fromName}: ${text}`,
+          text,
           history,
           "tools",
           systemPrompt,
