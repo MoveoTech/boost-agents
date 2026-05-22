@@ -410,7 +410,7 @@ export async function connectSession(
           // a fresh Signal session with the peer on the next retry.
           const errMsg: string = detail?.err?.message ?? detail?.message ?? (typeof detail === "string" ? detail : "");
           const errName: string = detail?.err?.name ?? "";
-          const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError";
+          const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError" || errName === "PreKeyError";
           if (!isDecryptError) return;
 
           // Skip auto-purge for outgoing message copies (fromMe: true).
@@ -723,9 +723,11 @@ export async function connectSession(
                 : msg;
               // Hard timeout — downloadMediaMessage can hang indefinitely for quoted media
               // when key resolution fails. Without this, the entire handler stalls.
+              // Pass reuploadRequest so Baileys can refresh expired CDN URLs.
+              // Without this, any media older than a few hours silently hangs forever.
               const downloadTimeoutMs = 30_000;
               const buffer = await Promise.race([
-                downloadMediaMessage(target, "buffer", {}) as Promise<Buffer>,
+                downloadMediaMessage(target, "buffer", {}, { reuploadRequest: sock.updateMediaMessage }) as Promise<Buffer>,
                 new Promise<never>((_, reject) =>
                   setTimeout(() => reject(new Error(`attachment download timed out after ${downloadTimeoutMs / 1000}s`)), downloadTimeoutMs)
                 ),

@@ -991,11 +991,13 @@ app.post("/api/chat", async (req, res) => {
   };
 
   const sessionEmail = getSessionEmail(req) ?? bodyEmail;
-  const isImageAttachment = !!attachment && attachment.mimeType.startsWith("image/");
-  const effectiveMessage = attachment && !isImageAttachment
+  // PDFs and images are passed as binary to the multimodal LLM layer.
+  // Everything else (text, JSON, CSV, etc.) is decoded and inlined into the message.
+  const isBinaryAttachment = !!attachment && (attachment.mimeType.startsWith("image/") || attachment.mimeType === "application/pdf");
+  const effectiveMessage = attachment && !isBinaryAttachment
     ? buildMessageWithAttachment(message, attachment)
     : message;
-  const imageAttachment: ImageAttachment | undefined = isImageAttachment
+  const imageAttachment: ImageAttachment | undefined = isBinaryAttachment
     ? { data: attachment!.data, mimeType: attachment!.mimeType }
     : undefined;
 
