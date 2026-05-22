@@ -106,17 +106,29 @@ async function deserialize(str: string): Promise<any> {
 }
 
 async function loadCreds(agentId: string, email: string, oauthUrl: string, oauthKey: string): Promise<{ creds: string; keys: string } | null> {
-  try {
-    const res = await fetch(`${oauthUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}`, {
-      headers: { "x-api-key": oauthKey },
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as any;
-    return data?.creds ? data : null;
-  } catch (err) {
-    waLog("error", email, "failed to load credentials from Firestore", { error: (err as Error).message });
-    return null;
+  // Retry transient failures up to 3 times. 404 means creds genuinely don't exist (return null).
+  // Network errors / 5xx are transient — throw so the caller doesn't overwrite real credentials
+  // with a fresh set on a momentary blip.
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(`${oauthUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}`, {
+        headers: { "x-api-key": oauthKey },
+      });
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        lastErr = new Error(`oauth-service ${res.status}`);
+      } else {
+        const data = await res.json() as any;
+        return data?.creds ? data : null;
+      }
+    } catch (err) {
+      lastErr = err as Error;
+    }
+    if (attempt < 3) await new Promise((r) => setTimeout(r, 1000 * attempt));
   }
+  waLog("error", email, "loadCreds failed after 3 attempts — refusing to wipe credentials", { error: lastErr?.message });
+  throw lastErr ?? new Error("loadCreds failed");
 }
 
 async function saveCredsToFirestore(agentId: string, email: string, oauthUrl: string, oauthKey: string, data: { creds: string; keys: string }): Promise<void> {
@@ -313,6 +325,23 @@ export async function connectSession(
     const { Boom } = await import("@hapi/boom");
     const version = await getWaVersion();
     waLog("info", email, "Baileys loaded", { version: version.join(".") });
+
+    // Early creds check: if no saved credentials AND no UI listener for QR, bail out.
+    // This prevents an "abandoned" session from spinning up a QR loop nobody will scan,
+    // which would otherwise hog the event loop with crypto work and slow other users' sessions.
+    let savedCreds: { creds: string; keys: string } | null;
+    try {
+      savedCreds = await loadCreds(agentId, email, oauthUrl, oauthKey);
+    } catch (err) {
+      waLog("warn", email, "deferring session — could not load credentials", { error: (err as Error).message });
+      sessions.delete(email);
+      return;
+    }
+    if (!savedCreds && !onQR) {
+      waLog("info", email, "no saved credentials and no QR listener — session disconnected, user must reconnect via UI");
+      sessions.delete(email);
+      return;
+    }
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
     authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, freezeCredsSave: auth.freezeCredsSave });
