@@ -76,6 +76,7 @@ interface Props {
   mondayConnected: boolean;
   tasksConnected: boolean;
   whatsappConnected: boolean;
+  whatsappStatus?: "connected" | "disconnected" | "connecting" | "qr";
   onGmailDisconnect: () => void;
   onCalendarDisconnect: () => void;
   onMondayDisconnect: () => void;
@@ -88,7 +89,7 @@ interface Props {
   isResponding?: boolean;
 }
 
-export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, whatsappConnected, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, onWhatsappConnected, onWhatsappDisconnect, connectionsLoading, className, isResponding }: Props) {
+export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, userSettings, onUserSettingsChange, gmailConnected, calendarConnected, mondayConnected, tasksConnected, whatsappConnected, whatsappStatus, onGmailDisconnect, onCalendarDisconnect, onMondayDisconnect, onTasksDisconnect, onWhatsappConnected, onWhatsappDisconnect, connectionsLoading, className, isResponding }: Props) {
   const merged = agentConfig ? {
     ...agentConfig,
     ...(userSettings.model ? { model: userSettings.model } : {}),
@@ -414,9 +415,13 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                   <div className="sidebar-tool-text">
                     <span className="sidebar-tool-name">WhatsApp</span>
                     <span className="sidebar-tool-connection">
-                      {whatsappConnected
-                        ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
-                        : <button className="sidebar-tool-connect-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }} onClick={handleWhatsappConnect}>Connect</button>}
+                      {whatsappConnected ? (
+                        <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
+                      ) : whatsappStatus === "connecting" || whatsappStatus === "qr" ? (
+                        <span style={{ opacity: 0.7 }}>⟳ establishing connection…</span>
+                      ) : (
+                        <button className="sidebar-tool-connect-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }} onClick={handleWhatsappConnect}>Connect</button>
+                      )}
                       {whatsappConnected && <button className="sidebar-tool-disconnect" onClick={onWhatsappDisconnect}>Disconnect</button>}
                     </span>
                   </div>

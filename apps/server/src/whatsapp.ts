@@ -533,10 +533,17 @@ export async function connectSession(
           continue;
         }
         const ageMsec = Date.now() - msgTs;
-        // 5min threshold — lets legitimate messages through even when slow sends
-        // (event loop blocked by other sessions) push processing past the 60s mark.
+        // 5min absolute cap — filters truly old messages regardless of session state.
         if (ageMsec > 5 * 60_000) {
           waLog("info", email, "skipping stale message", { sentMsAgo: ageMsec });
+          continue;
+        }
+        // Also skip messages sent BEFORE this session connected. After a server restart
+        // or reconnect, WhatsApp redelivers recent messages as type:"notify" — without
+        // this gate the agent would reply to messages the user sent before we were online.
+        const connectedAt = session.connectedAt ?? 0;
+        if (connectedAt && msgTs < connectedAt - 5_000) {
+          waLog("info", email, "skipping pre-connect message", { sentMsAgo: ageMsec, msBeforeConnect: connectedAt - msgTs });
           continue;
         }
 

@@ -32,6 +32,16 @@ export default function App() {
   const [mondayConnected, setMondayConnected] = useState(false);
   const [tasksConnected, setTasksConnected] = useState(false);
   const [whatsappConnected, setWhatsappConnected] = useState(false);
+  const [whatsappStatus, setWhatsappStatus] = useState<"connected" | "disconnected" | "connecting" | "qr">("disconnected");
+
+  // Poll status while in transient states so the UI updates without manual refresh.
+  useEffect(() => {
+    if (whatsappStatus !== "connecting" && whatsappStatus !== "qr") return;
+    const id = setInterval(() => {
+      getConnections().then(({ whatsapp, whatsappStatus: s }) => { setWhatsappConnected(whatsapp); setWhatsappStatus(s); }).catch(() => {});
+    }, 2000);
+    return () => clearInterval(id);
+  }, [whatsappStatus]);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
@@ -61,7 +71,7 @@ export default function App() {
         if (email) setUserEmail(email);
         getConfig().then(setAgentConfig).catch(() => {});
         getConnections()
-          .then(({ gmail, calendar, monday, tasks, whatsapp }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); })
+          .then(({ gmail, calendar, monday, tasks, whatsapp, whatsappStatus }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); setWhatsappStatus(whatsappStatus); })
           .catch(() => {})
           .finally(() => setConnectionsLoading(false));
         getUserSettings().then((s) => setUserSettings(s as UserSettings)).catch(() => {});
@@ -85,7 +95,7 @@ export default function App() {
     }
     if (params.get("google_connected") === "true" || params.get("monday_connected") === "true") {
       window.history.replaceState({}, "", window.location.pathname);
-      getConnections().then(({ gmail, calendar, monday, tasks, whatsapp }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); }).catch(() => {});
+      getConnections().then(({ gmail, calendar, monday, tasks, whatsapp, whatsappStatus }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); setWhatsappStatus(whatsappStatus); }).catch(() => {});
     }
     checkSession();
   }, [checkSession]);
@@ -385,8 +395,9 @@ export default function App() {
         tasksConnected={tasksConnected}
         onTasksDisconnect={() => disconnectService("tasks").then(() => setTasksConnected(false))}
         whatsappConnected={whatsappConnected}
-        onWhatsappConnected={() => setWhatsappConnected(true)}
-        onWhatsappDisconnect={() => disconnectWhatsApp().then(() => setWhatsappConnected(false))}
+        whatsappStatus={whatsappStatus}
+        onWhatsappConnected={() => { setWhatsappConnected(true); setWhatsappStatus("connected"); }}
+        onWhatsappDisconnect={() => disconnectWhatsApp().then(() => { setWhatsappConnected(false); setWhatsappStatus("disconnected"); })}
         className={mobileTab !== "settings" ? "mobile-hidden" : ""}
         onFeedback={handleFeedback}
         isResponding={isResponding}

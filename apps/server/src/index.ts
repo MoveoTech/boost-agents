@@ -510,7 +510,8 @@ app.get("/api/connections", async (req, res) => {
     });
     const { users } = await r.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
     const user = users.find((u) => u.email === email);
-    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks, whatsapp: getStatus(email) === "connected" });
+    const waStatus = getStatus(email);
+    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks, whatsapp: waStatus === "connected", whatsappStatus: waStatus });
   } catch { res.json({ gmail: false, calendar: false }); }
 });
 
