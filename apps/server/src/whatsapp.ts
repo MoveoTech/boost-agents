@@ -450,6 +450,13 @@ export async function connectSession(
         } else {
           const attempt = (reconnectAttempts.get(email) ?? 0) + 1;
           reconnectAttempts.set(email, attempt);
+          // After 10 failed attempts, give up — the session is degraded and continuing to
+          // retry hogs the Node.js event loop with crypto work, slowing OTHER users' sessions.
+          if (attempt > 10) {
+            waLog("warn", email, `giving up reconnect after ${attempt - 1} attempts — session degraded, user must reconnect via settings`);
+            reconnectAttempts.delete(email);
+            return;
+          }
           const backoff = Math.min(5000 * attempt, 60_000);
           waLog("info", email, `reconnecting in ${backoff / 1000}s (attempt ${attempt})`);
           const carryQR = pendingQRListeners.length ? (qr: string) => pendingQRListeners.forEach((fn) => fn(qr)) : undefined;
@@ -497,7 +504,9 @@ export async function connectSession(
           continue;
         }
         const ageMsec = Date.now() - msgTs;
-        if (ageMsec > 60_000) {
+        // 5min threshold — lets legitimate messages through even when slow sends
+        // (event loop blocked by other sessions) push processing past the 60s mark.
+        if (ageMsec > 5 * 60_000) {
           waLog("info", email, "skipping stale message", { sentMsAgo: ageMsec });
           continue;
         }
