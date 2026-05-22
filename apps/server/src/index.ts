@@ -723,6 +723,8 @@ app.put("/api/whatsapp/config", async (req, res) => {
       res.status(502).json({ error: `oauth-service returned ${patchRes.status}`, detail: text });
       return;
     }
+    // Invalidate cache so the next message uses the new config immediately
+    waConfigCache.delete(email);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
