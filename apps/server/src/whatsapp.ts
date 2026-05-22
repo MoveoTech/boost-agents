@@ -738,15 +738,32 @@ export async function connectSession(
           } else {
             try {
               const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
-              // For quoted media we synthesize a tiny pseudo-message so downloadMediaMessage
-              // resolves the media keys against the quoted payload, not the wrapper message.
-              const target = isQuoted
-                ? { key: msg.key, message: quoted } as typeof msg
-                : msg;
-              // Hard timeout — downloadMediaMessage can hang indefinitely for quoted media
-              // when key resolution fails. Without this, the entire handler stalls.
-              // Pass reuploadRequest so Baileys can refresh expired CDN URLs.
-              // Without this, any media older than a few hours silently hangs forever.
+              // Build the correct download target.
+              // For quoted media, reuploadRequest needs the ORIGINAL message's key (not the
+              // reply key) so WhatsApp knows which media to re-upload when the CDN URL expires.
+              // Priority: (1) original message from our in-memory store (has fully correct key +
+              // fresh content), (2) reconstruct from contextInfo.stanzaId.
+              let target: typeof msg;
+              if (isQuoted) {
+                const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+                const stanzaId = ctxInfo?.stanzaId;
+                const storedOriginal = stanzaId ? socketMsgStore.get(stanzaId) : undefined;
+                if (storedOriginal) {
+                  target = storedOriginal;
+                } else {
+                  target = {
+                    key: {
+                      id: stanzaId ?? msg.key.id,
+                      remoteJid: ctxInfo?.remoteJid ?? msg.key.remoteJid,
+                      participant: ctxInfo?.participant ?? undefined,
+                      fromMe: false,
+                    },
+                    message: quoted,
+                  } as typeof msg;
+                }
+              } else {
+                target = msg;
+              }
               const downloadTimeoutMs = 30_000;
               const buffer = await Promise.race([
                 downloadMediaMessage(target, "buffer", {}, { logger: { level: "silent", trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) } as any, reuploadRequest: sock.updateMediaMessage }) as Promise<Buffer>,
