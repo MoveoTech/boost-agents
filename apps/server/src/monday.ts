@@ -21,7 +21,7 @@ function json(v: any): string { return JSON.stringify(v, null, 2); }
 
 const ITEM_FIELDS = `
   id name url state created_at updated_at
-  group { id title color }
+  group { id title }
   column_values { id text value type }
 `;
 
@@ -55,7 +55,7 @@ export async function mondayGetBoard(token: string, boardId: string): Promise<st
         updated_at items_count
         creator { id name email }
         workspace { id name }
-        columns { id title type description settings }
+        columns { id title type }
         groups { id title color position }
       }
     }`, { boardId });
@@ -245,7 +245,7 @@ export async function mondayGetUpdates(token: string, itemId: string, limit = 25
         updates(limit: $limit) {
           id body text_body created_at updated_at item_id
           creator { id name }
-          replies { id body text_body created_at updated_at creator { id name } }
+          replies { id body creator { id name } }
         }
       }
     }`, { itemId, limit });
