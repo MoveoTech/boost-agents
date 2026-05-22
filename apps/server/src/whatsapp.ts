@@ -575,6 +575,7 @@ export async function connectSession(
           msg.message?.extendedTextMessage?.text ||
           msg.message?.imageMessage?.caption ||
           msg.message?.documentMessage?.caption ||
+          msg.message?.documentWithCaptionMessage?.message?.documentMessage?.caption ||
           "";
 
         // Defensive: if a fromMe message starts with our bot prefix, it's the bot's own
@@ -652,10 +653,16 @@ export async function connectSession(
         let attachmentName: string | undefined;
         let attachmentError: string | undefined;
         const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        // Handle documentWithCaptionMessage — newer WhatsApp versions wrap documents inside this
+        // container instead of using a bare documentMessage, both in direct messages and quoted replies.
+        const directDocMsg = msg.message?.documentMessage
+          ?? msg.message?.documentWithCaptionMessage?.message?.documentMessage;
+        const quotedDocMsg = quoted?.documentMessage
+          ?? quoted?.documentWithCaptionMessage?.message?.documentMessage;
         const imageMsg = msg.message?.imageMessage ?? quoted?.imageMessage;
-        const docMsg = msg.message?.documentMessage ?? quoted?.documentMessage;
+        const docMsg = directDocMsg ?? quotedDocMsg;
         const mediaMsg = imageMsg || docMsg;
-        const isQuoted = !msg.message?.imageMessage && !msg.message?.documentMessage && !!mediaMsg;
+        const isQuoted = !msg.message?.imageMessage && !directDocMsg && !!mediaMsg;
         if (mediaMsg) {
           const fileLength = Number(mediaMsg.fileLength ?? 0);
           const MAX_BYTES = 10 * 1024 * 1024;
