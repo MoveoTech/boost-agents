@@ -136,8 +136,6 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
 // ── Claude ──────────────────────────────────────────────────────────────────
 
 async function chatClaude(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment): Promise<ChatResult> {
-  const t0claude = Date.now();
-  console.log(JSON.stringify({ tag: "llm", msg: "chatClaude entered", model: modelId }));
   const client = getAnthropicClient();
   const toolUses: ToolUse[] = [];
 
@@ -174,7 +172,6 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
     if (round >= MAX_TOOL_ROUNDS) {
       msgs.push({ role: "user", content: FINAL_MSG });
     }
-    console.log(JSON.stringify({ tag: "llm", msg: "chatClaude → API call", model: modelId, round, msSetup: Date.now() - t0claude }));
     const response = await client.messages.create({
       model: modelId, max_tokens: 8192, system: systemPrompt,
       tools: round < MAX_TOOL_ROUNDS && allClaudeTools.length ? (allClaudeTools as never) : undefined,

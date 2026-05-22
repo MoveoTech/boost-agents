@@ -1,6 +1,16 @@
 // WhatsApp session manager using Baileys (ESM — imported dynamically)
 // Credentials persisted in Firestore via oauth-service.
 
+// Suppress libsignal-protocol's verbose console.log output — it dumps full Signal
+// session objects including private keys in plaintext, which is a security issue
+// when logs are shipped to GCP Cloud Logging.
+const _origConsoleLog = console.log.bind(console);
+console.log = (...args: unknown[]) => {
+  const first = String(args[0] ?? "");
+  if (first.startsWith("Closing session") || first.startsWith("Closing open session")) return;
+  _origConsoleLog(...args);
+};
+
 // Eagerly start loading Baileys when this module is first imported.
 // The ESM dynamic import of @whiskeysockets/baileys (a large native module) blocks
 // the Node.js event loop for 3-5 minutes on a cold Cloud Run instance. Starting it
