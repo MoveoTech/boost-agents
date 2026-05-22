@@ -518,6 +518,15 @@ export async function connectSession(
           // Don't mark as processed — allow WhatsApp's retry to succeed once session establishes
           const msgTypes = Object.keys(msg.message ?? {}).join(",");
           waLog("info", email, "skipping message with no text", { msgTypes, remoteJid: msg.key.remoteJid });
+          // For fromMe messages (owner sending from phone), notify them to resend —
+          // decryption failed due to a Signal session issue, auto-retry is in progress
+          // but they won't know why there's no reply without this nudge.
+          if (msg.key.fromMe && msg.key.remoteJid) {
+            const activeSock = sessions.get(email)?.socket ?? sock;
+            activeSock.sendMessage(msg.key.remoteJid, {
+              text: "🔄 Session reset in progress — please resend your message in a few seconds.",
+            }).catch(() => {});
+          }
           continue;
         }
 
