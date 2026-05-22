@@ -12,9 +12,24 @@ async function gql(token: string, query: string, variables?: Record<string, unkn
     body: JSON.stringify({ query, variables }),
     signal: AbortSignal.timeout(20_000),
   });
-  const json = await res.json() as { data?: any; errors?: any[] };
-  if (json.errors?.length) throw new Error(json.errors.map((e: any) => e.message).join("; "));
-  return json.data;
+  const body = await res.json() as { data?: any; errors?: any[] };
+  if (body.errors?.length) {
+    // Log full error detail to GCP so we can see exactly which field/line Monday rejects
+    console.error(JSON.stringify({
+      tag: "monday",
+      msg: "GraphQL error",
+      query: query.replace(/\s+/g, " ").trim(),
+      variables,
+      errors: body.errors,
+    }));
+    const detail = body.errors.map((e: any) => {
+      const loc = e.locations?.map((l: any) => `line ${l.line} col ${l.column}`).join(", ");
+      const path = e.path?.join(".");
+      return [e.message, path && `path: ${path}`, loc && `at ${loc}`].filter(Boolean).join(" | ");
+    }).join("; ");
+    throw new Error(detail);
+  }
+  return body.data;
 }
 
 function json(v: any): string { return JSON.stringify(v, null, 2); }
