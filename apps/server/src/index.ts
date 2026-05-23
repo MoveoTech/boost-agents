@@ -67,7 +67,7 @@ app.post("/api/log", (req, res) => {
   res.json({ ok: true });
 });
 
-const CAN_CREATE_AGENTS = !!process.env.GH_PAT;
+const CAN_CREATE_AGENTS = process.env.BOOST_HUB === "true";
 
 app.get("/api/whoami", (req, res) => {
   if (!ACCESS_PASSWORD && !API_KEY) {
@@ -241,16 +241,31 @@ app.get("/api/auth/identity/start", (req, res) => {
 });
 
 // Exchanges the short-lived identity token for a session JWT
-app.post("/api/auth/identity/complete", (req, res) => {
+app.post("/api/auth/identity/complete", async (req, res) => {
   const { identityToken } = req.body as { identityToken: string };
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
   const oauthKey = process.env.OAUTH_SERVICE_KEY ?? "";
   try {
-    const payload = jwt.verify(identityToken, oauthKey) as { email: string; type: string };
-    if (payload.type !== "identity") throw new Error("Invalid token type");
-    const isAdmin = ADMIN_EMAILS.size === 0 || ADMIN_EMAILS.has(payload.email);
-    const token = jwt.sign({ ok: true, admin: isAdmin, email: payload.email }, COOKIE_SECRET, { expiresIn: "7d" });
+    let email: string;
+    if (oauthServiceUrl) {
+      // Verify via oauth-service so per-agent keys work (agent key ≠ master signing key)
+      const r = await fetch(`${oauthServiceUrl}/api/auth/identity/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": oauthKey },
+        body: JSON.stringify({ identityToken }),
+      });
+      if (!r.ok) throw new Error("Invalid token");
+      ({ email } = await r.json() as { email: string });
+    } else {
+      // Fallback: local verification (only works when OAUTH_SERVICE_KEY is the master key)
+      const payload = jwt.verify(identityToken, oauthKey) as { email: string; type: string };
+      if (payload.type !== "identity") throw new Error("Invalid token type");
+      email = payload.email;
+    }
+    const isAdmin = ADMIN_EMAILS.size === 0 || ADMIN_EMAILS.has(email);
+    const token = jwt.sign({ ok: true, admin: isAdmin, email }, COOKIE_SECRET, { expiresIn: "7d" });
     res.cookie(COOKIE_NAME, token, { httpOnly: true, secure: IS_PROD, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true, token, isAdmin, email: payload.email });
+    res.json({ ok: true, token, isAdmin, email });
   } catch {
     res.status(401).json({ error: "Invalid or expired identity token" });
   }

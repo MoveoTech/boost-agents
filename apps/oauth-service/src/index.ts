@@ -589,5 +589,25 @@ app.post("/api/agent-keys", requireMasterKey, async (req, res) => {
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
+// Verify an identity token — callable by any valid agent key (master or per-agent).
+// Agents use this to verify login tokens without needing the master signing key.
+app.post("/api/auth/identity/verify", async (req, res) => {
+  const apiKey = req.headers["x-api-key"] as string | undefined;
+  if (!apiKey) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const isMaster = apiKey === OAUTH_SERVICE_KEY;
+  if (!isMaster) {
+    const snap = await db.collection("agent_keys").where("apiKey", "==", apiKey).limit(1).get();
+    if (snap.empty) { res.status(401).json({ error: "Unauthorized" }); return; }
+  }
+  const { identityToken } = req.body as { identityToken: string };
+  try {
+    const payload = jwt.verify(identityToken, OAUTH_SERVICE_KEY) as { email: string; type: string };
+    if (payload.type !== "identity") throw new Error("bad type");
+    res.json({ email: payload.email });
+  } catch {
+    res.status(401).json({ error: "Invalid or expired identity token" });
+  }
+});
+
 const PORT = process.env.PORT ?? 8080;
 app.listen(PORT, () => console.log(`OAuth service running on :${PORT}`));

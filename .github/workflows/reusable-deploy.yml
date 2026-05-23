@@ -73,6 +73,10 @@ jobs:
           STRIPPED_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-20)
           PROJECT_ID="boost-${STRIPPED_NAME}-v7"
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
+          # Mark hub deployment so server enables Create Agent features
+          if [ "${{ github.repository }}" = "MoveoTech/boost-agents" ]; then
+            echo "BOOST_HUB=true" >> $GITHUB_ENV
+          fi
 
           echo "Attempting to manage project $PROJECT_ID..."
           gcloud projects create $PROJECT_ID --folder=324333743991 --name="$RAW_NAME" || echo "Already exists."
@@ -178,6 +182,7 @@ jobs:
             COOKIE_SECRET=${{ env.COOKIE_SECRET }}
             AUTOMATION_SECRET=${{ env.AUTOMATION_SECRET }}
             NODE_ENV=production
+            BOOST_HUB=${{ env.BOOST_HUB }}
             GH_PAT=${{ secrets.GH_PAT }}
             GITHUB_REPO=${{ github.repository }}
             OAUTH_SERVICE_URL=${{ secrets.OAUTH_SERVICE_URL }}
