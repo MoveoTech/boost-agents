@@ -296,7 +296,7 @@ export default function App() {
     ? effectiveModel.modelId.replace("gemini-", "Gemini ").replace("claude-", "Claude ").replace("gpt-", "GPT-").replace("-20251001", "")
     : "Gemini 2.5 Flash";
 
-  if (canCreateAgents) return <CreateAgentPage />;
+  if (canCreateAgents && authed) return <CreateAgentPage />;
 
   return (
     <>
