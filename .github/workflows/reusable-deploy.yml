@@ -86,6 +86,9 @@ jobs:
           echo "Waiting 30s for APIs to activate..."
           sleep 30
 
+          # Grant master SA owner on every deploy (idempotent) — master SA does all builds/pushes/deploys
+          gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@boost-agents-496211.iam.gserviceaccount.com" --role="roles/owner" || true
+
           if ! gcloud iam workload-identity-pools describe "github-pool-v2" --project="$PROJECT_ID" --location="global" &>/dev/null; then
             gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global"
             gcloud iam workload-identity-pools providers create-oidc "github-provider-v2" \
@@ -97,17 +100,12 @@ jobs:
             gcloud iam service-accounts create "deployer" --project="$PROJECT_ID" || true
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/owner" || true
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/cloudscheduler.admin" || true
-            # Grant master SA owner on this project — fallback when local SA IAM hasn't propagated yet
-            gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@boost-agents-496211.iam.gserviceaccount.com" --role="roles/owner" || true
 
             NUMERIC_ID=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
             gcloud iam service-accounts add-iam-policy-binding "deployer@$PROJECT_ID.iam.gserviceaccount.com" --project="$PROJECT_ID" --role="roles/iam.workloadIdentityUser" \
               --member="principalSet://iam.googleapis.com/projects/$NUMERIC_ID/locations/global/workloadIdentityPools/github-pool-v2/attribute.repository_owner/MoveoTech" || true
 
             gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID || true
-
-            echo "Waiting 60s for IAM/WIF propagation..."
-            sleep 60
           fi
 
           # Auto-generate secrets once and store in Secret Manager (idempotent)
@@ -136,21 +134,7 @@ jobs:
             fi
           fi
 
-      # 3. AUTH AS LOCAL
-      - name: Get Project Number
-        id: info
-        run: |
-          PROJ_NUM=$(gcloud projects describe ${{ steps.provision.outputs.project_id }} --format='value(projectNumber)' || echo "0000")
-          echo "num=$PROJ_NUM" >> $GITHUB_OUTPUT
-      
-      - id: 'auth_local'
-        uses: 'google-github-actions/auth@v2'
-        continue-on-error: true
-        with:
-          workload_identity_provider: 'projects/${{ steps.info.outputs.num }}/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
-          service_account: 'deployer@${{ steps.provision.outputs.project_id }}.iam.gserviceaccount.com'
-
-      # 4. LOAD AUTO-GENERATED SECRETS FROM SECRET MANAGER
+      # 3. LOAD AUTO-GENERATED SECRETS FROM SECRET MANAGER
       - name: Load auto-generated secrets
         run: |
           PROJECT="${{ steps.provision.outputs.project_id }}"
