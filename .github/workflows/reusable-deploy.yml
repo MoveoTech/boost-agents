@@ -70,7 +70,7 @@ jobs:
         id: provision
         run: |
           RAW_NAME="${{ github.event.repository.name }}"
-          STRIPPED_NAME=$(echo "$RAW_NAME" | sed 's/^boost-//' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-20)
+          STRIPPED_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-20)
           PROJECT_ID="boost-${STRIPPED_NAME}-v7"
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
