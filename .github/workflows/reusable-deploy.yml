@@ -43,7 +43,6 @@ jobs:
         with:
           repository: MoveoTech/boost-agents
           ref: main
-          token: ${{ secrets.GH_PAT }}
 
       - name: Apply child repo config
         uses: actions/checkout@v4
