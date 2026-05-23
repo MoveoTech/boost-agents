@@ -97,7 +97,9 @@ jobs:
             gcloud iam service-accounts create "deployer" --project="$PROJECT_ID" || true
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/owner" || true
             gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/cloudscheduler.admin" || true
-            
+            # Grant master SA owner on this project — fallback when local SA IAM hasn't propagated yet
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@boost-agents-496211.iam.gserviceaccount.com" --role="roles/owner" || true
+
             NUMERIC_ID=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
             gcloud iam service-accounts add-iam-policy-binding "deployer@$PROJECT_ID.iam.gserviceaccount.com" --project="$PROJECT_ID" --role="roles/iam.workloadIdentityUser" \
               --member="principalSet://iam.googleapis.com/projects/$NUMERIC_ID/locations/global/workloadIdentityPools/github-pool-v2/attribute.repository_owner/MoveoTech" || true
@@ -175,12 +177,11 @@ jobs:
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet || true
           docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} ./apps/server
-          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} || echo "Push failed"
+          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
 
       - name: Deploy to Cloud Run
         id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v2'
-        continue-on-error: true
         with:
           service: ${{ inputs.service_name }}
           region: us-central1
