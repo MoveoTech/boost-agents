@@ -164,8 +164,8 @@ jobs:
       - name: Build and Push Image
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet || true
-          docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }} ./apps/server
-          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
+          docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.run_id }} ./apps/server
+          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.run_id }}
 
       - name: Deploy to Cloud Run
         id: 'deploy'
@@ -174,7 +174,7 @@ jobs:
           service: ${{ inputs.service_name }}
           region: us-central1
           project_id: ${{ steps.provision.outputs.project_id }}
-          image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
+          image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.run_id }}
           flags: '--allow-unauthenticated --min-instances 1 --max-instances 1'
           env_vars: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}

@@ -90,8 +90,9 @@ function ConfigModal({ agent, onClose }: { agent: AgentRecord; onClose: () => vo
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    getAgentConfig(agent.repoName).then((c) => {
-      if (c) setConfig(c); else setLoadError("Failed to load config from GitHub.");
+    getAgentConfig(agent.repoName).then((result) => {
+      if ("config" in result) setConfig(result.config);
+      else setLoadError(result.error);
       setLoading(false);
     });
   }, [agent.repoName]);

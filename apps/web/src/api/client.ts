@@ -282,9 +282,11 @@ export async function getAgentConnections(repoName: string): Promise<AgentConnec
   return res.ok ? res.json() : { gmail: [], calendar: [], tasks: [], monday: [], whatsapp: [] };
 }
 
-export async function getAgentConfig(repoName: string): Promise<AgentConfig | null> {
+export async function getAgentConfig(repoName: string): Promise<{ config: AgentConfig } | { error: string }> {
   const res = await fetch(`${BASE}/api/superadmin/agents/${encodeURIComponent(repoName)}/config`);
-  return res.ok ? res.json() : null;
+  if (res.ok) return { config: await res.json() };
+  const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  return { error: data.error ?? `HTTP ${res.status}` };
 }
 
 export async function updateAgentConfig(repoName: string, config: AgentConfig): Promise<{ ok: boolean; runId?: number; error?: string }> {
