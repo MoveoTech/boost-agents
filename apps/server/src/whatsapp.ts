@@ -568,6 +568,23 @@ export async function connectSession(
       if (lid) ownerKeys.add(lid);
     };
 
+    // WhatsApp syncs contact data (including LID mappings) shortly after connect.
+    // Use this to learn the owner's LID when sock.user.lid was empty at connect time.
+    sock.ev.on("contacts.upsert", (contacts: any[]) => {
+      const ph = (sock.user as any)?.id?.split(":")[0].split("@")[0];
+      if (!ph) return;
+      for (const contact of contacts) {
+        const contactPhone = (contact.id as string | undefined)?.split(":")[0].split("@")[0];
+        if (contactPhone === ph && contact.lid) {
+          const lid = (contact.lid as string).split(":")[0].split("@")[0];
+          if (lid && !ownerKeys.has(lid)) {
+            ownerKeys.add(lid);
+            waLog("info", email, "learned owner LID from contact sync", { lid, ownerKeys: [...ownerKeys] });
+          }
+        }
+      }
+    });
+
     // Serialize per-JID: only one agent call runs at a time per conversation.
     // When a second message arrives while the first is processing, it is stored as
     // "pending" (latest wins). After the current run finishes, the pending message
