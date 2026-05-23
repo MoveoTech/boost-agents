@@ -3,6 +3,7 @@ name: Deploy Agent
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   run-factory-pipeline:
