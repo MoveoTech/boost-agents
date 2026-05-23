@@ -28,7 +28,7 @@ export async function getApiKey(): Promise<string> {
 export async function createAgent(params: {
   agentName: string; geminiApiKey: string; adminEmails?: string;
   oauthEmails?: string; anthropicApiKey?: string; openaiApiKey?: string;
-}): Promise<{ actionsUrl: string; repoName: string }> {
+}): Promise<{ actionsUrl: string; repoName: string; createRunId?: number }> {
   const res = await fetch(`${BASE}/api/admin/create-agent`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -39,6 +39,26 @@ export async function createAgent(params: {
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+export async function retryDeploy(repoName: string): Promise<{ ok: boolean; runId?: number; error?: string }> {
+  const res = await fetch(`${BASE}/api/admin/retry-deploy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repoName }),
+  });
+  const data = await res.json().catch(() => ({ error: "Request failed" }));
+  return res.ok ? { ok: true, ...data } : { ok: false, error: data.error };
+}
+
+export async function getCreateWorkflowStatus(runId: number): Promise<{
+  phase: "pending" | "running" | "done" | "failed";
+  repoCreated?: boolean;
+  secretsSet?: boolean;
+  deployTriggered?: boolean;
+}> {
+  const res = await fetch(`${BASE}/api/admin/create-workflow-status?runId=${runId}`);
+  return res.ok ? res.json() : { phase: "pending" };
 }
 
 export async function getAgentStatus(repoName: string): Promise<{ status: "pending" | "in_progress" | "success" | "failed"; runUrl?: string }> {
@@ -231,6 +251,54 @@ export async function submitFeedback(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ messageId, rating, ...context }),
   });
+}
+
+export interface AgentRecord {
+  repoName: string;
+  agentId: string;
+  adminEmails: string;
+  createdBy: string;
+  createdAt: string;
+  status: "active" | "deleted";
+  deletedAt?: string;
+}
+
+export interface AgentConnections {
+  gmail: string[];
+  calendar: string[];
+  tasks: string[];
+  monday: string[];
+  whatsapp: string[];
+}
+
+export async function listAgents(): Promise<AgentRecord[]> {
+  const res = await fetch(`${BASE}/api/superadmin/agents`);
+  return res.ok ? res.json() : [];
+}
+
+export async function getAgentConnections(repoName: string): Promise<AgentConnections> {
+  const res = await fetch(`${BASE}/api/superadmin/agents/${encodeURIComponent(repoName)}/connections`);
+  return res.ok ? res.json() : { gmail: [], calendar: [], tasks: [], monday: [], whatsapp: [] };
+}
+
+export async function getAgentConfig(repoName: string): Promise<AgentConfig | null> {
+  const res = await fetch(`${BASE}/api/superadmin/agents/${encodeURIComponent(repoName)}/config`);
+  return res.ok ? res.json() : null;
+}
+
+export async function updateAgentConfig(repoName: string, config: AgentConfig): Promise<{ ok: boolean; runId?: number; error?: string }> {
+  const res = await fetch(`${BASE}/api/superadmin/agents/${encodeURIComponent(repoName)}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  const data = await res.json().catch(() => ({ error: "Request failed" }));
+  return res.ok ? { ok: true, ...data } : { ok: false, error: data.error };
+}
+
+export async function deleteAgent(repoName: string): Promise<{ ok: boolean; errors?: string[] }> {
+  const res = await fetch(`${BASE}/api/superadmin/agents/${encodeURIComponent(repoName)}`, { method: "DELETE" });
+  return res.json().catch(() => ({ ok: false, errors: ["Request failed"] }));
 }
 
 export async function getAnalytics(): Promise<AnalyticsData> {

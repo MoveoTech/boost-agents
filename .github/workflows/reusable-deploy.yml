@@ -76,6 +76,7 @@ jobs:
           # Mark hub deployment so server enables Create Agent features
           if [ "${{ github.repository }}" = "MoveoTech/boost-agents" ]; then
             echo "BOOST_HUB=true" >> $GITHUB_ENV
+            echo "OAUTH_MASTER_KEY_VALUE=${{ secrets.OAUTH_SERVICE_KEY }}" >> $GITHUB_ENV
           fi
 
           echo "Attempting to manage project $PROJECT_ID..."
@@ -183,17 +184,27 @@ jobs:
             AUTOMATION_SECRET=${{ env.AUTOMATION_SECRET }}
             NODE_ENV=production
             BOOST_HUB=${{ env.BOOST_HUB }}
+            OAUTH_MASTER_KEY=${{ env.OAUTH_MASTER_KEY_VALUE }}
             GH_PAT=${{ secrets.GH_PAT }}
             GITHUB_REPO=${{ github.repository }}
             OAUTH_SERVICE_URL=${{ secrets.OAUTH_SERVICE_URL }}
             OAUTH_SERVICE_KEY=${{ env.AGENT_OAUTH_KEY }}
             ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-            ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}
             SLACK_BOT_TOKEN=${{ secrets.SLACK_BOT_TOKEN }}
             SLACK_SIGNING_SECRET=${{ secrets.SLACK_SIGNING_SECRET }}
             JINA_API_KEY=${{ secrets.JINA_API_KEY }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
+
+      # Set ADMIN_EMAILS separately — commas in the value break the ^,^ delimiter used by deploy-cloudrun
+      - name: Set ADMIN_EMAILS
+        if: ${{ secrets.ADMIN_EMAILS != '' }}
+        run: |
+          gcloud run services update ${{ inputs.service_name }} \
+            --region us-central1 \
+            --project ${{ steps.provision.outputs.project_id }} \
+            --update-env-vars "^|^ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}" \
+            --quiet
 
       - name: Print URL
         run: |

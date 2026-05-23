@@ -589,6 +589,118 @@ app.post("/api/agent-keys", requireMasterKey, async (req, res) => {
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
+// ── Super-admin: Agent Registry ───────────────────────────────────────────────
+// All endpoints below require the master OAUTH_SERVICE_KEY.
+
+// Register a new agent in the agents collection (called by the hub server on creation)
+app.post("/api/admin/agents", requireMasterKey, async (req, res) => {
+  const { repoName, agentId, adminEmails, createdBy } = req.body as {
+    repoName: string; agentId: string; adminEmails?: string; createdBy?: string;
+  };
+  if (!repoName || !agentId) { res.status(400).json({ error: "repoName and agentId required" }); return; }
+  try {
+    await db.collection("agents").doc(repoName).set({
+      repoName, agentId, adminEmails: adminEmails ?? "", createdBy: createdBy ?? "",
+      createdAt: new Date().toISOString(), status: "active",
+    }, { merge: true });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// List all agents (active + tombstones)
+app.get("/api/admin/agents", requireMasterKey, async (_req, res) => {
+  try {
+    const snap = await db.collection("agents").orderBy("createdAt", "desc").get();
+    res.json(snap.docs.map((d) => d.data()));
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// Get connected services summary for a single agent
+app.get("/api/admin/agents/:agentId/connections", requireMasterKey, async (req, res) => {
+  const { agentId } = req.params;
+  try {
+    const services = ["gmail_tokens", "calendar_tokens", "tasks_tokens", "monday_tokens"] as const;
+    const result: Record<string, string[]> = {};
+    await Promise.all(services.map(async (svc) => {
+      const snap = await db.collection(svc).doc(agentId).collection("users").get();
+      result[svc.replace("_tokens", "")] = snap.docs.map((d) => d.id);
+    }));
+    const waSnap = await db.collection("whatsapp").doc(agentId).collection("sessions").get();
+    result.whatsapp = waSnap.docs.map((d) => d.id);
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// Wipe all Firestore data for an agent and mark it as deleted (tombstone preserved)
+app.delete("/api/admin/agents/:agentId/data", requireMasterKey, async (req, res) => {
+  const { agentId } = req.params;
+  const { repoName } = req.query as { repoName?: string };
+  try {
+    const deleteSubcollection = async (parentPath: string, subcol: string) => {
+      const snap = await db.collection(parentPath).doc(agentId).collection(subcol).get();
+      if (snap.empty) return;
+      const chunks = [];
+      for (let i = 0; i < snap.docs.length; i += 400) chunks.push(snap.docs.slice(i, i + 400));
+      for (const chunk of chunks) {
+        const batch = db.batch();
+        chunk.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+    };
+
+    // Token collections (agentId → users subcollection)
+    for (const svc of ["gmail_tokens", "calendar_tokens", "tasks_tokens", "monday_tokens"]) {
+      await deleteSubcollection(svc, "users");
+      await db.collection(svc).doc(agentId).delete();
+    }
+
+    // user_settings
+    await deleteSubcollection("user_settings", "users");
+    await db.collection("user_settings").doc(agentId).delete();
+
+    // memories
+    await deleteSubcollection("memories", "users");
+    await db.collection("memories").doc(agentId).delete();
+
+    // whatsapp sessions
+    await deleteSubcollection("whatsapp", "sessions");
+    await db.collection("whatsapp").doc(agentId).delete();
+
+    // feedback entries
+    await deleteSubcollection("feedback", "entries");
+    await db.collection("feedback").doc(agentId).delete();
+
+    // chats: 3-level nesting (agentId → users → sessions)
+    const chatUsersSnap = await db.collection("chats").doc(agentId).collection("users").get();
+    for (const userDoc of chatUsersSnap.docs) {
+      const sessSnap = await userDoc.ref.collection("sessions").get();
+      if (!sessSnap.empty) {
+        const batch = db.batch();
+        sessSnap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+      await userDoc.ref.delete();
+    }
+    await db.collection("chats").doc(agentId).delete();
+
+    // agent_keys (keyed by field, not path)
+    const keysSnap = await db.collection("agent_keys").where("agentId", "==", agentId).get();
+    if (!keysSnap.empty) {
+      const batch = db.batch();
+      keysSnap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+
+    // Mark tombstone (preserve record so GCP project ID isn't reused)
+    const docRef = repoName ? db.collection("agents").doc(repoName) : null;
+    if (docRef) {
+      await docRef.set({ status: "deleted", deletedAt: new Date().toISOString() }, { merge: true });
+    }
+
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // Verify an identity token — callable by any valid agent key (master or per-agent).
 // Agents use this to verify login tokens without needing the master signing key.
 app.post("/api/auth/identity/verify", async (req, res) => {

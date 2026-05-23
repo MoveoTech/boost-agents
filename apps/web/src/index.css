@@ -3215,3 +3215,243 @@ body {
   .cap-card { padding: 24px 18px 24px; }
   .cap-shell { padding: 20px 12px 60px; }
 }
+
+/* ─── Super Admin Page ──────────────────────────────────────────────────────── */
+
+.sa-shell {
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.sa-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap: 16px;
+}
+
+.sa-header-left { display: flex; align-items: center; gap: 16px; }
+.sa-header-right { display: flex; align-items: center; gap: 8px; }
+
+.sa-title { font-size: 17px; font-weight: 600; color: var(--text); margin: 0; }
+
+.sa-content {
+  flex: 1;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 16px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sa-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* Agent card */
+.sa-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.sa-card-deleted { opacity: 0.6; }
+
+.sa-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sa-card-header:hover { background: var(--primary-light); }
+
+.sa-card-title { display: flex; align-items: center; gap: 10px; }
+.sa-agent-name { font-size: 15px; font-weight: 600; color: var(--text); }
+
+.sa-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.sa-badge-active { background: #dcfce7; color: #166534; }
+.sa-badge-deleted { background: var(--border); color: var(--muted); }
+
+.sa-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sa-chevron { font-size: 10px; }
+
+.sa-card-body {
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sa-detail { font-size: 13px; color: var(--text); margin: 0; padding-top: 12px; }
+
+.sa-links-row { display: flex; gap: 12px; }
+
+.sa-link {
+  font-size: 13px;
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.sa-link:hover { text-decoration: underline; }
+
+.sa-connections { display: flex; flex-direction: column; gap: 8px; }
+
+.sa-section-label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin: 0; }
+
+.sa-service-grid { display: flex; flex-direction: column; gap: 6px; }
+
+.sa-service-item { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+
+.sa-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+  top: 1px;
+}
+
+.sa-dot-on { background: #16a34a; }
+.sa-dot-off { background: var(--border); }
+
+.sa-service-name { font-weight: 500; color: var(--text); min-width: 80px; }
+.sa-service-users { color: var(--muted); font-size: 12px; }
+
+.sa-loading-dots { font-size: 13px; color: var(--muted); }
+
+.sa-card-actions { display: flex; gap: 8px; padding-top: 4px; }
+
+/* Buttons */
+.sa-btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  transition: opacity 0.15s;
+}
+
+.sa-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.sa-btn:not(:disabled):hover { opacity: 0.85; }
+
+.sa-btn-primary { background: var(--primary); color: #fff; }
+.sa-btn-secondary { background: var(--primary-light); color: var(--primary); }
+.sa-btn-ghost { background: var(--border); color: var(--text); }
+.sa-btn-danger { background: #dc2626; color: #fff; }
+.sa-btn-danger-outline { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+
+/* Modal */
+.sa-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.sa-modal {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.2);
+  padding: 28px 28px 24px;
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sa-modal-wide { max-width: 600px; }
+
+.sa-modal-title { font-size: 17px; font-weight: 700; color: var(--text); margin: 0; }
+.sa-modal-body { font-size: 14px; color: var(--text); margin: 0; }
+
+.sa-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+.sa-modal-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* Form elements in modal */
+.sa-field { display: flex; flex-direction: column; gap: 5px; }
+.sa-label { font-size: 13px; font-weight: 500; color: var(--text); }
+.sa-input {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.sa-input:focus { outline: none; border-color: var(--primary); }
+.sa-textarea { resize: vertical; min-height: 100px; }
+
+.sa-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.sa-tool-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.sa-error {
+  font-size: 13px;
+  color: #dc2626;
+  background: #fef2f2;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin: 0;
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { whoami, createAgent, getAgentStatus } from "../api/client";
+import { whoami, createAgent, getCreateWorkflowStatus, getAgentStatus, retryDeploy } from "../api/client";
 
-type PageState = "loading" | "unauthed" | "form" | "creating" | "deploying" | "success" | "error";
+type PageState = "loading" | "unauthed" | "form" | "creating" | "workflow" | "deploying" | "success" | "error";
 
 const MODELS = [
   { label: "Gemini 2.5 Flash (default)", value: "gemini|gemini-2.5-flash" },
@@ -14,7 +14,7 @@ function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
 }
 
-export default function CreateAgentPage() {
+export default function CreateAgentPage({ email }: { email?: string | null }) {
   const [pageState, setPageState] = useState<PageState>("loading");
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -35,19 +35,47 @@ export default function CreateAgentPage() {
 
   // Result state
   const [repoName, setRepoName] = useState("");
+  const [createRunId, setCreateRunId] = useState<number | undefined>();
+  const [repoCreated, setRepoCreated] = useState(false);
+  const [secretsSet, setSecretsSet] = useState(false);
+  const [deployTriggered, setDeployTriggered] = useState(false);
   const [deployStatus, setDeployStatus] = useState<"pending" | "in_progress" | "success" | "failed">("pending");
   const [runUrl, setRunUrl] = useState<string | undefined>();
   const [errorMsg, setErrorMsg] = useState("");
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     whoami().then(({ authenticated, isAdmin: a }) => {
       setIsAdmin(a);
-      setPageState(authenticated && a ? "form" : authenticated ? "unauthed" : "unauthed");
+      setPageState(authenticated && a ? "form" : "unauthed");
     });
   }, []);
 
-  // Poll deploy status
+  // Poll create-agent.yml workflow steps (phase 1-3)
+  useEffect(() => {
+    if (pageState !== "workflow" || !createRunId) return;
+    const poll = async () => {
+      const s = await getCreateWorkflowStatus(createRunId);
+      if (s.repoCreated) setRepoCreated(true);
+      if (s.secretsSet) setSecretsSet(true);
+      if (s.deployTriggered) setDeployTriggered(true);
+      if (s.phase === "done") {
+        setPageState("deploying");
+        if (pollRef.current) clearInterval(pollRef.current);
+      } else if (s.phase === "failed") {
+        setDeployStatus("failed");
+        setPageState("success");
+        if (pollRef.current) clearInterval(pollRef.current);
+      }
+    };
+    poll();
+    pollRef.current = setInterval(poll, 6000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [pageState, createRunId]);
+
+  // Poll child repo deploy.yml (phase 4)
   useEffect(() => {
     if (pageState !== "deploying" || !repoName) return;
     const poll = async () => {
@@ -59,7 +87,7 @@ export default function CreateAgentPage() {
         if (pollRef.current) clearInterval(pollRef.current);
       }
     };
-    poll(); // immediate first check
+    poll();
     pollRef.current = setInterval(poll, 10000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [pageState, repoName]);
@@ -68,9 +96,10 @@ export default function CreateAgentPage() {
     if (!agentName.trim() || !geminiKey.trim()) return;
     setPageState("creating");
     setErrorMsg("");
+    setRepoCreated(false); setSecretsSet(false); setDeployTriggered(false);
+    setDeployStatus("pending");
     try {
-      const [modelProvider, modelId] = model.split("|");
-      const { repoName: rn } = await createAgent({
+      const { repoName: rn, createRunId: rid } = await createAgent({
         agentName: agentName.trim(),
         geminiApiKey: geminiKey.trim(),
         adminEmails: adminEmails.trim() || undefined,
@@ -79,13 +108,25 @@ export default function CreateAgentPage() {
         openaiApiKey: openaiKey.trim() || undefined,
       });
       setRepoName(rn);
-      setDeployStatus("pending");
-      setPageState("deploying");
-      void modelProvider; void modelId; // system prompt & model applied via config after deploy
+      setCreateRunId(rid);
+      setPageState(rid ? "workflow" : "deploying");
     } catch (e) {
       setErrorMsg((e as Error).message ?? "Something went wrong");
       setPageState("error");
     }
+  };
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    setRetryError("");
+    const result = await retryDeploy(repoName);
+    if (result.ok) {
+      setDeployStatus("pending");
+      setPageState("deploying");
+    } else {
+      setRetryError(result.error ?? "Retry failed");
+    }
+    setRetrying(false);
   };
 
   const slug = slugify(agentName);
@@ -104,26 +145,37 @@ export default function CreateAgentPage() {
         <div className="cap-card">
           <div className="cap-logo">boost</div>
           <p style={{ color: "var(--muted)", textAlign: "center", marginTop: 8 }}>
-            {isAdmin ? "Sign in to create agents." : "Admin access required to create agents."}
+            Admin access required to create agents.
           </p>
-          <a href="/" className="cap-btn cap-btn-secondary" style={{ display: "block", textAlign: "center", marginTop: 16, textDecoration: "none" }}>
-            Back to agent
-          </a>
         </div>
       </div>
     );
   }
 
-  if (pageState === "creating" || pageState === "deploying" || pageState === "success") {
+  if (pageState === "creating" || pageState === "workflow" || pageState === "deploying" || pageState === "success") {
+    const workflowActive = pageState === "workflow";
+    const deployActive = pageState === "deploying";
     const steps = [
-      { label: "Repository created", done: true },
-      { label: "Secrets configured", done: true },
-      { label: "Deploy triggered", done: true },
       {
-        label: deployStatus === "success" ? "Deployed successfully" : deployStatus === "failed" ? "Deploy failed" : "Building & deploying…",
+        label: repoCreated ? "Repository created" : "Creating repository…",
+        done: repoCreated,
+        spinning: workflowActive && !repoCreated,
+      },
+      {
+        label: secretsSet ? "Secrets configured" : "Configuring secrets…",
+        done: secretsSet,
+        spinning: workflowActive && repoCreated && !secretsSet,
+      },
+      {
+        label: deployTriggered ? "Deploy triggered" : "Triggering deploy…",
+        done: deployTriggered,
+        spinning: workflowActive && secretsSet && !deployTriggered,
+      },
+      {
+        label: deployStatus === "success" ? "Deployed successfully" : deployStatus === "failed" ? "Deploy failed" : "Building & deploying (~8 min)…",
         done: deployStatus === "success",
         failed: deployStatus === "failed",
-        spinning: pageState === "deploying" && deployStatus !== "success" && deployStatus !== "failed",
+        spinning: deployActive && deployStatus !== "success" && deployStatus !== "failed",
       },
     ];
     const creating = pageState === "creating";
@@ -135,7 +187,7 @@ export default function CreateAgentPage() {
         <div className="cap-card">
           <div className="cap-logo">boost</div>
           <h2 className="cap-title" style={{ marginTop: 16 }}>
-            {creating ? "Creating agent…" : done ? "Agent is live!" : failed ? "Deploy failed" : `Deploying ${repoName}…`}
+            {creating ? "Creating agent…" : done ? "Agent is live!" : failed ? "Deploy failed" : workflowActive ? `Setting up ${repoName}…` : `Deploying ${repoName}…`}
           </h2>
 
           {creating ? (
@@ -161,25 +213,50 @@ export default function CreateAgentPage() {
 
           {(done || failed) && (
             <div className="cap-success-links">
-              {done && <p className="cap-success-note">Find your agent URL in the deploy Actions summary below.</p>}
-              {failed && <p className="cap-error-note">The deploy failed. Check the Actions log for details.</p>}
-              <a href={`https://github.com/MoveoTech/${repoName}/actions`} target="_blank" rel="noopener" className="cap-link-row">
-                <span>GitHub Actions</span>
-                <span className="cap-link-arrow">↗</span>
-              </a>
-              <a href={`https://github.com/MoveoTech/${repoName}`} target="_blank" rel="noopener" className="cap-link-row">
-                <span>GitHub repository</span>
-                <span className="cap-link-arrow">↗</span>
-              </a>
-              <a href={`https://console.cloud.google.com/run?project=boost-${repoName}-v7`} target="_blank" rel="noopener" className="cap-link-row">
-                <span>GCP Cloud Run console</span>
-                <span className="cap-link-arrow">↗</span>
-              </a>
-              {runUrl && (
-                <a href={runUrl} target="_blank" rel="noopener" className="cap-link-row">
-                  <span>Deploy run details</span>
+              {done && <p className="cap-success-note">Agent deployed! Find the URL in the Actions summary below.</p>}
+
+              {failed && deployTriggered && (
+                <>
+                  <p className="cap-error-note">
+                    The deploy failed — this is usually a transient GCP issue. Try retrying once.
+                    If it keeps failing, contact <strong>boazt@moveoboost.com</strong>.
+                  </p>
+                  <button
+                    className="cap-btn cap-btn-primary"
+                    style={{ marginBottom: 8 }}
+                    disabled={retrying}
+                    onClick={handleRetry}
+                  >
+                    {retrying ? "Retrying…" : "Retry deploy"}
+                  </button>
+                  {retryError && <p className="cap-error-note">{retryError} — contact <strong>boazt@moveoboost.com</strong>.</p>}
+                </>
+              )}
+
+              {failed && !deployTriggered && (
+                <p className="cap-error-note">
+                  Setup failed before the deploy was triggered — likely a GitHub or GCP provisioning issue.
+                  Contact <strong>boazt@moveoboost.com</strong> to investigate.
+                </p>
+              )}
+
+              {(!failed || deployTriggered) && (
+                <a href={`https://github.com/MoveoTech/${repoName}/actions`} target="_blank" rel="noopener" className="cap-link-row">
+                  <span>GitHub Actions {done ? "(agent URL in deploy summary)" : "(view error details)"}</span>
                   <span className="cap-link-arrow">↗</span>
                 </a>
+              )}
+              {done && (
+                <>
+                  <a href={`https://github.com/MoveoTech/${repoName}/settings/secrets/actions`} target="_blank" rel="noopener" className="cap-link-row">
+                    <span>Edit API keys (GitHub repo secrets)</span>
+                    <span className="cap-link-arrow">↗</span>
+                  </a>
+                  <a href={`https://console.cloud.google.com/run?project=boost-${repoName}-v7`} target="_blank" rel="noopener" className="cap-link-row">
+                    <span>GCP Cloud Run</span>
+                    <span className="cap-link-arrow">↗</span>
+                  </a>
+                </>
               )}
               <a href="/create-agent" className="cap-btn cap-btn-secondary" style={{ display: "block", textAlign: "center", marginTop: 16, textDecoration: "none" }}>
                 Create another agent
@@ -190,7 +267,7 @@ export default function CreateAgentPage() {
           {!creating && !done && !failed && (
             <div className="cap-success-links" style={{ marginTop: 8 }}>
               <a href={`https://github.com/MoveoTech/${repoName}/actions`} target="_blank" rel="noopener" className="cap-link-row">
-                <span>Watch deploy progress</span>
+                <span>Watch deploy progress on GitHub Actions</span>
                 <span className="cap-link-arrow">↗</span>
               </a>
             </div>
@@ -219,7 +296,12 @@ export default function CreateAgentPage() {
   return (
     <div className="cap-shell">
       <div className="cap-card">
-        <div className="cap-logo">boost</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="cap-logo">boost</div>
+          {email === "boazt@moveoboost.com" && (
+            <a href="/superadmin" style={{ fontSize: 13, color: "var(--muted)", textDecoration: "none" }}>Super Admin →</a>
+          )}
+        </div>
         <h2 className="cap-title">Create a new agent</h2>
         <p className="cap-subtitle">Set up a new Boost agent. It will be deployed automatically.</p>
 
@@ -351,7 +433,6 @@ export default function CreateAgentPage() {
           Create agent
         </button>
 
-        <a href="/" className="cap-back-link">← Back to agent</a>
       </div>
     </div>
   );

@@ -9,7 +9,7 @@ import { getUserAccessToken } from "./google-auth";
 import { logger } from "./logger";
 import { slackSendMessage, slackGetUserEmail } from "./slack";
 import { agentConfig } from "./config";
-import { commitConfig } from "./configure";
+import { commitConfig, commitConfigToRepo, readConfigFromRepo } from "./configure";
 import type { AgentConfig } from "./config";
 import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets } from "./automations";
 import type { Automation } from "./automations";
@@ -261,6 +261,10 @@ app.post("/api/auth/identity/complete", async (req, res) => {
       const payload = jwt.verify(identityToken, oauthKey) as { email: string; type: string };
       if (payload.type !== "identity") throw new Error("Invalid token type");
       email = payload.email;
+    }
+    if (CAN_CREATE_AGENTS && !email.endsWith("@moveoboost.com")) {
+      res.status(403).json({ error: "Access to this hub is restricted to @moveoboost.com accounts." });
+      return;
     }
     const isAdmin = ADMIN_EMAILS.size === 0 || ADMIN_EMAILS.has(email);
     const token = jwt.sign({ ok: true, admin: isAdmin, email }, COOKIE_SECRET, { expiresIn: "7d" });
@@ -636,9 +640,41 @@ app.post("/api/admin/create-agent", requireAdmin, async (req, res) => {
       .replace(/^-|-$/g, "")
       .slice(0, 30);
 
+    // Wait for GitHub to register the dispatched run, then capture its ID
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    let createRunId: number | undefined;
+    try {
+      const runsRes = await fetch(
+        "https://api.github.com/repos/MoveoTech/boost-agents/actions/runs?workflow_id=create-agent.yml&branch=main&per_page=1",
+        { headers: { Authorization: `Bearer ${ghPat}`, Accept: "application/vnd.github+json" } }
+      );
+      if (runsRes.ok) {
+        const runsData = await runsRes.json() as any;
+        createRunId = runsData.workflow_runs?.[0]?.id;
+      }
+    } catch { /* non-fatal */ }
+
+    // Register agent in Firestore via oauth-service (non-fatal if it fails)
+    const oauthMasterKey = process.env.OAUTH_MASTER_KEY ?? "";
+    const oauthUrl = process.env.OAUTH_SERVICE_URL ?? "";
+    const gcpProject = `boost-${repoName}-v7`;
+    if (oauthMasterKey && oauthUrl) {
+      fetch(`${oauthUrl}/api/admin/agents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": oauthMasterKey },
+        body: JSON.stringify({
+          repoName,
+          agentId: gcpProject,
+          adminEmails: adminEmails?.trim() ?? "",
+          createdBy: getSessionEmail(req) ?? "",
+        }),
+      }).catch(() => {});
+    }
+
     res.json({
       ok: true,
       repoName,
+      createRunId,
       actionsUrl: "https://github.com/MoveoTech/boost-agents/actions/workflows/create-agent.yml",
     });
   } catch (err) {
@@ -671,6 +707,192 @@ app.get("/api/admin/agent-status", requireAdmin, async (req, res) => {
   } catch {
     res.json({ status: "pending" });
   }
+});
+
+// Infra: grant a GitHub user push access to an agent repo.
+// Not called yet — activate once workers are added to the MoveoTech org.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function addCollaboratorToRepo(repoName: string, githubUsername: string): Promise<void> {
+  const ghPat = process.env.GH_PAT;
+  if (!ghPat || !githubUsername || !repoName) return;
+  await fetch(`https://api.github.com/repos/MoveoTech/${repoName}/collaborators/${encodeURIComponent(githubUsername)}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${ghPat}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+    body: JSON.stringify({ permission: "push" }),
+  });
+}
+
+app.post("/api/admin/retry-deploy", requireAdmin, async (req, res) => {
+  const { repoName } = req.body as { repoName: string };
+  if (!repoName) { res.status(400).json({ error: "repoName required" }); return; }
+  const ghPat = process.env.GH_PAT;
+  if (!ghPat) { res.status(500).json({ error: "GH_PAT not configured" }); return; }
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/MoveoTech/${repoName}/actions/workflows/deploy.yml/dispatches`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${ghPat}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+        body: JSON.stringify({ ref: "main" }),
+      }
+    );
+    if (r.status === 404) {
+      res.status(404).json({ error: "Repo not found — the initial setup likely failed. Contact boazt@moveoboost.com." });
+      return;
+    }
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `GitHub returned ${r.status}: ${txt}` });
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    let runId: number | undefined;
+    try {
+      const runsRes = await fetch(
+        `https://api.github.com/repos/MoveoTech/${repoName}/actions/runs?workflow_id=deploy.yml&branch=main&per_page=1`,
+        { headers: { Authorization: `Bearer ${ghPat}`, Accept: "application/vnd.github+json" } }
+      );
+      if (runsRes.ok) {
+        const data = await runsRes.json() as any;
+        runId = data.workflow_runs?.[0]?.id;
+      }
+    } catch { /* non-fatal */ }
+    res.json({ ok: true, runId });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.get("/api/admin/create-workflow-status", requireAdmin, async (req, res) => {
+  const runId = req.query.runId as string;
+  if (!runId) { res.status(400).json({ error: "runId required" }); return; }
+  const ghPat = process.env.GH_PAT;
+  const headers = { ...(ghPat ? { Authorization: `Bearer ${ghPat}` } : {}), Accept: "application/vnd.github+json" };
+  try {
+    const runRes = await fetch(`https://api.github.com/repos/MoveoTech/boost-agents/actions/runs/${runId}`, { headers });
+    if (!runRes.ok) { res.json({ phase: "pending" }); return; }
+    const run = await runRes.json() as any;
+
+    if (run.status === "completed") {
+      res.json({ phase: run.conclusion === "success" ? "done" : "failed" });
+      return;
+    }
+
+    // Fetch job steps to see which have finished
+    const jobsRes = await fetch(`https://api.github.com/repos/MoveoTech/boost-agents/actions/runs/${runId}/jobs`, { headers });
+    if (!jobsRes.ok) { res.json({ phase: "running", repoCreated: false, secretsSet: false, deployTriggered: false }); return; }
+    const jobs = await jobsRes.json() as any;
+    const steps: Array<{ name: string; conclusion: string | null }> = jobs.jobs?.[0]?.steps ?? [];
+    const done = (name: string) => steps.some((s) => s.conclusion === "success" && s.name.toLowerCase().includes(name));
+
+    res.json({
+      phase: "running",
+      repoCreated: done("create github repo"),
+      secretsSet: done("set repo secrets"),
+      deployTriggered: done("trigger first deploy"),
+    });
+  } catch {
+    res.json({ phase: "pending" });
+  }
+});
+
+// ── Super-admin endpoints (boazt@moveoboost.com only) ────────────────────────
+
+const OAUTH_MASTER_KEY = process.env.OAUTH_MASTER_KEY ?? "";
+
+function requireSuperAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const email = getSessionEmail(req);
+  if (email !== "boazt@moveoboost.com") { res.status(403).json({ error: "Forbidden" }); return; }
+  next();
+}
+
+function oauthMaster(path: string) {
+  const base = process.env.OAUTH_SERVICE_URL ?? "";
+  return { url: `${base}${path}`, key: OAUTH_MASTER_KEY };
+}
+
+app.get("/api/superadmin/agents", requireAdmin, requireSuperAdmin, async (_req, res) => {
+  const { url, key } = oauthMaster("/api/admin/agents");
+  try {
+    const r = await fetch(url, { headers: { "x-api-key": key } });
+    if (!r.ok) { res.status(502).json({ error: "Failed to fetch agents" }); return; }
+    res.json(await r.json());
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.get("/api/superadmin/agents/:repoName/connections", requireAdmin, requireSuperAdmin, async (req, res) => {
+  const gcpProject = `boost-${req.params.repoName}-v7`;
+  const { url, key } = oauthMaster(`/api/admin/agents/${encodeURIComponent(gcpProject)}/connections`);
+  try {
+    const r = await fetch(url, { headers: { "x-api-key": key } });
+    if (!r.ok) { res.status(502).json({ error: "Failed to fetch connections" }); return; }
+    res.json(await r.json());
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.delete("/api/superadmin/agents/:repoName", requireAdmin, requireSuperAdmin, async (req, res) => {
+  const { repoName } = req.params;
+  const ghPat = process.env.GH_PAT;
+  const gcpProject = `boost-${repoName}-v7`;
+  const errors: string[] = [];
+  try {
+    // 1. Delete GitHub repo
+    if (ghPat) {
+      const ghRes = await fetch(`https://api.github.com/repos/MoveoTech/${repoName}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${ghPat}`, Accept: "application/vnd.github+json" },
+      });
+      if (!ghRes.ok && ghRes.status !== 404) {
+        errors.push(`GitHub delete failed: ${ghRes.status}`);
+      }
+    } else {
+      errors.push("GH_PAT not set — GitHub repo not deleted");
+    }
+    // 2. Wipe Firestore data + mark tombstone
+    const { url, key } = oauthMaster(`/api/admin/agents/${encodeURIComponent(gcpProject)}/data?repoName=${encodeURIComponent(repoName)}`);
+    const wipeRes = await fetch(url, { method: "DELETE", headers: { "x-api-key": key } });
+    if (!wipeRes.ok) errors.push(`Firestore wipe failed: ${wipeRes.status}`);
+
+    if (errors.length > 0) {
+      res.status(207).json({ ok: false, errors });
+    } else {
+      res.json({ ok: true });
+    }
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.get("/api/superadmin/agents/:repoName/config", requireAdmin, requireSuperAdmin, async (req, res) => {
+  const { repoName } = req.params;
+  const ghPat = process.env.GH_PAT;
+  if (!ghPat) { res.status(500).json({ error: "GH_PAT not configured" }); return; }
+  try {
+    const { config } = await readConfigFromRepo(`MoveoTech/${repoName}`, ghPat);
+    res.json(config);
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.patch("/api/superadmin/agents/:repoName/config", requireAdmin, requireSuperAdmin, async (req, res) => {
+  const { repoName } = req.params;
+  const config = req.body as AgentConfig;
+  const ghPat = process.env.GH_PAT;
+  if (!ghPat) { res.status(500).json({ error: "GH_PAT not configured" }); return; }
+  try {
+    // Commit config.ts to child repo — push triggers deploy.yml automatically
+    await commitConfigToRepo(`MoveoTech/${repoName}`, config, ghPat);
+
+    // Wait for deploy run to register then capture ID for frontend polling
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    let runId: number | undefined;
+    try {
+      const runsRes = await fetch(
+        `https://api.github.com/repos/MoveoTech/${repoName}/actions/runs?workflow_id=deploy.yml&branch=main&per_page=1`,
+        { headers: { Authorization: `Bearer ${ghPat}`, Accept: "application/vnd.github+json" } }
+      );
+      if (runsRes.ok) runId = ((await runsRes.json()) as any).workflow_runs?.[0]?.id;
+    } catch { /* non-fatal */ }
+
+    res.json({ ok: true, runId });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
 // Apply config changes to the running server immediately (no git commit)

@@ -6,6 +6,7 @@ import AgentSidebar from "./components/AgentSidebar";
 import ChatHistorySidebar from "./components/ChatHistorySidebar";
 import WelcomeAnimation from "./components/WelcomeAnimation";
 import CreateAgentPage from "./components/CreateAgentPage";
+import SuperAdminPage from "./components/SuperAdminPage";
 import {
   streamMessage, getConfig, whoami, getConnections, disconnectService,
   identityComplete, getUserSettings, saveUserSettings,
@@ -296,7 +297,10 @@ export default function App() {
     ? effectiveModel.modelId.replace("gemini-", "Gemini ").replace("claude-", "Claude ").replace("gpt-", "GPT-").replace("-20251001", "")
     : "Gemini 2.5 Flash";
 
-  if (canCreateAgents && authed) return <CreateAgentPage />;
+  if (canCreateAgents && authed) {
+    if (window.location.pathname === "/superadmin") return <SuperAdminPage email={userEmail} />;
+    return <CreateAgentPage email={userEmail} />;
+  }
 
   return (
     <>
