@@ -1264,7 +1264,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       ].filter(Boolean).join("\n");
 
       const agentTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("agent timed out after 55s")), 55_000)
+        setTimeout(() => reject(new Error("agent timed out after 90s")), 90_000)
       );
 
       // If a document was extracted to text (docx/txt/etc.), prepend its content to the

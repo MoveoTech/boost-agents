@@ -47,9 +47,6 @@ const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => numbe
 const reconnectAttempts = new Map<string, number>();
 // consecutive crypto error counter — reset on successful connect
 const cryptoRetryCount = new Map<string, number>();
-// Latest message timestamp per conversation. Used to skip sending stale replies when
-// a newer message arrived in the same conversation while we were still processing.
-const latestMsgTsPerJid = new Map<string, number>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -556,6 +553,83 @@ export async function connectSession(
     // delivers the same message under multiple JID formats (e.g. @s.whatsapp.net + @lid).
     const processedMsgIds = new Set<string>();
 
+    // Serialize per-JID: only one agent call runs at a time per conversation.
+    // When a second message arrives while the first is processing, it is stored as
+    // "pending" (latest wins). After the current run finishes, the pending message
+    // is picked up immediately. This prevents concurrent Gemini calls for the same
+    // JID from competing for resources and both timing out.
+    interface PendingMsgState {
+      msg: any; from: string; fromName: string; text: string;
+      isGroup: boolean; groupName?: string; isMentioned: boolean;
+      recentMessages: Array<{ from: string; text: string; ts: number }>;
+      attachment?: WhatsAppAttachment; attachmentText?: string;
+      attachmentName?: string; attachmentError?: string;
+    }
+    const processingJids = new Set<string>();
+    const pendingByJid = new Map<string, PendingMsgState>();
+
+    const dispatchMsg = async (initial: PendingMsgState): Promise<void> => {
+      let state: PendingMsgState | null = initial;
+      while (state) {
+        const { msg, from, fromName, text, isGroup, groupName, isMentioned, recentMessages, attachment, attachmentText, attachmentName, attachmentError } = state;
+        state = null;
+        try {
+          const t0 = Date.now();
+          const userObj = sock.user as { id?: string; lid?: string } | undefined;
+          const myPhoneKey = userObj?.id?.split(":")[0].split("@")[0] ?? "";
+          const myLidKey = userObj?.lid?.split(":")[0].split("@")[0] ?? "";
+          const participant = (msg.key.participant ?? msg.key.remoteJid ?? "") as string;
+          const participantKey = participant.split(":")[0].split("@")[0];
+          const fromMe = !!msg.key.fromMe ||
+            (!!myPhoneKey && participantKey === myPhoneKey) ||
+            (!!myLidKey && participantKey === myLidKey);
+          waLog("info", email, "fromMe detection", { rawFromMe: !!msg.key.fromMe, fromMe, participantKey, myPhoneKey, myLidKey });
+          if (!msg.key.fromMe && fromMe) {
+            waLog("info", email, "identified own message via participant match", { participantKey, myPhoneKey, myLidKey });
+          }
+          const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentText, attachmentName, attachmentError });
+          waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
+          if (reply) {
+            if (sessions.get(email)?.status !== "connected") {
+              waLog("warn", email, "session no longer connected — dropping reply", { to: from });
+            } else {
+              waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
+              const isLid = from.endsWith("@lid");
+              const timeoutMs = (isGroup || isLid) ? 30_000 : 20_000;
+              const sendTimeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)), timeoutMs)
+              );
+              const currentSock = sessions.get(email)?.socket ?? sock;
+              const sent: any = await Promise.race([currentSock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
+              if (sent?.key?.id) {
+                sentByBot.add(sent.key.id);
+                setTimeout(() => sentByBot.delete(sent.key.id), 30_000);
+              }
+              storeRecentMessage(from, "Assistant", reply, Date.now());
+              waLog("info", email, "reply sent successfully");
+            }
+          } else {
+            waLog("info", email, "handler returned null — no reply sent (trigger/filter did not match)");
+          }
+        } catch (err) {
+          const errMsg = (err as Error).message ?? "";
+          waLog("error", email, "message handler threw an error", { error: errMsg, stack: (err as Error).stack });
+          if (errMsg.includes("sendMessage timed out")) {
+            waLog("warn", email, "sendMessage frozen — closing socket to trigger reconnect");
+            try { sessions.get(email)?.socket?.end?.(); } catch {}
+          }
+        }
+        const next = pendingByJid.get(from);
+        if (next) {
+          pendingByJid.delete(from);
+          waLog("info", email, "processing deferred message", { from });
+          state = next;
+        } else {
+          processingJids.delete(from);
+        }
+      }
+    };
+
     sock.ev.on("messages.upsert", async ({ messages, type }: any) => {
       waLog("info", email, "messages.upsert fired", { type, count: messages?.length ?? 0 });
       // Process both "notify" (real-time) and "append" (retry/late delivery). Baileys
@@ -680,12 +754,6 @@ export async function connectSession(
         storeRecentMessage(from, fromName, text, storageTs);
         const recentMessages = getRecentMessages(from);
 
-        // Track this as the latest message in the conversation. If a newer message arrives
-        // (in a separate concurrent handler) during this one's processing, we'll skip sending
-        // this reply since it's been superseded by the newer message.
-        const prevLatest = latestMsgTsPerJid.get(from) ?? 0;
-        if (msgTs > prevLatest) latestMsgTsPerJid.set(from, msgTs);
-
         waLog("info", email, "incoming message", {
           from,
           fromName,
@@ -800,63 +868,24 @@ export async function connectSession(
           }
         }
 
-        try {
-          const t0 = Date.now();
-          // Detect "own message" robustly: msg.key.fromMe is unreliable in groups because
-          // the participant field uses the account's LID (anonymized) rather than its phone
-          // JID, and Baileys doesn't always match them. Fallback to comparing the participant
-          // (and remoteJid for DMs) against the bot's own phone-number and LID.
-          const userObj = sock.user as { id?: string; lid?: string } | undefined;
-          const myPhoneKey = userObj?.id?.split(":")[0].split("@")[0] ?? "";
-          const myLidKey = userObj?.lid?.split(":")[0].split("@")[0] ?? "";
-          const participant = (msg.key.participant ?? msg.key.remoteJid ?? "") as string;
-          const participantKey = participant.split(":")[0].split("@")[0];
-          const fromMe = !!msg.key.fromMe ||
-            (!!myPhoneKey && participantKey === myPhoneKey) ||
-            (!!myLidKey && participantKey === myLidKey);
-          waLog("info", email, "fromMe detection", { rawFromMe: !!msg.key.fromMe, fromMe, participantKey, myPhoneKey, myLidKey });
-          if (!msg.key.fromMe && fromMe) {
-            waLog("info", email, "identified own message via participant match", { participantKey, myPhoneKey, myLidKey });
-          }
-          const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentText, attachmentName, attachmentError });
-          waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
-          if (reply) {
-            // If a newer message has arrived in this conversation while we were processing,
-            // skip this stale reply — only the latest message gets answered.
-            const latestNow = latestMsgTsPerJid.get(from) ?? 0;
-            if (msgTs < latestNow) {
-              waLog("info", email, "skipping stale reply — newer message arrived during processing", { msgTs, latest: latestNow, ageMs: latestNow - msgTs });
-            } else if (sessions.get(email)?.status !== "connected") {
-              waLog("warn", email, "session no longer connected — dropping reply", { to: from });
-            } else {
-              waLog("info", email, "sending reply", { to: from, replyLength: reply.length });
-              const isLid = from.endsWith("@lid");
-              const timeoutMs = (isGroup || isLid) ? 30_000 : 20_000;
-              const sendTimeout = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)), timeoutMs)
-              );
-              const currentSock = sessions.get(email)?.socket ?? sock;
-              const sent: any = await Promise.race([currentSock.sendMessage(from, { text: reply }, { quoted: msg }), sendTimeout]);
-              if (sent?.key?.id) {
-                sentByBot.add(sent.key.id);
-                // Auto-expire after 30s — echo-back arrives within ms; stale IDs block future replies
-                setTimeout(() => sentByBot.delete(sent.key.id), 30_000);
-              }
-              storeRecentMessage(from, "Assistant", reply, Date.now());
-              waLog("info", email, "reply sent successfully");
-            }
+        const msgState: PendingMsgState = { msg, from, fromName, text, isGroup, groupName, isMentioned, recentMessages, attachment, attachmentText, attachmentName, attachmentError };
+        if (processingJids.has(from)) {
+          const existing = pendingByJid.get(from);
+          // Preserve owner messages: don't replace a fromMe pending with a non-fromMe message.
+          // In ownerOnly groups, a busy group can otherwise evict the owner's queued reply.
+          if (existing && existing.msg.key.fromMe && !msg.key.fromMe) {
+            waLog("info", email, "dropping non-owner pending — owner message already queued", { from });
           } else {
-            waLog("info", email, "handler returned null — no reply sent (trigger/filter did not match)");
+            waLog("info", email, "deferring message — JID already processing", { from });
+            pendingByJid.set(from, msgState);
           }
-        } catch (err) {
-          const errMsg = (err as Error).message ?? "";
-          waLog("error", email, "message handler threw an error", { error: errMsg, stack: (err as Error).stack });
-          // sendMessage timeout means the socket's Signal layer is frozen — close it so
-          // connection.update fires and the backoff reconnect loop re-establishes cleanly.
-          if (errMsg.includes("sendMessage timed out")) {
-            waLog("warn", email, "sendMessage frozen — closing socket to trigger reconnect");
-            try { sessions.get(email)?.socket?.end?.(); } catch {}
-          }
+        } else {
+          processingJids.add(from);
+          dispatchMsg(msgState).catch(err => {
+            waLog("error", email, "dispatchMsg unhandled error", { error: (err as Error).message });
+            processingJids.delete(from);
+            pendingByJid.delete(from);
+          });
         }
       }
     });
