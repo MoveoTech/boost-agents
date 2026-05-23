@@ -49,9 +49,23 @@ export async function readConfigFromRepo(repo: string, ghPat: string): Promise<{
   if (!res.ok) throw new Error(`Failed to read config from ${repo}: ${res.status}`);
   const { content, sha } = await res.json() as { content: string; sha: string };
   const raw = Buffer.from(content, "base64").toString("utf8");
-  const match = raw.match(/export const agentConfig[^=]*=\s*(\{[\s\S]*?\});\s*$/m);
+  // Match the object assigned to agentConfig (greedy to get the full outer object)
+  const match = raw.match(/export const agentConfig[^=]*=\s*(\{[\s\S]*\});?\s*$/m);
   if (!match) throw new Error("Could not parse config.ts");
-  return { config: JSON.parse(match[1]) as AgentConfig, sha };
+  let config: AgentConfig;
+  try {
+    // Configs saved via the UI use JSON.stringify — parse directly
+    config = JSON.parse(match[1]) as AgentConfig;
+  } catch {
+    // Original hand-written TS config — strip TS syntax then evaluate
+    const cleaned = match[1]
+      .replace(/as\s+const/g, "")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/,(\s*[}\]])/g, "$1");
+    // eslint-disable-next-line no-new-func
+    config = new Function(`return ${cleaned}`)() as AgentConfig;
+  }
+  return { config, sha };
 }
 
 export async function commitConfigToRepo(repo: string, config: AgentConfig, ghPat: string): Promise<string> {
