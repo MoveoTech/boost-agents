@@ -61,7 +61,7 @@ export async function getCreateWorkflowStatus(runId: number): Promise<{
   return res.ok ? res.json() : { phase: "pending" };
 }
 
-export async function getAgentStatus(repoName: string): Promise<{ status: "pending" | "in_progress" | "success" | "failed"; runUrl?: string }> {
+export async function getAgentStatus(repoName: string): Promise<{ status: "pending" | "in_progress" | "success" | "failed"; runUrl?: string; agentUrl?: string }> {
   const res = await fetch(`${BASE}/api/admin/agent-status?repoName=${encodeURIComponent(repoName)}`);
   return res.ok ? res.json() : { status: "pending" };
 }

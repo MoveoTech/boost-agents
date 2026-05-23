@@ -703,7 +703,23 @@ app.get("/api/admin/agent-status", requireAdmin, async (req, res) => {
     const status = run.status === "completed"
       ? (run.conclusion === "success" ? "success" : "failed")
       : "in_progress";
-    res.json({ status, runUrl: run.html_url });
+
+    // On success, fetch the agent URL from Firestore via oauth-service
+    let agentUrl: string | undefined;
+    if (status === "success") {
+      const gcpProject = `boost-${repoName}-v7`;
+      const oauthUrl = process.env.OAUTH_SERVICE_URL ?? "";
+      const oauthKey = process.env.OAUTH_MASTER_KEY || process.env.OAUTH_SERVICE_KEY || "";
+      try {
+        const agentRes = await fetch(`${oauthUrl}/api/admin/agents`, { headers: { "x-api-key": oauthKey } });
+        if (agentRes.ok) {
+          const agents = await agentRes.json() as Array<{ agentId: string; agentUrl?: string }>;
+          agentUrl = agents.find((a) => a.agentId === gcpProject)?.agentUrl;
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    res.json({ status, runUrl: run.html_url, agentUrl });
   } catch {
     res.json({ status: "pending" });
   }

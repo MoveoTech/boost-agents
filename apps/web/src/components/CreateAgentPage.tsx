@@ -41,6 +41,7 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
   const [deployTriggered, setDeployTriggered] = useState(false);
   const [deployStatus, setDeployStatus] = useState<"pending" | "in_progress" | "success" | "failed">("pending");
   const [runUrl, setRunUrl] = useState<string | undefined>();
+  const [agentUrl, setAgentUrl] = useState<string | undefined>();
   const [errorMsg, setErrorMsg] = useState("");
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState("");
@@ -79,9 +80,10 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
   useEffect(() => {
     if (pageState !== "deploying" || !repoName) return;
     const poll = async () => {
-      const { status, runUrl: url } = await getAgentStatus(repoName);
+      const { status, runUrl: url, agentUrl: aUrl } = await getAgentStatus(repoName);
       setDeployStatus(status);
       if (url) setRunUrl(url);
+      if (aUrl) setAgentUrl(aUrl);
       if (status === "success" || status === "failed") {
         setPageState("success");
         if (pollRef.current) clearInterval(pollRef.current);
@@ -213,7 +215,14 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
 
           {(done || failed) && (
             <div className="cap-success-links">
-              {done && <p className="cap-success-note">Agent deployed! Find the URL in the Actions summary below.</p>}
+              {done && agentUrl && (
+                <a href={agentUrl} target="_blank" rel="noopener" className="cap-btn cap-btn-primary"
+                  style={{ display: "block", textAlign: "center", textDecoration: "none", marginBottom: 8 }}>
+                  Open agent →
+                </a>
+              )}
+              {done && !agentUrl && <p className="cap-success-note">Agent deployed! Find the URL in the Actions summary below.</p>}
+              {done && agentUrl && <p className="cap-hint" style={{ textAlign: "center", marginBottom: 4 }}>{agentUrl}</p>}
 
               {failed && deployTriggered && (
                 <>

@@ -607,6 +607,17 @@ app.post("/api/admin/agents", requireMasterKey, async (req, res) => {
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
+// Update any fields on an agent record (e.g. agentUrl after deploy)
+app.patch("/api/admin/agents/:agentId", requireMasterKey, async (req, res) => {
+  const { agentId } = req.params;
+  try {
+    const snap = await db.collection("agents").where("agentId", "==", agentId).limit(1).get();
+    if (snap.empty) { res.status(404).json({ error: "Agent not found" }); return; }
+    await snap.docs[0].ref.set(req.body, { merge: true });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // List all agents (active + tombstones)
 app.get("/api/admin/agents", requireMasterKey, async (_req, res) => {
   try {

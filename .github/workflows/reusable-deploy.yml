@@ -8,7 +8,7 @@ on:
         type: string
     secrets:
       GEMINI_API_KEY:
-        required: true
+        required: false
       GH_PAT:
         required: false
       OAUTH_SERVICE_URL:
@@ -209,7 +209,16 @@ jobs:
 
       - name: Print URL
         run: |
-          echo "Agent: ${{ steps.deploy.outputs.url }}"
+          AGENT_URL="${{ steps.deploy.outputs.url }}"
+          PROJECT="${{ steps.provision.outputs.project_id }}"
+          echo "Agent: $AGENT_URL"
           echo "## ✦ Agent deployed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**URL:** ${{ steps.deploy.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** $AGENT_URL" >> $GITHUB_STEP_SUMMARY
+          # Save URL to Firestore so the hub UI can surface it directly
+          if [ -n "${{ secrets.OAUTH_SERVICE_URL }}" ] && [ -n "$AGENT_URL" ]; then
+            curl -sf -X PATCH "${{ secrets.OAUTH_SERVICE_URL }}/api/admin/agents/$PROJECT" \
+              -H "x-api-key: ${{ secrets.OAUTH_SERVICE_KEY }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"agentUrl\":\"$AGENT_URL\"}" || echo "URL save skipped"
+          fi
