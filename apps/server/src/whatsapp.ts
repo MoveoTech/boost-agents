@@ -483,7 +483,8 @@ export async function connectSession(
         session.connectedAt = Date.now();
         reconnectAttempts.delete(email); // reset persistent backoff counter on successful connect
         cryptoRetryCount.delete(email);  // reset crypto retry counter
-        waLog("info", email, "connected successfully", { jid: sock.user?.id });
+        seedOwnerKeys(); // populate ownerKeys from sock.user (phone + LID)
+        waLog("info", email, "connected successfully", { jid: sock.user?.id, ownerKeys: [...ownerKeys] });
         session.connectedListeners.forEach((fn) => fn());
         session.qrListeners = [];
         session.connectedListeners = [];
@@ -553,6 +554,20 @@ export async function connectSession(
     // delivers the same message under multiple JID formats (e.g. @s.whatsapp.net + @lid).
     const processedMsgIds = new Set<string>();
 
+    // All known participant key fragments that belong to the account owner.
+    // Seeded from sock.user (phone + LID) at connect time, then updated whenever
+    // we observe rawFromMe=true on a group message — that message's participant is
+    // definitively the owner, so we can learn their LID even if sock.user.lid was
+    // empty after a reconnect.
+    const ownerKeys = new Set<string>();
+    const seedOwnerKeys = () => {
+      const u = sock.user as { id?: string; lid?: string } | undefined;
+      const ph = u?.id?.split(":")[0].split("@")[0];
+      const lid = u?.lid?.split(":")[0].split("@")[0];
+      if (ph) ownerKeys.add(ph);
+      if (lid) ownerKeys.add(lid);
+    };
+
     // Serialize per-JID: only one agent call runs at a time per conversation.
     // When a second message arrives while the first is processing, it is stored as
     // "pending" (latest wins). After the current run finishes, the pending message
@@ -575,17 +590,19 @@ export async function connectSession(
         state = null;
         try {
           const t0 = Date.now();
-          const userObj = sock.user as { id?: string; lid?: string } | undefined;
-          const myPhoneKey = userObj?.id?.split(":")[0].split("@")[0] ?? "";
-          const myLidKey = userObj?.lid?.split(":")[0].split("@")[0] ?? "";
+          const rawFromMe = !!msg.key.fromMe;
           const participant = (msg.key.participant ?? msg.key.remoteJid ?? "") as string;
           const participantKey = participant.split(":")[0].split("@")[0];
-          const fromMe = !!msg.key.fromMe ||
-            (!!myPhoneKey && participantKey === myPhoneKey) ||
-            (!!myLidKey && participantKey === myLidKey);
-          waLog("info", email, "fromMe detection", { rawFromMe: !!msg.key.fromMe, fromMe, participantKey, myPhoneKey, myLidKey });
-          if (!msg.key.fromMe && fromMe) {
-            waLog("info", email, "identified own message via participant match", { participantKey, myPhoneKey, myLidKey });
+          // In groups, rawFromMe=true definitively identifies the participant as the owner.
+          // Learn their key so subsequent messages with rawFromMe=false are still detected.
+          if (rawFromMe && isGroup && participantKey && !ownerKeys.has(participantKey)) {
+            ownerKeys.add(participantKey);
+            waLog("info", email, "learned owner key from group message", { participantKey, ownerKeys: [...ownerKeys] });
+          }
+          const fromMe = rawFromMe || ownerKeys.has(participantKey);
+          waLog("info", email, "fromMe detection", { rawFromMe, fromMe, participantKey, ownerKeys: [...ownerKeys] });
+          if (!rawFromMe && fromMe) {
+            waLog("info", email, "identified own message via owner key match", { participantKey });
           }
           const reply = await mentionHandler({ email, from, fromName, text, isGroup, groupName, isMentioned, fromMe, recentMessages, attachment, attachmentText, attachmentName, attachmentError });
           waLog("info", email, "timing: handler total", { ms: Date.now() - t0 });
