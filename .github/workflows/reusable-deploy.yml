@@ -198,13 +198,15 @@ jobs:
 
       # Set ADMIN_EMAILS separately — commas in the value break the ^,^ delimiter used by deploy-cloudrun
       - name: Set ADMIN_EMAILS
-        if: ${{ secrets.ADMIN_EMAILS != '' }}
         run: |
-          gcloud run services update ${{ inputs.service_name }} \
-            --region us-central1 \
-            --project ${{ steps.provision.outputs.project_id }} \
-            --update-env-vars "^|^ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}" \
-            --quiet
+          ADMIN_EMAILS="${{ secrets.ADMIN_EMAILS }}"
+          if [ -n "$ADMIN_EMAILS" ]; then
+            gcloud run services update ${{ inputs.service_name }} \
+              --region us-central1 \
+              --project ${{ steps.provision.outputs.project_id }} \
+              --update-env-vars "^|^ADMIN_EMAILS=$ADMIN_EMAILS" \
+              --quiet
+          fi
 
       - name: Print URL
         run: |
