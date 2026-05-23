@@ -63,7 +63,7 @@ jobs:
             --field owner=MoveoTech \
             --field name="$REPO_NAME" \
             --field description="Boost Agent: ${{ inputs.agent_name }}" \
-            --field private=false \
+            --field private=true \
             --field include_all_branches=false
           echo "✓ Repo created: https://github.com/MoveoTech/$REPO_NAME"
           # Give GitHub a moment to fully initialize the repo before setting secrets

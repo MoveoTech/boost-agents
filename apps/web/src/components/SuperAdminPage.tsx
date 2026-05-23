@@ -296,6 +296,9 @@ export default function SuperAdminPage({ email }: { email: string | null }) {
   const [showDeleted, setShowDeleted] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AgentRecord | null>(null);
   const [editTarget, setEditTarget] = useState<AgentRecord | null>(null);
+  const [importRepo, setImportRepo] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -304,6 +307,22 @@ export default function SuperAdminPage({ email }: { email: string | null }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleImport = async () => {
+    const repo = importRepo.trim();
+    if (!repo) return;
+    setImporting(true);
+    setImportError("");
+    const res = await fetch(`/api/superadmin/agents/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoName: repo }),
+    });
+    const data = await res.json().catch(() => ({ error: "Request failed" }));
+    if (res.ok) { setImportRepo(""); load(); }
+    else setImportError(data.error ?? "Import failed");
+    setImporting(false);
+  };
 
   if (email !== SUPER_ADMIN) {
     return (
@@ -336,6 +355,19 @@ export default function SuperAdminPage({ email }: { email: string | null }) {
 
       <div className="sa-content">
         {loading && <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><div className="cap-spinner" /></div>}
+        <div className="sa-import-row">
+          <input
+            className="sa-input" style={{ flex: 1 }}
+            placeholder="Import existing repo (e.g. boost-agent-shaul)"
+            value={importRepo} onChange={(e) => setImportRepo(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleImport()}
+          />
+          <button className="sa-btn sa-btn-secondary" disabled={!importRepo.trim() || importing} onClick={handleImport}>
+            {importing ? "Importing…" : "Import"}
+          </button>
+        </div>
+        {importError && <p className="sa-error" style={{ marginTop: 0 }}>{importError}</p>}
+
         {!loading && visible.length === 0 && (
           <p style={{ color: "var(--muted)", textAlign: "center", padding: 40 }}>No agents yet.</p>
         )}

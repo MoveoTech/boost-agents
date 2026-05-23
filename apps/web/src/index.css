@@ -3447,6 +3447,12 @@ body {
   color: var(--text);
 }
 
+.sa-import-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .sa-error {
   font-size: 13px;
   color: #dc2626;

@@ -827,6 +827,26 @@ function oauthMaster(path: string) {
   return { url: `${base}${path}`, key: OAUTH_MASTER_KEY };
 }
 
+app.post("/api/superadmin/agents/import", requireAdmin, requireSuperAdmin, async (req, res) => {
+  const { repoName } = req.body as { repoName: string };
+  if (!repoName?.trim()) { res.status(400).json({ error: "repoName required" }); return; }
+  const clean = repoName.trim();
+  const gcpProject = `boost-${clean}-v7`;
+  const { url, key } = oauthMaster("/api/admin/agents");
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key },
+      body: JSON.stringify({ repoName: clean, agentId: gcpProject, createdBy: getSessionEmail(req) ?? "", adminEmails: "" }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ error: `OAuth service returned ${r.status}` }));
+      res.status(502).json(err); return;
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 app.get("/api/superadmin/agents", requireAdmin, requireSuperAdmin, async (_req, res) => {
   const { url, key } = oauthMaster("/api/admin/agents");
   try {
