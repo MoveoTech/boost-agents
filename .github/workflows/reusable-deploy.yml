@@ -169,6 +169,7 @@ jobs:
         with:
           service: ${{ inputs.service_name }}
           region: us-central1
+          project_id: ${{ steps.provision.outputs.project_id }}
           image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ inputs.service_name }}:${{ github.sha }}
           flags: '--allow-unauthenticated --min-instances 1 --max-instances 1'
           env_vars: |
