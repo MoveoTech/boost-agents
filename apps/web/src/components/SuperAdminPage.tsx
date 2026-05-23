@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  listAgents, getAgentConnections, getAgentConfig, updateAgentConfig, deleteAgent, getAgentStatus,
+  listAgents, getAgentConnections, getAgentConfig, updateAgentConfig, deleteAgent,
+  getAgentStatus, disconnectAgentConnection,
   type AgentRecord, type AgentConnections,
 } from "../api/client";
 import type { AgentConfig } from "../types";
@@ -13,12 +14,20 @@ const TOOL_LABELS: Record<string, string> = {
   monday: "Monday.com", slack: "Slack", memory: "Memory",
 };
 
+type Service = "whatsapp" | "gmail" | "calendar" | "tasks" | "monday";
+const SERVICE_META: Record<Service, { label: string; action: string; confirm: string; isReset?: boolean }> = {
+  whatsapp: { label: "WhatsApp",   action: "Reset session", confirm: "Confirm reset?", isReset: true },
+  gmail:    { label: "Gmail",      action: "Disconnect",    confirm: "Confirm?" },
+  calendar: { label: "Calendar",   action: "Disconnect",    confirm: "Confirm?" },
+  tasks:    { label: "Tasks",      action: "Disconnect",    confirm: "Confirm?" },
+  monday:   { label: "Monday.com", action: "Disconnect",    confirm: "Confirm?" },
+};
+const SERVICE_ORDER: Service[] = ["whatsapp", "gmail", "calendar", "tasks", "monday"];
+
 // ── Delete Modal ──────────────────────────────────────────────────────────────
 
 function DeleteModal({ agent, onClose, onDeleted }: {
-  agent: AgentRecord;
-  onClose: () => void;
-  onDeleted: () => void;
+  agent: AgentRecord; onClose: () => void; onDeleted: () => void;
 }) {
   const [confirm, setConfirm] = useState("");
   const [status, setStatus] = useState<"idle" | "deleting" | "done" | "error">("idle");
@@ -28,13 +37,8 @@ function DeleteModal({ agent, onClose, onDeleted }: {
     if (confirm !== agent.repoName) return;
     setStatus("deleting");
     const result = await deleteAgent(agent.repoName);
-    if (result.ok) {
-      setStatus("done");
-      setTimeout(onDeleted, 1200);
-    } else {
-      setErrors(result.errors ?? ["Unknown error"]);
-      setStatus("error");
-    }
+    if (result.ok) { setStatus("done"); setTimeout(onDeleted, 1200); }
+    else { setErrors(result.errors ?? ["Unknown error"]); setStatus("error"); }
   };
 
   return (
@@ -50,11 +54,8 @@ function DeleteModal({ agent, onClose, onDeleted }: {
               The GCP project <code>boost-{agent.repoName}-v7</code> must be deleted manually via the GCP Console.
             </p>
             <label className="sa-label">Type <strong>{agent.repoName}</strong> to confirm</label>
-            <input
-              className="sa-input" autoFocus
-              value={confirm} onChange={(e) => setConfirm(e.target.value)}
-              placeholder={agent.repoName}
-            />
+            <input className="sa-input" autoFocus value={confirm}
+              onChange={(e) => setConfirm(e.target.value)} placeholder={agent.repoName} />
             <div className="sa-modal-actions">
               <button className="sa-btn sa-btn-ghost" onClick={onClose}>Cancel</button>
               <button className="sa-btn sa-btn-danger" disabled={confirm !== agent.repoName} onClick={handleDelete}>
@@ -63,25 +64,13 @@ function DeleteModal({ agent, onClose, onDeleted }: {
             </div>
           </>
         )}
-        {status === "deleting" && (
-          <div className="sa-modal-wait">
-            <div className="cap-spinner" />
-            <p>Deleting repo and wiping Firestore data…</p>
-          </div>
-        )}
-        {status === "done" && (
-          <div className="sa-modal-wait">
-            <span style={{ fontSize: 32 }}>✓</span>
-            <p style={{ color: "#16a34a" }}>Agent deleted.</p>
-          </div>
-        )}
+        {status === "deleting" && <div className="sa-modal-wait"><div className="cap-spinner" /><p>Deleting…</p></div>}
+        {status === "done" && <div className="sa-modal-wait"><span style={{ fontSize: 32 }}>✓</span><p style={{ color: "#16a34a" }}>Agent deleted.</p></div>}
         {status === "error" && (
           <>
             <p className="sa-error">Some steps failed:</p>
             {errors.map((e, i) => <p key={i} className="sa-error" style={{ fontSize: 13 }}>{e}</p>)}
-            <div className="sa-modal-actions">
-              <button className="sa-btn sa-btn-ghost" onClick={onClose}>Close</button>
-            </div>
+            <div className="sa-modal-actions"><button className="sa-btn sa-btn-ghost" onClick={onClose}>Close</button></div>
           </>
         )}
       </div>
@@ -107,7 +96,6 @@ function ConfigModal({ agent, onClose }: { agent: AgentRecord; onClose: () => vo
     });
   }, [agent.repoName]);
 
-  // Poll deploy status after config save
   useEffect(() => {
     if (status !== "deploying" || !deployRunId) return;
     const poll = async () => {
@@ -123,15 +111,11 @@ function ConfigModal({ agent, onClose }: { agent: AgentRecord; onClose: () => vo
 
   const handleSave = async () => {
     if (!config) return;
-    const confirmMsg = `Save config and redeploy ${agent.repoName}? This will take ~8 minutes.`;
-    if (!window.confirm(confirmMsg)) return;
-    setStatus("saving");
-    setSaveError("");
+    if (!window.confirm(`Save config and redeploy ${agent.repoName}? This will take ~8 minutes.`)) return;
+    setStatus("saving"); setSaveError("");
     const result = await updateAgentConfig(agent.repoName, config);
     if (!result.ok) { setSaveError(result.error ?? "Save failed"); setStatus("error"); return; }
-    setDeployRunId(result.runId);
-    setDeployStatus("pending");
-    setStatus("deploying");
+    setDeployRunId(result.runId); setDeployStatus("pending"); setStatus("deploying");
   };
 
   const setTool = (key: string, val: boolean) =>
@@ -141,15 +125,14 @@ function ConfigModal({ agent, onClose }: { agent: AgentRecord; onClose: () => vo
     <div className="sa-modal-backdrop" onClick={status === "idle" || status === "error" ? onClose : undefined}>
       <div className="sa-modal sa-modal-wide" onClick={(e) => e.stopPropagation()}>
         <h3 className="sa-modal-title">Edit config — {agent.repoName}</h3>
-
         {loading && <div className="sa-modal-wait"><div className="cap-spinner" /></div>}
         {loadError && <p className="sa-error">{loadError}</p>}
-
         {!loading && config && (status === "idle" || status === "error") && (
           <>
             <div className="sa-field">
               <label className="sa-label">Agent name</label>
-              <input className="sa-input" value={config.name} onChange={(e) => setConfig((c) => c ? { ...c, name: e.target.value } : c)} />
+              <input className="sa-input" value={config.name}
+                onChange={(e) => setConfig((c) => c ? { ...c, name: e.target.value } : c)} />
             </div>
             <div className="sa-field">
               <label className="sa-label">System prompt</label>
@@ -175,7 +158,6 @@ function ConfigModal({ agent, onClose }: { agent: AgentRecord; onClose: () => vo
             </div>
           </>
         )}
-
         {(status === "saving" || status === "deploying") && (
           <div className="sa-modal-wait">
             <div className="cap-spinner" />
@@ -187,7 +169,6 @@ function ConfigModal({ agent, onClose }: { agent: AgentRecord; onClose: () => vo
             )}
           </div>
         )}
-
         {status === "done" && (
           <div className="sa-modal-wait">
             <span style={{ fontSize: 36 }}>✓</span>
@@ -200,21 +181,113 @@ function ConfigModal({ agent, onClose }: { agent: AgentRecord; onClose: () => vo
   );
 }
 
+// ── Connections Panel ────────────────────────────────────────────────────��────
+
+function ConnectionsPanel({ repoName, connections, onRefresh }: {
+  repoName: string;
+  connections: AgentConnections;
+  onRefresh: () => void;
+}) {
+  // Map of "service:user" → button state
+  const [btnState, setBtnState] = useState<Record<string, "idle" | "confirm" | "busy">>({});
+  const [error, setError] = useState("");
+  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const getBtn = (key: string): "idle" | "confirm" | "busy" => btnState[key] ?? "idle";
+
+  const handleClick = async (svc: Service, user: string) => {
+    const key = `${svc}:${user}`;
+    const state = getBtn(key);
+
+    if (state === "idle") {
+      setBtnState((s) => ({ ...s, [key]: "confirm" }));
+      // Auto-revert to idle after 3s if user doesn't confirm
+      clearTimeout(timers.current[key]);
+      timers.current[key] = setTimeout(() => {
+        setBtnState((s) => ({ ...s, [key]: "idle" }));
+      }, 3000);
+    } else if (state === "confirm") {
+      clearTimeout(timers.current[key]);
+      setBtnState((s) => ({ ...s, [key]: "busy" }));
+      setError("");
+      const result = await disconnectAgentConnection(repoName, svc, user);
+      if (result.ok) {
+        onRefresh();
+      } else {
+        setError(`Failed to disconnect ${user} from ${svc}: ${result.error}`);
+        setBtnState((s) => ({ ...s, [key]: "idle" }));
+      }
+    }
+  };
+
+  const connectedCount = SERVICE_ORDER.reduce((n, svc) => n + connections[svc].length, 0);
+
+  return (
+    <div className="sa-conn-panel">
+      <div className="sa-conn-header">
+        <span className="sa-section-label">Connections</span>
+        {connectedCount > 0 && (
+          <span className="sa-conn-count">{connectedCount} active</span>
+        )}
+      </div>
+      {error && <p className="sa-error" style={{ fontSize: 12, marginBottom: 6 }}>{error}</p>}
+      <div className="sa-conn-table">
+        {SERVICE_ORDER.map((svc) => {
+          const meta = SERVICE_META[svc];
+          const users = connections[svc];
+          return (
+            <div key={svc} className="sa-conn-row">
+              <div className="sa-conn-svc-cell">
+                <span className={`sa-dot ${users.length > 0 ? "sa-dot-on" : "sa-dot-off"}`} />
+                <span className="sa-conn-svc-name">{meta.label}</span>
+              </div>
+              <div className="sa-conn-users-cell">
+                {users.length === 0 ? (
+                  <span className="sa-conn-empty">No connections</span>
+                ) : (
+                  <div className="sa-conn-user-list">
+                    {users.map((user) => {
+                      const key = `${svc}:${user}`;
+                      const s = getBtn(key);
+                      return (
+                        <div key={user} className="sa-conn-user-row">
+                          <span className="sa-conn-email">{user}</span>
+                          <button
+                            className={`sa-conn-btn ${meta.isReset ? "sa-conn-btn-reset" : "sa-conn-btn-disc"} ${s === "confirm" ? "sa-conn-btn-confirm" : ""}`}
+                            disabled={s === "busy"}
+                            onClick={() => handleClick(svc, user)}
+                          >
+                            {s === "busy" ? "…" : s === "confirm" ? meta.confirm : meta.action}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Agent Card ────────────────────────────────────────────────────────────────
 
 function AgentCard({ agent, onDelete, onEdit }: {
-  agent: AgentRecord;
-  onDelete: () => void;
-  onEdit: () => void;
+  agent: AgentRecord; onDelete: () => void; onEdit: () => void;
 }) {
   const [connections, setConnections] = useState<AgentConnections | null>(null);
+  const [loadingConns, setLoadingConns] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   const loadConnections = useCallback(async () => {
-    if (connections) return;
+    setLoadingConns(true);
     const c = await getAgentConnections(agent.repoName);
     setConnections(c);
-  }, [agent.repoName, connections]);
+    setLoadingConns(false);
+  }, [agent.repoName]);
 
   const toggle = () => {
     setExpanded((v) => !v);
@@ -223,6 +296,9 @@ function AgentCard({ agent, onDelete, onEdit }: {
 
   const isDeleted = agent.status === "deleted";
   const gcpProject = `boost-${agent.repoName}-v7`;
+  const totalConnected = connections
+    ? (["whatsapp", "gmail", "calendar", "tasks", "monday"] as const).reduce((n, s) => n + connections[s].length, 0)
+    : null;
 
   return (
     <div className={`sa-card ${isDeleted ? "sa-card-deleted" : ""}`}>
@@ -232,9 +308,12 @@ function AgentCard({ agent, onDelete, onEdit }: {
           <span className={`sa-badge ${isDeleted ? "sa-badge-deleted" : "sa-badge-active"}`}>
             {isDeleted ? "deleted" : "active"}
           </span>
+          {totalConnected !== null && totalConnected > 0 && (
+            <span className="sa-badge sa-badge-conn">{totalConnected} connected</span>
+          )}
         </div>
         <div className="sa-card-meta">
-          <span>{agent.createdBy || "—"}</span>
+          <span title="Created by">{agent.createdBy || "—"}</span>
           <span>{new Date(agent.createdAt).toLocaleDateString()}</span>
           <span className="sa-chevron">{expanded ? "▲" : "▼"}</span>
         </div>
@@ -242,40 +321,47 @@ function AgentCard({ agent, onDelete, onEdit }: {
 
       {expanded && (
         <div className="sa-card-body">
-          {agent.adminEmails && (
-            <p className="sa-detail"><strong>Admins:</strong> {agent.adminEmails}</p>
-          )}
+          {/* Info row */}
+          <div className="sa-info-grid">
+            {agent.adminEmails && (
+              <div className="sa-info-item">
+                <span className="sa-info-label">Admins</span>
+                <span className="sa-info-val">{agent.adminEmails}</span>
+              </div>
+            )}
+            {agent.agentUrl && (
+              <div className="sa-info-item">
+                <span className="sa-info-label">URL</span>
+                <a href={agent.agentUrl} target="_blank" rel="noopener" className="sa-link sa-info-val">{agent.agentUrl}</a>
+              </div>
+            )}
+            <div className="sa-info-item">
+              <span className="sa-info-label">GCP</span>
+              <span className="sa-info-val" style={{ color: "var(--muted)" }}>{gcpProject}</span>
+            </div>
+          </div>
+
+          {/* Quick links */}
           <div className="sa-links-row">
             <a href={`https://github.com/MoveoTech/${agent.repoName}`} target="_blank" rel="noopener" className="sa-link">GitHub ↗</a>
             <a href={`https://github.com/MoveoTech/${agent.repoName}/actions`} target="_blank" rel="noopener" className="sa-link">Actions ↗</a>
-            <a href={`https://console.cloud.google.com/run?project=${gcpProject}`} target="_blank" rel="noopener" className="sa-link">GCP ↗</a>
-          </div>
-
-          <div className="sa-connections">
-            <p className="sa-section-label">Connected services</p>
-            {!connections && <span className="sa-loading-dots">Loading…</span>}
-            {connections && (
-              <div className="sa-service-grid">
-                {(["gmail", "calendar", "tasks", "monday"] as const).map((svc) => (
-                  <div key={svc} className="sa-service-item">
-                    <span className={`sa-dot ${connections[svc].length > 0 ? "sa-dot-on" : "sa-dot-off"}`} />
-                    <span className="sa-service-name">{svc}</span>
-                    {connections[svc].length > 0 && (
-                      <span className="sa-service-users">{connections[svc].join(", ")}</span>
-                    )}
-                  </div>
-                ))}
-                <div className="sa-service-item">
-                  <span className={`sa-dot ${connections.whatsapp.length > 0 ? "sa-dot-on" : "sa-dot-off"}`} />
-                  <span className="sa-service-name">whatsapp</span>
-                  {connections.whatsapp.length > 0 && (
-                    <span className="sa-service-users">{connections.whatsapp.join(", ")}</span>
-                  )}
-                </div>
-              </div>
+            <a href={`https://console.cloud.google.com/run?project=${gcpProject}`} target="_blank" rel="noopener" className="sa-link">Cloud Run ↗</a>
+            {agent.agentUrl && (
+              <a href={agent.agentUrl} target="_blank" rel="noopener" className="sa-link">Open agent ↗</a>
             )}
           </div>
 
+          {/* Connections */}
+          {loadingConns && <div className="sa-conn-loading"><div className="cap-spinner" style={{ width: 16, height: 16 }} /></div>}
+          {connections && (
+            <ConnectionsPanel
+              repoName={agent.repoName}
+              connections={connections}
+              onRefresh={loadConnections}
+            />
+          )}
+
+          {/* Actions */}
           {!isDeleted && (
             <div className="sa-card-actions">
               <button className="sa-btn sa-btn-secondary" onClick={onEdit}>Edit config & redeploy</button>
@@ -311,11 +397,9 @@ export default function SuperAdminPage({ email }: { email: string | null }) {
   const handleImport = async () => {
     const repo = importRepo.trim();
     if (!repo) return;
-    setImporting(true);
-    setImportError("");
+    setImporting(true); setImportError("");
     const res = await fetch(`/api/superadmin/agents/import`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ repoName: repo }),
     });
     const data = await res.json().catch(() => ({ error: "Request failed" }));
@@ -335,6 +419,7 @@ export default function SuperAdminPage({ email }: { email: string | null }) {
     );
   }
 
+  const active = agents.filter((a) => a.status === "active");
   const visible = agents.filter((a) => showDeleted || a.status === "active");
 
   return (
@@ -343,18 +428,23 @@ export default function SuperAdminPage({ email }: { email: string | null }) {
         <div className="sa-header-left">
           <div className="cap-logo" style={{ fontSize: 18 }}>boost</div>
           <h1 className="sa-title">Super Admin</h1>
+          {!loading && (
+            <span className="sa-header-count">{active.length} agents</span>
+          )}
         </div>
         <div className="sa-header-right">
           <label className="sa-toggle-label">
             <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
             Show deleted
           </label>
-          <a href="/" className="sa-link" style={{ marginLeft: 16 }}>← Create Agent</a>
+          <button className="sa-btn sa-btn-ghost" style={{ padding: "5px 10px", fontSize: 13 }} onClick={load}>Refresh</button>
+          <a href="/" className="sa-link" style={{ marginLeft: 8 }}>← Create Agent</a>
         </div>
       </div>
 
       <div className="sa-content">
         {loading && <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><div className="cap-spinner" /></div>}
+
         <div className="sa-import-row">
           <input
             className="sa-input" style={{ flex: 1 }}
@@ -372,25 +462,17 @@ export default function SuperAdminPage({ email }: { email: string | null }) {
           <p style={{ color: "var(--muted)", textAlign: "center", padding: 40 }}>No agents yet.</p>
         )}
         {!loading && visible.map((agent) => (
-          <AgentCard
-            key={agent.repoName}
-            agent={agent}
+          <AgentCard key={agent.repoName} agent={agent}
             onDelete={() => setDeleteTarget(agent)}
-            onEdit={() => setEditTarget(agent)}
-          />
+            onEdit={() => setEditTarget(agent)} />
         ))}
       </div>
 
       {deleteTarget && (
-        <DeleteModal
-          agent={deleteTarget}
-          onClose={() => setDeleteTarget(null)}
-          onDeleted={() => { setDeleteTarget(null); load(); }}
-        />
+        <DeleteModal agent={deleteTarget} onClose={() => setDeleteTarget(null)}
+          onDeleted={() => { setDeleteTarget(null); load(); }} />
       )}
-      {editTarget && (
-        <ConfigModal agent={editTarget} onClose={() => setEditTarget(null)} />
-      )}
+      {editTarget && <ConfigModal agent={editTarget} onClose={() => setEditTarget(null)} />}
     </div>
   );
 }

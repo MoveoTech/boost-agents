@@ -931,6 +931,31 @@ app.patch("/api/superadmin/agents/:repoName/config", requireAdmin, requireSuperA
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
+// Disconnect a specific user from a service on an agent
+// service: "whatsapp" | "gmail" | "calendar" | "tasks" | "monday"
+// For whatsapp: wipes session creds (preserves config), user must re-scan QR
+// For others: deletes OAuth token, user must reconnect
+app.delete("/api/superadmin/agents/:repoName/connections/:service/:userId", requireAdmin, requireSuperAdmin, async (req, res) => {
+  const { repoName, service, userId } = req.params;
+  const gcpProject = `boost-${repoName}-v7`;
+  const oauthBase = process.env.OAUTH_SERVICE_URL ?? "";
+  const masterKey = OAUTH_MASTER_KEY;
+  try {
+    let path: string;
+    if (service === "whatsapp") {
+      path = `/api/whatsapp/${encodeURIComponent(gcpProject)}/${encodeURIComponent(userId)}`;
+    } else {
+      path = `/api/users/${encodeURIComponent(gcpProject)}/${service}/${encodeURIComponent(userId)}`;
+    }
+    const r = await fetch(`${oauthBase}${path}`, { method: "DELETE", headers: { "x-api-key": masterKey } });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ error: `OAuth service returned ${r.status}` }));
+      res.status(502).json(err); return;
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // Apply config changes to the running server immediately (no git commit)
 app.patch("/api/config/live", requireAdmin, (req, res) => {
   Object.assign(agentConfig, req.body as Partial<AgentConfig>);
@@ -1255,6 +1280,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         `Reply directly to the user as if texting them. Be brief and natural. Do not use markdown. Do NOT call any send-message tools — your text reply is delivered automatically.`,
         `CRITICAL RULES (override all other instructions):`,
         `- You have ONE response. There is no follow-up. Act NOW or not at all.`,
+        `- Only call tools when the user's message explicitly requires them. For casual chat, greetings, or questions answerable from general knowledge — respond directly, no tool calls.`,
         `- NEVER say "one sec", "let me check", "I'll do that", "creating now" without calling the tool immediately in this same response.`,
         `- When the user provides all info needed — execute immediately. Do NOT ask for confirmation.`,
         `- If a tool fails, say so honestly. Never claim success unless the tool returned success.`,

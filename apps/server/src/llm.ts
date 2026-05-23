@@ -52,7 +52,7 @@ export interface StreamCallbacks {
 
 // ── Loop guard helpers ───────────────────────────────────────────────────────
 
-const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_ROUNDS = 5;
 
 function isToolError(output: string): boolean {
   const h = output.slice(0, 400).toLowerCase();

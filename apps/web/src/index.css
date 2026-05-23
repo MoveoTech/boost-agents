@@ -3461,3 +3461,85 @@ body {
   border-radius: var(--radius-sm);
   margin: 0;
 }
+
+/* Agent info grid */
+.sa-info-grid { display: flex; flex-direction: column; gap: 5px; padding-bottom: 4px; }
+.sa-info-item { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.sa-info-label { font-weight: 500; color: var(--muted); min-width: 52px; flex-shrink: 0; }
+.sa-info-val { color: var(--text); word-break: break-all; }
+
+/* Header count badge */
+.sa-header-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--border);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+/* Connection badge on card */
+.sa-badge-conn { background: #dbeafe; color: #1d4ed8; }
+
+/* Connections panel */
+.sa-conn-panel { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+
+.sa-conn-header { display: flex; align-items: center; gap: 10px; }
+.sa-conn-count { font-size: 12px; color: var(--muted); }
+
+.sa-conn-loading { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 13px; color: var(--muted); }
+
+.sa-conn-table { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+
+.sa-conn-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  align-items: start;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.sa-conn-row:last-child { border-bottom: none; }
+
+.sa-conn-svc-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  min-height: 36px;
+}
+.sa-conn-svc-name { font-size: 13px; font-weight: 500; color: var(--text); }
+
+.sa-conn-users-cell { padding: 6px 10px; min-height: 36px; display: flex; align-items: center; }
+.sa-conn-empty { font-size: 12px; color: var(--muted); }
+
+.sa-conn-user-list { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+
+.sa-conn-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sa-conn-email { font-size: 13px; color: var(--text); word-break: break-all; flex: 1; }
+
+/* Disconnect / Reset buttons */
+.sa-conn-btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+.sa-conn-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.sa-conn-btn:not(:disabled):hover { opacity: 0.8; }
+
+.sa-conn-btn-disc { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+.sa-conn-btn-reset { background: #fff7ed; color: #c2410c; border: 1px solid #fdba74; }
+.sa-conn-btn-confirm { background: #dc2626; color: #fff; border-color: #dc2626; }

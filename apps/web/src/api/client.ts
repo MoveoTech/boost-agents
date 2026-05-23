@@ -261,6 +261,7 @@ export interface AgentRecord {
   createdAt: string;
   status: "active" | "deleted";
   deletedAt?: string;
+  agentUrl?: string;
 }
 
 export interface AgentConnections {
@@ -299,6 +300,15 @@ export async function updateAgentConfig(repoName: string, config: AgentConfig): 
 export async function deleteAgent(repoName: string): Promise<{ ok: boolean; errors?: string[] }> {
   const res = await fetch(`${BASE}/api/superadmin/agents/${encodeURIComponent(repoName)}`, { method: "DELETE" });
   return res.json().catch(() => ({ ok: false, errors: ["Request failed"] }));
+}
+
+export async function disconnectAgentConnection(repoName: string, service: string, userId: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(
+    `${BASE}/api/superadmin/agents/${encodeURIComponent(repoName)}/connections/${service}/${encodeURIComponent(userId)}`,
+    { method: "DELETE" }
+  );
+  const data = await res.json().catch(() => ({ error: "Request failed" }));
+  return res.ok ? { ok: true } : { ok: false, error: data.error };
 }
 
 export async function getAnalytics(): Promise<AnalyticsData> {

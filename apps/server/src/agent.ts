@@ -725,7 +725,10 @@ async function runChat(
   const nativeSearch = agentConfig.tools.googleSearch;
 
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
+    const t0 = Date.now();
+    console.log(JSON.stringify({ tag: "agent", msg: "tool call", name, argsKeys: Object.keys(args) }));
     const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser);
+    console.log(JSON.stringify({ tag: "agent", msg: "tool done", name, ms: Date.now() - t0 }));
     return result ?? "Tool not implemented";
   };
 
