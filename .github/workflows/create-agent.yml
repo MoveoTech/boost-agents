@@ -1,0 +1,188 @@
+name: Create New Agent
+
+# Run from the boost-agents template repo: Actions → Create New Agent → Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      agent_name:
+        description: 'Agent name — becomes the repo name and URL slug (e.g. acme-hr, monday-bot)'
+        required: true
+        type: string
+      gemini_api_key:
+        description: 'GEMINI_API_KEY for this agent (from aistudio.google.com)'
+        required: true
+        type: string
+      admin_emails:
+        description: 'Admin emails — who gets the config sidebar (comma-separated, e.g. boaz@co.com,client@acme.com)'
+        required: false
+        type: string
+      oauth_emails:
+        description: 'Emails to add to Google OAuth test users (needed for Gmail/Calendar access, comma-separated)'
+        required: false
+        type: string
+      anthropic_api_key:
+        description: 'ANTHROPIC_API_KEY — only needed for Claude models (optional)'
+        required: false
+        type: string
+      openai_api_key:
+        description: 'OPENAI_API_KEY — only needed for GPT/o1 models (optional)'
+        required: false
+        type: string
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Validate and sanitize agent name
+        run: |
+          RAW="${{ inputs.agent_name }}"
+          # Lowercase, replace non-alphanumeric with hyphens, collapse consecutive hyphens, trim
+          CLEAN=$(echo "$RAW" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+          if [ -z "$CLEAN" ]; then
+            echo "ERROR: agent name is empty after sanitization"
+            exit 1
+          fi
+          if [ ${#CLEAN} -gt 30 ]; then
+            echo "ERROR: agent name '${CLEAN}' is too long (${#CLEAN} chars, max 30)"
+            exit 1
+          fi
+          echo "REPO_NAME=$CLEAN" >> $GITHUB_ENV
+          echo "Sanitized name: $CLEAN"
+
+      - name: Create GitHub repo from template
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          echo "Creating repo MoveoTech/$REPO_NAME from template..."
+          gh api /repos/MoveoTech/boost-agents/generate \
+            --method POST \
+            --field owner=MoveoTech \
+            --field name="$REPO_NAME" \
+            --field description="Boost Agent: ${{ inputs.agent_name }}" \
+            --field private=false \
+            --field include_all_branches=false
+          echo "✓ Repo created: https://github.com/MoveoTech/$REPO_NAME"
+          # Give GitHub a moment to fully initialize the repo before setting secrets
+          sleep 8
+
+      - name: Set repo secrets
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          REPO="MoveoTech/$REPO_NAME"
+
+          printf '%s' "${{ inputs.gemini_api_key }}" | gh secret set GEMINI_API_KEY --repo "$REPO"
+          echo "✓ GEMINI_API_KEY"
+
+          if [ -n "${{ inputs.admin_emails }}" ]; then
+            printf '%s' "${{ inputs.admin_emails }}" | gh secret set ADMIN_EMAILS --repo "$REPO"
+            echo "✓ ADMIN_EMAILS"
+          fi
+
+          if [ -n "${{ inputs.anthropic_api_key }}" ]; then
+            printf '%s' "${{ inputs.anthropic_api_key }}" | gh secret set ANTHROPIC_API_KEY --repo "$REPO"
+            echo "✓ ANTHROPIC_API_KEY"
+          fi
+
+          if [ -n "${{ inputs.openai_api_key }}" ]; then
+            printf '%s' "${{ inputs.openai_api_key }}" | gh secret set OPENAI_API_KEY --repo "$REPO"
+            echo "✓ OPENAI_API_KEY"
+          fi
+
+      - name: Trigger first deploy
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # Small delay for secrets to register before the workflow reads them
+          sleep 5
+          gh workflow run deploy.yml --repo "MoveoTech/$REPO_NAME" --ref main
+          echo "✓ Deploy triggered — takes ~8 minutes on first run"
+
+      - name: Add Google OAuth test users
+        if: inputs.oauth_emails != ''
+        id: auth_master
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/45358226626/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
+          service_account: 'deployer@boost-agents-496211.iam.gserviceaccount.com'
+
+      - name: Add OAuth test users to consent screen
+        if: inputs.oauth_emails != ''
+        run: |
+          # Fetch the project number for the master oauth project
+          PROJECT_NUMBER=$(gcloud projects describe boost-agents-496211 --format='value(projectNumber)')
+          ACCESS_TOKEN=$(gcloud auth print-access-token)
+
+          # Get existing test users
+          EXISTING=$(curl -sf \
+            "https://oauth2.googleapis.com/v2/projects/$PROJECT_NUMBER/oauthIdpConfigs" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null || echo "")
+
+          # Add each email as a test user
+          IFS=',' read -ra EMAILS <<< "${{ inputs.oauth_emails }}"
+          ADDED=0
+          FAILED=0
+          for EMAIL in "${EMAILS[@]}"; do
+            EMAIL=$(echo "$EMAIL" | xargs)  # trim whitespace
+            if [ -z "$EMAIL" ]; then continue; fi
+            STATUS=$(curl -sf -w "%{http_code}" -o /dev/null \
+              -X POST "https://oauth2.googleapis.com/v2/projects/$PROJECT_NUMBER/testUsers" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"email\": \"$EMAIL\"}" 2>/dev/null || echo "000")
+            if [[ "$STATUS" == "200" || "$STATUS" == "201" || "$STATUS" == "409" ]]; then
+              echo "✓ OAuth test user added: $EMAIL"
+              ADDED=$((ADDED+1))
+            else
+              echo "⚠ Could not add $EMAIL automatically (status $STATUS) — add manually in GCP Console"
+              FAILED=$((FAILED+1))
+            fi
+          done
+          echo "OAuth users: $ADDED added, $FAILED need manual addition"
+          echo "OAUTH_ADDED=$ADDED" >> $GITHUB_ENV
+          echo "OAUTH_FAILED=$FAILED" >> $GITHUB_ENV
+
+      - name: Print summary
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          REPO="MoveoTech/$REPO_NAME"
+          ACTIONS_URL="https://github.com/$REPO/actions"
+          GCP_CONSOLE="https://console.cloud.google.com/run?project=boost-$REPO_NAME-v7"
+          OAUTH_CONSOLE="https://console.cloud.google.com/apis/credentials/consent?project=boost-agents-496211"
+
+          echo "## ✦ Agent created: $REPO_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repo** | https://github.com/$REPO |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Deploy progress** | $ACTIONS_URL |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Agent URL** | Available in Actions summary after deploy (~8 min) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **GCP project** | boost-$REPO_NAME-v7 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### What was automated" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ GitHub repo created from template" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Secrets added (GEMINI_API_KEY$([ -n "${{ inputs.admin_emails }}" ] && echo ', ADMIN_EMAILS')$([ -n "${{ inputs.anthropic_api_key }}" ] && echo ', ANTHROPIC_API_KEY')$([ -n "${{ inputs.openai_api_key }}" ] && echo ', OPENAI_API_KEY'))" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ First deploy triggered" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "${{ inputs.oauth_emails }}" ]; then
+            echo "- ✅ OAuth test users: ${{ inputs.oauth_emails }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Remaining manual steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Get agent URL** — open [Actions]($ACTIONS_URL) → wait for deploy → URL in summary" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Configure agent** — sign in → set system prompt, enable tools, add skills → Publish" >> $GITHUB_STEP_SUMMARY
+
+          if [ -z "${{ inputs.oauth_emails }}" ]; then
+            echo "3. **Gmail/Calendar users** — add emails at [OAuth consent screen]($OAUTH_CONSOLE) → Test users" >> $GITHUB_STEP_SUMMARY
+          elif [ "${OAUTH_FAILED:-0}" -gt 0 ]; then
+            echo "3. **Gmail/Calendar users** — some emails need manual addition at [OAuth consent screen]($OAUTH_CONSOLE)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "4. **WhatsApp** (if needed) — open agent Settings → Connect WhatsApp → scan QR" >> $GITHUB_STEP_SUMMARY
+          echo "5. **Slack** (if needed) — see [setup guide](https://github.com/MoveoTech/boost-agents/blob/main/docs/agent-setup.html)" >> $GITHUB_STEP_SUMMARY

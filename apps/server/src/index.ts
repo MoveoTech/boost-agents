@@ -67,9 +67,11 @@ app.post("/api/log", (req, res) => {
   res.json({ ok: true });
 });
 
+const CAN_CREATE_AGENTS = !!process.env.GH_PAT;
+
 app.get("/api/whoami", (req, res) => {
   if (!ACCESS_PASSWORD && !API_KEY) {
-    res.json({ isAdmin: true, email: null, authenticated: true });
+    res.json({ isAdmin: true, email: null, authenticated: true, canCreateAgents: CAN_CREATE_AGENTS });
     return;
   }
   const bearer = req.headers.authorization?.startsWith("Bearer ")
@@ -78,9 +80,9 @@ app.get("/api/whoami", (req, res) => {
   const tokenToVerify = bearer ?? req.cookies[COOKIE_NAME];
   try {
     const payload = jwt.verify(tokenToVerify, COOKIE_SECRET) as { admin?: boolean; email?: string };
-    res.json({ isAdmin: !!payload.admin, email: payload.email ?? null, authenticated: true });
+    res.json({ isAdmin: !!payload.admin, email: payload.email ?? null, authenticated: true, canCreateAgents: CAN_CREATE_AGENTS });
   } catch {
-    res.json({ isAdmin: false, email: null, authenticated: false });
+    res.json({ isAdmin: false, email: null, authenticated: false, canCreateAgents: false });
   }
 });
 
@@ -562,6 +564,98 @@ function requireAdmin(req: any, res: any, next: any) {
 
 app.get("/api/admin/key", requireAdmin, (_req, res) => {
   res.json({ apiKey: API_KEY ?? "" });
+});
+
+// Trigger the create-agent.yml GitHub Actions workflow to provision a new agent repo
+app.post("/api/admin/create-agent", requireAdmin, async (req, res) => {
+  const { agentName, geminiApiKey, adminEmails, oauthEmails, anthropicApiKey, openaiApiKey } = req.body as {
+    agentName: string; geminiApiKey: string; adminEmails?: string;
+    oauthEmails?: string; anthropicApiKey?: string; openaiApiKey?: string;
+  };
+
+  if (!agentName?.trim() || !geminiApiKey?.trim()) {
+    res.status(400).json({ error: "agentName and geminiApiKey are required" });
+    return;
+  }
+
+  const ghPat = process.env.GH_PAT;
+  if (!ghPat) {
+    res.status(500).json({ error: "GH_PAT not configured on this server" });
+    return;
+  }
+
+  try {
+    const r = await fetch(
+      "https://api.github.com/repos/MoveoTech/boost-agents/actions/workflows/create-agent.yml/dispatches",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ghPat}`,
+          Accept: "application/vnd.github.v3+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ref: "main",
+          inputs: {
+            agent_name: agentName.trim(),
+            gemini_api_key: geminiApiKey.trim(),
+            admin_emails: adminEmails?.trim() ?? "",
+            oauth_emails: oauthEmails?.trim() ?? "",
+            anthropic_api_key: anthropicApiKey?.trim() ?? "",
+            openai_api_key: openaiApiKey?.trim() ?? "",
+          },
+        }),
+      }
+    );
+
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `GitHub returned ${r.status}: ${txt}` });
+      return;
+    }
+
+    const repoName = agentName.trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 30);
+
+    res.json({
+      ok: true,
+      repoName,
+      actionsUrl: "https://github.com/MoveoTech/boost-agents/actions/workflows/create-agent.yml",
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.get("/api/admin/agent-status", requireAdmin, async (req, res) => {
+  const repoName = req.query.repoName as string;
+  if (!repoName) { res.status(400).json({ error: "repoName required" }); return; }
+  const ghPat = process.env.GH_PAT;
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/MoveoTech/${repoName}/actions/runs?workflow_id=deploy.yml&branch=main&per_page=1`,
+      {
+        headers: {
+          ...(ghPat ? { Authorization: `Bearer ${ghPat}` } : {}),
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+    if (!r.ok) { res.json({ status: "pending" }); return; }
+    const data = await r.json() as any;
+    const run = data.workflow_runs?.[0];
+    if (!run) { res.json({ status: "pending" }); return; }
+    const status = run.status === "completed"
+      ? (run.conclusion === "success" ? "success" : "failed")
+      : "in_progress";
+    res.json({ status, runUrl: run.html_url });
+  } catch {
+    res.json({ status: "pending" });
+  }
 });
 
 // Apply config changes to the running server immediately (no git commit)

@@ -2,9 +2,9 @@ import type { ChatResponse, HistoryItem, AgentConfig, Automation, ChatSession, D
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 
-export async function whoami(): Promise<{ isAdmin: boolean; email: string | null; authenticated: boolean }> {
+export async function whoami(): Promise<{ isAdmin: boolean; email: string | null; authenticated: boolean; canCreateAgents: boolean }> {
   const res = await fetch(`${BASE}/api/whoami`);
-  return res.ok ? res.json() : { isAdmin: false, email: null, authenticated: false };
+  return res.ok ? res.json() : { isAdmin: false, email: null, authenticated: false, canCreateAgents: false };
 }
 
 export async function identityComplete(identityToken: string): Promise<{ isAdmin: boolean; email: string }> {
@@ -23,6 +23,27 @@ export async function getApiKey(): Promise<string> {
   if (!res.ok) return "";
   const { apiKey } = await res.json();
   return apiKey;
+}
+
+export async function createAgent(params: {
+  agentName: string; geminiApiKey: string; adminEmails?: string;
+  oauthEmails?: string; anthropicApiKey?: string; openaiApiKey?: string;
+}): Promise<{ actionsUrl: string; repoName: string }> {
+  const res = await fetch(`${BASE}/api/admin/create-agent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Request failed" }));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getAgentStatus(repoName: string): Promise<{ status: "pending" | "in_progress" | "success" | "failed"; runUrl?: string }> {
+  const res = await fetch(`${BASE}/api/admin/agent-status?repoName=${encodeURIComponent(repoName)}`);
+  return res.ok ? res.json() : { status: "pending" };
 }
 
 export async function listAutomations(): Promise<Automation[]> {

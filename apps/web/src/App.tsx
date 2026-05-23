@@ -5,6 +5,7 @@ import LoginPage from "./components/LoginPage";
 import AgentSidebar from "./components/AgentSidebar";
 import ChatHistorySidebar from "./components/ChatHistorySidebar";
 import WelcomeAnimation from "./components/WelcomeAnimation";
+import CreateAgentPage from "./components/CreateAgentPage";
 import {
   streamMessage, getConfig, whoami, getConnections, disconnectService,
   identityComplete, getUserSettings, saveUserSettings,
@@ -20,6 +21,7 @@ function getStoredDarkMode(): boolean {
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [canCreateAgents, setCanCreateAgents] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings>({});
   const [mobileTab, setMobileTab] = useState<"history" | "chat" | "settings">("chat");
@@ -65,8 +67,9 @@ export default function App() {
   }, [darkMode]);
 
   const checkSession = useCallback(() => {
-    whoami().then(({ isAdmin: a, email, authenticated }) => {
+    whoami().then(({ isAdmin: a, email, authenticated, canCreateAgents: cca }) => {
       setAuthed(authenticated);
+      setCanCreateAgents(cca);
       if (authenticated) {
         setIsAdmin(a);
         if (email) setUserEmail(email);
@@ -292,6 +295,8 @@ export default function App() {
   const modelLabel = effectiveModel?.modelId
     ? effectiveModel.modelId.replace("gemini-", "Gemini ").replace("claude-", "Claude ").replace("gpt-", "GPT-").replace("-20251001", "")
     : "Gemini 2.5 Flash";
+
+  if (canCreateAgents) return <CreateAgentPage />;
 
   return (
     <>

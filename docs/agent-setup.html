@@ -17,6 +17,8 @@
       --green-light: #ecfdf5;
       --yellow: #d97706;
       --yellow-light: #fffbeb;
+      --red: #dc2626;
+      --red-light: #fef2f2;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -107,6 +109,8 @@
     .callout-warn .callout-icon { color: var(--yellow); }
     .callout-boaz { background: #ede9fe; border: 1px solid #c4b5fd; }
     .callout-boaz .callout-icon { color: #6d28d9; }
+    .callout-limit { background: var(--red-light); border: 1px solid #fecaca; }
+    .callout-limit .callout-icon { color: var(--red); }
 
     table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 16px 0; }
     th { background: var(--bg); text-align: left; padding: 10px 12px; font-weight: 600; border: 1px solid var(--border); }
@@ -154,18 +158,7 @@
     .step-body { flex: 1; padding-top: 3px; }
     .step-body strong { display: block; font-size: 15px; margin-bottom: 4px; }
 
-    .scope-list { list-style: none; padding: 0; }
-    .scope-list li {
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-      padding: 8px 0;
-      border-bottom: 1px solid var(--border);
-      font-size: 14px;
-    }
-    .scope-list li:last-child { border-bottom: none; }
-    .scope-name { font-family: monospace; font-size: 12px; color: var(--primary); min-width: 220px; }
-
+    .cmd-table td:first-child { color: #2563eb; font-weight: 600; }
     .contact-card {
       display: flex;
       align-items: center;
@@ -177,24 +170,16 @@
       margin: 16px 0;
     }
     .contact-avatar {
-      width: 44px;
-      height: 44px;
-      border-radius: 50%;
-      background: #2563eb;
-      color: white;
-      font-size: 18px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
+      width: 44px; height: 44px; border-radius: 50%;
+      background: #2563eb; color: white;
+      font-size: 18px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     .contact-name { font-weight: 600; font-size: 15px; }
     .contact-email { font-size: 13px; color: var(--muted); }
   </style>
 </head>
 <body>
-
 <div class="layout">
   <nav class="nav">
     <div class="nav-logo">
@@ -203,42 +188,359 @@
     </div>
     <div class="nav-section-label">Getting Started</div>
     <a href="#overview">Overview</a>
-    <a href="#request">1. Request an agent</a>
-    <a href="#secrets">2. Provide secrets</a>
-    <a href="#deploy">3. Deploy (automatic)</a>
-    <a href="#configure">4. Configure</a>
-
-    <div class="nav-section-label">Delivering to Clients</div>
-    <a href="#client-delivery">Delivery checklist</a>
-    <a href="#oauth-clients">Adding OAuth clients</a>
+    <a href="#create">Creating an agent</a>
+    <a href="#configure">Configuring the agent</a>
 
     <div class="nav-section-label">Integrations</div>
+    <a href="#tools">Available tools</a>
+    <a href="#connect">Connecting services</a>
+    <a href="#whatsapp">WhatsApp connector</a>
+    <a href="#slash-ui">Slash commands (UI)</a>
+    <a href="#attachments">File attachments</a>
     <a href="#slack">Slack bot setup</a>
 
+    <div class="nav-section-label">Scale & Security</div>
+    <a href="#security">Security model</a>
+    <a href="#scale">Creating agents at scale</a>
+    <a href="#oauth-clients">Adding OAuth clients</a>
+    <a href="#client-deploy">Client deployments</a>
+
     <div class="nav-section-label">Reference</div>
-    <a href="#env-vars">All env variables</a>
+    <a href="#env-vars">Environment variables</a>
     <a href="#models">Available models</a>
-    <a href="#tools">Available tools</a>
     <a href="#api">API access</a>
   </nav>
 
   <main class="content">
     <h1>Boost Agents Setup Guide</h1>
-    <p class="subtitle">How to request, configure, and deliver an AI agent.</p>
+    <p class="subtitle">Everything you need to create, configure, and operate AI agents.</p>
 
     <!-- OVERVIEW -->
     <h2 id="overview">Overview</h2>
-    <p>Boost Agents is an internal platform for building and deploying AI agents powered by Gemini, Claude, or OpenAI. Each agent gets its own URL, a chat interface, and a configuration sidebar for admins.</p>
-    <p>Agents can connect to Gmail, Google Calendar, and Slack — and can be triggered both from the web UI and from Slack by mentioning the bot. Past conversations are saved and accessible from the history panel.</p>
+    <p>Boost Agents is a platform for deploying AI agents powered by Gemini, Claude, or OpenAI. Each agent is its own GitHub repo — push to <code>main</code> and the agent auto-deploys to a dedicated GCP project with a single URL serving both the server and the web UI.</p>
+    <p>Agents connect to Gmail, Google Calendar, Google Tasks, Monday.com, Slack, and WhatsApp. They support file attachments, slash command shortcuts, scheduled automations, persistent memory, and chat history.</p>
+
+    <!-- CREATE -->
+    <h2 id="create">Creating an agent</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <strong>Create a repo from the template</strong>
+          In GitHub, go to <a href="https://github.com/MoveoTech/boost-agents" target="_blank">MoveoTech/boost-agents</a> → <strong>Use this template → Create a new repository</strong>. Name it anything — the agent URL will use this name.
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <strong>Add the GEMINI_API_KEY repo secret</strong>
+          In the new repo: <strong>Settings → Secrets and variables → Actions → New repository secret</strong>. Add <code>GEMINI_API_KEY</code> from <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a>. All other secrets (<code>OAUTH_SERVICE_URL</code>, <code>OAUTH_SERVICE_KEY</code>, <code>GH_PAT</code>) inherit automatically from the org.
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <strong>Push to main</strong>
+          The deploy pipeline runs automatically. First deploy takes ~8 minutes (GCP provisioning). Subsequent deploys take ~2 minutes.
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <strong>Find your URL</strong>
+          GitHub → <strong>Actions</strong> tab → latest workflow run → the URL appears at the top of the summary under <em>"✦ Agent deployed"</em>. Also visible in GCP Console → Cloud Run → <code>boost-&lt;name&gt;-v7</code>.
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-warn">
+      <span class="callout-icon">⚠</span>
+      <div>If the first deploy fails, go to Actions → click the failed run → <strong>Re-run all jobs</strong>. A timing issue during GCP provisioning occasionally affects the first run only.</div>
+    </div>
+
+    <h3>Optional secrets</h3>
+    <table>
+      <thead><tr><th>Secret</th><th>When needed</th></tr></thead>
+      <tbody>
+        <tr><td>ANTHROPIC_API_KEY</td><td>Claude models</td></tr>
+        <tr><td>OPENAI_API_KEY</td><td>GPT / o1 models</td></tr>
+        <tr><td>ADMIN_EMAILS</td><td>Comma-separated emails that get admin sidebar access (defaults to all users)</td></tr>
+        <tr><td>SLACK_BOT_TOKEN</td><td>Slack integration — see <a href="#slack">Slack bot setup</a></td></tr>
+        <tr><td>SLACK_SIGNING_SECRET</td><td>Slack @mention support</td></tr>
+      </tbody>
+    </table>
+
+    <!-- CONFIGURE -->
+    <h2 id="configure">Configuring the agent</h2>
+    <p>Open the agent URL, sign in with Google. Admins see the configuration sidebar on the right.</p>
+
+    <h3>Model &amp; Instructions</h3>
+    <p>Each user picks their own model and system prompt — changes are personal. Click <strong>Publish Changes</strong> to commit the global default for all users and future deploys.</p>
+
+    <h3>Tools</h3>
+    <p>Toggle tools on/off globally. Google tools (Gmail, Calendar, Tasks) activate per-user once they connect their account — no extra admin toggle needed.</p>
+
+    <h3>Skills</h3>
+    <p>Knowledge blocks always present in the agent's context — SOPs, product docs, FAQs. Enable/disable without redeploying.</p>
+
+    <h3>Automations</h3>
+    <p>Scheduled prompts that run on a cron schedule. The agent runs using each connected user's own Gmail/Calendar access.</p>
+
+    <h3>Starter prompts</h3>
+    <p>Buttons shown on the empty chat screen. Each becomes a clickable prompt for new users.</p>
+
+    <!-- TOOLS -->
+    <h2 id="tools">Available tools</h2>
+    <table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Requires</th></tr></thead>
+      <tbody>
+        <tr><td>Web Fetch</td><td>GET any URL, return content</td><td>Nothing</td></tr>
+        <tr><td>HTTP Request</td><td>POST/PUT/PATCH to REST APIs</td><td>Nothing</td></tr>
+        <tr><td>Google Search</td><td>Web search via Gemini built-in</td><td>GEMINI_API_KEY</td></tr>
+        <tr><td>Code Execution</td><td>Run Python internally (Gemini built-in)</td><td>GEMINI_API_KEY</td></tr>
+        <tr><td>Gmail</td><td>Send emails on the user's behalf</td><td>User connects Gmail + added to OAuth</td></tr>
+        <tr><td>Google Calendar</td><td>List/create events, check availability</td><td>User connects Calendar + added to OAuth</td></tr>
+        <tr><td>Google Tasks</td><td>List, create, complete tasks</td><td>User connects Tasks + added to OAuth</td></tr>
+        <tr><td>Monday.com</td><td>Create/update/query boards, items, users</td><td>User connects Monday account</td></tr>
+        <tr><td>Slack</td><td>Send messages, list channels, @mentions</td><td>SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET</td></tr>
+        <tr><td>Memory</td><td>Persistent per-user facts across sessions</td><td>Nothing (stored in Firestore)</td></tr>
+      </tbody>
+    </table>
+
+    <!-- CONNECT -->
+    <h2 id="connect">Connecting services</h2>
+    <p>Each user connects their own accounts from the Settings sidebar. Connections are per-user and persist across sessions.</p>
+
+    <h3>Gmail &amp; Google Calendar &amp; Tasks</h3>
+    <p>Click <strong>Connect Gmail</strong> / <strong>Connect Calendar</strong> / <strong>Connect Tasks</strong> in the sidebar → Google OAuth flow. Users must be added to the OAuth test users list by Boaz — see <a href="#oauth-clients">Adding OAuth clients</a>.</p>
+
+    <h3>Monday.com</h3>
+    <p>Click <strong>Connect Monday</strong> → Monday OAuth flow. The app requests these scopes:</p>
+    <ul>
+      <li><code>boards:read</code> <code>boards:write</code> — read and write boards, items, columns, groups</li>
+      <li><code>updates:read</code> <code>updates:write</code> — read and post comments/updates</li>
+      <li><code>users:read</code> — look up user IDs for person column assignments</li>
+      <li><code>account:read</code> <code>workspaces:read</code> — account and workspace info</li>
+      <li><code>me:read</code> — current user's profile</li>
+    </ul>
+    <div class="callout callout-warn">
+      <span class="callout-icon">⚠</span>
+      <div>If Monday.com scopes change in the code, existing users must disconnect and reconnect to get the updated token with the new scopes.</div>
+    </div>
+
+    <!-- WHATSAPP -->
+    <h2 id="whatsapp">WhatsApp connector</h2>
+    <p>Each agent can be connected to a personal WhatsApp number. The bot runs as a linked device on that number using the Baileys library.</p>
+
+    <h3>Setup</h3>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <strong>Open Settings → Connect WhatsApp</strong>
+          A QR code appears. Scan it from WhatsApp on your phone: <strong>Settings → Linked devices → Link a device</strong>.
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <strong>Configure the trigger</strong>
+          Choose how the bot decides to reply: <strong>keyword</strong> (e.g. messages containing "boost"), <strong>@mention</strong>, or <strong>always</strong>. Enable <strong>ownerOnly</strong> to have the bot only respond to messages sent from the connected account itself (useful for personal assistants).
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <strong>Choose a model</strong>
+          WhatsApp defaults to Gemini 2.5 Flash. You can override per-agent in the settings.
+        </div>
+      </div>
+    </div>
+
+    <h3>Limitations</h3>
+    <div class="callout callout-limit">
+      <span class="callout-icon">⚠</span>
+      <div>
+        <strong>One WhatsApp connection per agent.</strong> Only one phone number can be linked at a time. If a second user tries to connect, they'll see "already connected to {email}".
+      </div>
+    </div>
+    <ul>
+      <li><strong>Personal number only</strong> — uses the Baileys linked device protocol, not the official WhatsApp Business API. The connected number must be a personal WhatsApp account.</li>
+      <li><strong>Session is a linked device</strong> — if the main phone logs out all linked devices (WhatsApp Settings → Linked Devices → Log out all), you'll need to re-scan the QR code.</li>
+      <li><strong>Signal session instability</strong> — groups with many participants generate a lot of Signal key exchanges. The connector auto-recovers from most errors, but occasional reconnects are normal.</li>
+      <li><strong>Attachments in quoted messages</strong> — when replying to someone else's document, the bot can download and analyze it if the CDN URL hasn't expired. If download fails, resend the file directly.</li>
+    </ul>
+
+    <h3>Supported attachments</h3>
+    <table>
+      <thead><tr><th>Type</th><th>How handled</th><th>Max size</th></tr></thead>
+      <tbody>
+        <tr><td>Images (JPG, PNG, WebP…)</td><td>Passed to LLM vision directly</td><td>10 MB</td></tr>
+        <tr><td>PDF</td><td>Passed to LLM as document block</td><td>10 MB</td></tr>
+        <tr><td>DOCX / DOC</td><td>Text extracted via mammoth, inlined</td><td>10 MB</td></tr>
+        <tr><td>TXT, CSV, JSON, MD</td><td>Decoded as UTF-8, inlined</td><td>10 MB</td></tr>
+      </tbody>
+    </table>
+    <p>Send a file with a caption containing the keyword, or reply to an existing file with the keyword — both work.</p>
+
+    <h3>WhatsApp slash commands</h3>
+    <p>Type a slash command after your keyword to expand it to a full prompt automatically. Example: <code>boost /week</code></p>
+    <table class="cmd-table">
+      <thead><tr><th>Command</th><th>Expands to</th></tr></thead>
+      <tbody>
+        <tr><td>/today</td><td>What's on my calendar and task list today?</td></tr>
+        <tr><td>/week</td><td>Show me everything on my calendar and tasks for this week.</td></tr>
+        <tr><td>/tasks</td><td>Show me all my open tasks.</td></tr>
+        <tr><td>/new-event</td><td>Create a calendar event: Title / Date / Time / Duration / Attendees / Description</td></tr>
+        <tr><td>/availability</td><td>Check my calendar availability on [date] between [time] and [time]</td></tr>
+        <tr><td>/email</td><td>Send an email: To / Subject / Message</td></tr>
+        <tr><td>/new-task</td><td>Create a task: Title / Due date / Notes</td></tr>
+        <tr><td>/monday-item</td><td>Create a Monday item: Board / Item name / Group / Work day / Working hours / Owner / Status</td></tr>
+        <tr><td>/monday-update</td><td>Update Monday item [id] on board [boardId]: Set [column] to [value]</td></tr>
+        <tr><td>/monday-find</td><td>Find Monday items on board [boardId] where [condition]</td></tr>
+      </tbody>
+    </table>
+
+    <!-- SLASH UI -->
+    <h2 id="slash-ui">Slash commands (web UI)</h2>
+    <p>Type <code>/</code> in the chat input to open the command palette. Commands insert a template into the input that you fill in before sending.</p>
+    <table class="cmd-table">
+      <thead><tr><th>Command</th><th>Category</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>/monday-item</td><td>Monday</td><td>Create a Monday.com item with all fields</td></tr>
+        <tr><td>/monday-update</td><td>Monday</td><td>Update an existing item's columns</td></tr>
+        <tr><td>/monday-find</td><td>Monday</td><td>Search for items on a board</td></tr>
+        <tr><td>/new-event</td><td>Calendar</td><td>Create a calendar event</td></tr>
+        <tr><td>/today</td><td>Calendar</td><td>Today's calendar + tasks</td></tr>
+        <tr><td>/week</td><td>Calendar</td><td>This week's schedule</td></tr>
+        <tr><td>/availability</td><td>Calendar</td><td>Check free slots</td></tr>
+        <tr><td>/email</td><td>Gmail</td><td>Compose and send an email</td></tr>
+        <tr><td>/reply-email</td><td>Gmail</td><td>Draft a reply to an email</td></tr>
+        <tr><td>/new-task</td><td>Tasks</td><td>Create a Google Task</td></tr>
+        <tr><td>/tasks</td><td>Tasks</td><td>List open tasks</td></tr>
+        <tr><td>/search</td><td>Tools</td><td>Web search</td></tr>
+        <tr><td>/image</td><td>Tools</td><td>Find an image</td></tr>
+        <tr><td>/think</td><td>Tools</td><td>Step-by-step reasoning</td></tr>
+        <tr><td>/summarize</td><td>Writing</td><td>Summarize text</td></tr>
+        <tr><td>/improve</td><td>Writing</td><td>Improve writing quality</td></tr>
+        <tr><td>/translate</td><td>Writing</td><td>Translate to another language</td></tr>
+        <tr><td>/bullets</td><td>Writing</td><td>Format as bullet points</td></tr>
+        <tr><td>/code</td><td>Dev</td><td>Write or review code</td></tr>
+        <tr><td>/debug</td><td>Dev</td><td>Debug code</td></tr>
+        <tr><td>/new</td><td>Chat</td><td>Start a new chat</td></tr>
+      </tbody>
+    </table>
+
+    <!-- ATTACHMENTS -->
+    <h2 id="attachments">File attachments</h2>
+    <table>
+      <thead><tr><th>Type</th><th>Web UI</th><th>WhatsApp</th></tr></thead>
+      <tbody>
+        <tr><td>Images (JPG, PNG, WebP, GIF…)</td><td>✅ Vision</td><td>✅ Vision</td></tr>
+        <tr><td>PDF</td><td>✅ Document block</td><td>✅ Document block</td></tr>
+        <tr><td>DOCX / DOC</td><td>✅ Text extracted</td><td>✅ Text extracted</td></tr>
+        <tr><td>TXT, MD, CSV, JSON</td><td>✅ Inlined as text</td><td>✅ Inlined as text</td></tr>
+      </tbody>
+    </table>
+    <p>Web UI limit: 20 MB (JSON body). WhatsApp limit: 10 MB per file.</p>
+    <p>In the web UI, click the paperclip icon or drag-and-drop a file. In WhatsApp, send the file with a caption containing your keyword, or reply to an existing file with your keyword.</p>
+
+    <!-- SLACK -->
+    <h2 id="slack">Slack bot setup</h2>
+    <p>Each agent can have its own Slack bot. Mention the bot to trigger the agent with full Gmail/Calendar access.</p>
+
+    <h3>Step 1 — Create a Slack app</h3>
+    <ol>
+      <li>Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → <strong>Create New App → From scratch</strong></li>
+      <li>Name it and select your workspace → <strong>Create App</strong></li>
+    </ol>
+
+    <h3>Step 2 — Add bot scopes</h3>
+    <p>Under <strong>OAuth &amp; Permissions → Bot Token Scopes</strong>, add: <code>chat:write</code>, <code>channels:read</code>, <code>groups:read</code>, <code>users:read</code>, <code>users:read.email</code></p>
+
+    <h3>Step 3 — Install and copy token</h3>
+    <p>Under <strong>OAuth &amp; Permissions</strong> → <strong>Install to Workspace</strong>. Copy the <strong>Bot User OAuth Token</strong> (<code>xoxb-...</code>) — this is <code>SLACK_BOT_TOKEN</code>.</p>
+
+    <h3>Step 4 — Enable Event Subscriptions</h3>
+    <ol>
+      <li>Toggle <strong>Enable Events</strong> on</li>
+      <li>Set Request URL to <code>https://your-agent-url/slack/events</code></li>
+      <li>Subscribe to bot event: <code>app_mention</code></li>
+      <li>Save and reinstall if prompted</li>
+    </ol>
+
+    <h3>Step 5 — Get the Signing Secret</h3>
+    <p><strong>Basic Information → App Credentials → Signing Secret → Show</strong> — this is <code>SLACK_SIGNING_SECRET</code>.</p>
+
+    <h3>Step 6 — Add repo secrets</h3>
+    <p>Add <code>SLACK_BOT_TOKEN</code> and <code>SLACK_SIGNING_SECRET</code> as GitHub repo secrets and redeploy.</p>
+
+    <h3>Step 7 — Enable Slack in the sidebar</h3>
+    <p>Log in → <strong>Tools</strong> → toggle <strong>Slack</strong> on → <strong>Publish Changes</strong>.</p>
+
+    <h3>Step 8 — Invite bot to channels</h3>
+    <p>In Slack: channel name → <strong>Integrations → Add an App</strong> → find your bot.</p>
+
+    <pre><code>@HRAgent what meetings do I have today?
+@HRAgent send a message to #general saying standup is at 10am</code></pre>
+
+    <!-- SECURITY -->
+    <h2 id="security">Security model</h2>
+    <p>All agents share a central oauth-service running in <code>boost-agents-496211</code>. Data is separated by <code>agentId</code> (= the GCP project name) in Firestore. Access is enforced at the API level — each agent gets a unique scoped key.</p>
+
+    <h3>How per-agent keys work</h3>
+    <ul>
+      <li>The <strong>master key</strong> (<code>OAUTH_SERVICE_KEY</code> org secret) is used only by CI/CD and the oauth-service itself — never given to agents or clients.</li>
+      <li>On first deploy, CI/CD calls <code>POST /api/agent-keys</code> with the master key to provision a unique key for the new agent, stores it in that agent's GCP Secret Manager, and injects it as <code>OAUTH_SERVICE_KEY</code> in Cloud Run.</li>
+      <li>A per-agent key can only access data for its own <code>agentId</code>. Attempting to read another agent's data returns 403.</li>
+      <li>A leaked per-agent key exposes only that one agent's data — not the entire platform.</li>
+    </ul>
+
+    <h3>What's still shared</h3>
+    <ul>
+      <li>Firestore database (data isolated by agentId, but same quota pool)</li>
+      <li>oauth-service Cloud Run instance (single point of failure)</li>
+    </ul>
+    <p>For clients requiring full infrastructure isolation, see <a href="#client-deploy">Client deployment options</a>.</p>
+
+    <!-- SCALE -->
+    <h2 id="scale">Creating agents at scale</h2>
+    <p>With org-level secrets in place, creating a new agent is three steps:</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <strong>Create repo from template</strong>
+          <a href="https://github.com/MoveoTech/boost-agents" target="_blank">MoveoTech/boost-agents</a> → <strong>Use this template</strong>.
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <strong>Add GEMINI_API_KEY</strong>
+          Repo → Settings → Secrets → New repository secret → <code>GEMINI_API_KEY</code>. Add any other optional API keys (Anthropic, OpenAI, Slack) if needed.
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <strong>Push to main</strong>
+          CI/CD provisions the GCP project, per-agent OAuth key, builds the image, and deploys. URL appears in Actions summary.
+        </div>
+      </div>
+    </div>
 
     <div class="callout callout-info">
       <span class="callout-icon">ℹ</span>
-      <div>The platform is managed centrally. Creating a new agent is a request you make to <strong>Boaz Thaller</strong> — you don't need to touch GitHub or GCP yourself.</div>
+      <div>Each agent's per-agent OAuth key is auto-generated and stored in the agent's own GCP Secret Manager (<code>oauth-agent-key</code>). You don't manage these keys manually.</div>
     </div>
 
-    <!-- REQUEST -->
-    <h2 id="request">1. Request an agent</h2>
-    <p>Send the following to Boaz to get a new agent created:</p>
+    <h3>Customising the agent</h3>
+    <p>Edit <code>apps/server/src/config.ts</code> in the child repo to set the agent name, system prompt, enabled tools, model, and UI settings. Push to main to redeploy with the new config.</p>
+
+    <!-- OAUTH CLIENTS -->
+    <h2 id="oauth-clients">Adding OAuth clients</h2>
+    <p>For users to connect Gmail, Calendar, or Tasks, their email must be added to the OAuth consent screen. <strong>Only Boaz can do this.</strong></p>
 
     <div class="contact-card">
       <div class="contact-avatar">B</div>
@@ -248,293 +550,47 @@
       </div>
     </div>
 
-    <p>Include in your request:</p>
-    <ul>
-      <li><strong>Agent name</strong> — e.g. <em>Acme HR Assistant</em></li>
-      <li><strong>Your email</strong> — you'll be added as an admin</li>
-      <li><strong>Client emails</strong> (if any) — anyone else who needs admin access</li>
-      <li><strong>AI provider preference</strong> — Gemini (default), Claude, or OpenAI</li>
-      <li><strong>Which tools to enable</strong> — Gmail, Calendar, Slack, Web Fetch, etc.</li>
-    </ul>
-
-    <!-- SECRETS -->
-    <h2 id="secrets">2. Provide secrets</h2>
-    <p>Boaz will create the GitHub repo and ask you for the following. Some are inherited automatically — you only need to provide the ones marked <span class="badge badge-required">Required</span>.</p>
-
-    <table>
-      <thead>
-        <tr><th>Secret</th><th>Required</th><th>Where to get it</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>GEMINI_API_KEY</td>
-          <td><span class="badge badge-required">Required</span></td>
-          <td><a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a> → Get API key</td>
-        </tr>
-        <tr>
-          <td>API_KEY</td>
-          <td><span class="badge badge-required">Required</span></td>
-          <td>Any long random string — used for programmatic API access</td>
-        </tr>
-        <tr>
-          <td>ADMIN_EMAILS</td>
-          <td><span class="badge badge-required">Required</span></td>
-          <td>Semicolon-separated admin emails, e.g. <code>you@company.com;client@acme.com</code></td>
-        </tr>
-        <tr>
-          <td>COOKIE_SECRET</td>
-          <td><span class="badge badge-required">Required</span></td>
-          <td>Any long random string (32+ chars) — secures user sessions</td>
-        </tr>
-        <tr>
-          <td>GH_PAT</td>
-          <td><span class="badge badge-auto">Auto</span></td>
-          <td>Inherited from org — no action needed</td>
-        </tr>
-        <tr>
-          <td>OAUTH_SERVICE_URL</td>
-          <td><span class="badge badge-auto">Auto</span></td>
-          <td>Inherited from org — no action needed</td>
-        </tr>
-        <tr>
-          <td>OAUTH_SERVICE_KEY</td>
-          <td><span class="badge badge-auto">Auto</span></td>
-          <td>Inherited from org — no action needed</td>
-        </tr>
-        <tr>
-          <td>AUTOMATION_SECRET</td>
-          <td><span class="badge badge-auto">Auto</span></td>
-          <td>Inherited from org — no action needed</td>
-        </tr>
-        <tr>
-          <td>ANTHROPIC_API_KEY</td>
-          <td><span class="badge badge-optional">Optional</span></td>
-          <td><a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> — only for Claude models</td>
-        </tr>
-        <tr>
-          <td>OPENAI_API_KEY</td>
-          <td><span class="badge badge-optional">Optional</span></td>
-          <td><a href="https://platform.openai.com" target="_blank">platform.openai.com</a> — only for GPT/o1 models</td>
-        </tr>
-        <tr>
-          <td>SLACK_BOT_TOKEN</td>
-          <td><span class="badge badge-optional">Optional</span></td>
-          <td>From your Slack app — see <a href="#slack">Slack setup</a></td>
-        </tr>
-        <tr>
-          <td>SLACK_SIGNING_SECRET</td>
-          <td><span class="badge badge-optional">Optional</span></td>
-          <td>From your Slack app — see <a href="#slack">Slack setup</a></td>
-        </tr>
-      </tbody>
-    </table>
-
-    <!-- DEPLOY -->
-    <h2 id="deploy">3. Deploy (automatic)</h2>
-    <p>Once Boaz adds the secrets to the repo, the deployment runs <strong>automatically</strong>. You don't need to do anything. The pipeline:</p>
     <ol>
-      <li>Provisions a new GCP project for this agent</li>
-      <li>Builds the server and web app</li>
-      <li>Deploys to Cloud Run — a single URL serves everything</li>
+      <li>GCP Console → project <strong>boost-agents-496211</strong></li>
+      <li><strong>APIs &amp; Services → OAuth consent screen</strong></li>
+      <li><strong>Test users → + Add users</strong> → enter the client's Gmail address</li>
     </ol>
-
-    <p>The whole process takes about <strong>5–8 minutes</strong> on first deploy, ~2 minutes on subsequent deploys.</p>
-
-    <h3>Finding your agent URL</h3>
-    <p>After the deploy finishes, the URL appears in two places:</p>
-
-    <div class="steps">
-      <div class="step">
-        <div class="step-num">1</div>
-        <div class="step-body">
-          <strong>GitHub Actions summary (easiest)</strong>
-          Open the repo on GitHub → <strong>Actions</strong> tab → click the latest workflow run → the URL is shown prominently at the top of the summary page under <em>"✦ Agent deployed"</em>.
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">2</div>
-        <div class="step-body">
-          <strong>GCP Console</strong>
-          Go to <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> → select the agent's GCP project (named <code>boost-&lt;agent-name&gt;-v7</code>) → Cloud Run → click the service → the URL is shown at the top.
-        </div>
-      </div>
-    </div>
-
     <div class="callout callout-warn">
       <span class="callout-icon">⚠</span>
-      <div>If the first run fails, just go to GitHub Actions → click the failed run → <strong>Re-run all jobs</strong>. A timing issue during GCP provisioning occasionally causes the first run to fail; the second always succeeds.</div>
+      <div>Maximum 100 test users total. For larger deployments, contact Boaz about moving to production OAuth.</div>
     </div>
 
-    <!-- CONFIGURE -->
-    <h2 id="configure">4. Configure the agent</h2>
-    <p>Open the agent URL and sign in with Google. As an admin you'll see the configuration sidebar on the right.</p>
-
-    <h3>Model</h3>
-    <p>Each user picks their own preferred model — changes are personal and don't affect other users. Available models depend on which API keys were provided. Admins can click <strong>Publish Changes</strong> to set the global default.</p>
-
-    <h3>Instructions</h3>
-    <p>The agent's system prompt — its role, personality, and constraints. Changes are personal by default. Publish to make them the global baseline for all users.</p>
-
-    <h3>Tools</h3>
-    <p>Admins enable or disable tools globally. Google tools (Gmail, Calendar) activate automatically once a user connects their account — no extra toggle needed.</p>
-
-    <h3>Connections</h3>
-    <p>Each user connects their own Google account via the Connect link in the sidebar. Once connected, Gmail and Calendar work immediately and stay connected across sessions.</p>
-
-    <h3>Skills</h3>
-    <p>Knowledge blocks added to the agent's context. Use for SOPs, product docs, FAQs — anything the agent should always know. Enable/disable without redeploying. The agent uses them automatically when relevant.</p>
-
-    <h3>Automations</h3>
-    <p>Scheduled tasks that run on a cron or a specific one-time datetime. The agent runs the prompt for every connected user at the scheduled time, using their own Gmail/Calendar access. Each automation shows a tag with who created it.</p>
-
-    <h3>Chat history</h3>
-    <p>All conversations are saved automatically. The history panel on the left lists past chats — click any to resume. A new empty chat opens by default when you load the app.</p>
-
-    <h3>Publish Changes</h3>
-    <p>Commits the global config to GitHub. Changes to model and instructions take effect immediately in your own session — publishing makes them the permanent default for all users and future deploys.</p>
-
-    <!-- CLIENT DELIVERY -->
-    <h2 id="client-delivery">Delivering to a client</h2>
-    <div class="steps">
-      <div class="step">
-        <div class="step-num">1</div>
-        <div class="step-body">
-          <strong>Request the agent</strong>
-          Send Boaz the agent name, admin emails, and any API keys needed. He'll create the repo and add secrets.
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">2</div>
-        <div class="step-body">
-          <strong>Add client users to OAuth</strong>
-          For clients to connect Gmail or Calendar, Boaz must add their email to the OAuth test users list. See <a href="#oauth-clients">Adding OAuth clients</a>.
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">3</div>
-        <div class="step-body">
-          <strong>Configure the agent</strong>
-          Log in, write the system prompt, enable tools, add skills. Click Publish Changes.
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">4</div>
-        <div class="step-body">
-          <strong>Send the URL to the client</strong>
-          One URL — the client signs in with Google, connects their services, and starts chatting.
-        </div>
-      </div>
-    </div>
-
-    <!-- OAUTH CLIENTS -->
-    <h2 id="oauth-clients">Adding OAuth clients</h2>
-    <p>For users to connect their Gmail or Google Calendar to the agent, their email must be added to the OAuth consent screen. <strong>Only Boaz can do this.</strong></p>
-
-    <div class="callout callout-boaz">
-      <span class="callout-icon">★</span>
-      <div>Contact <strong>Boaz Thaller</strong> at <a href="mailto:boazt@moveoboost.com">boazt@moveoboost.com</a> with the list of email addresses that need Google service access.</div>
-    </div>
-
-    <h3>What Boaz does</h3>
-    <ol>
-      <li>Go to <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> → select project <strong>boost-agents-496211</strong></li>
-      <li>Navigate to <strong>APIs &amp; Services → OAuth consent screen</strong></li>
-      <li>Scroll to <strong>Test users</strong> → click <strong>+ Add users</strong></li>
-      <li>Enter the client's Gmail address and save</li>
-    </ol>
-
-    <div class="callout callout-warn">
-      <span class="callout-icon">⚠</span>
-      <div>Maximum 100 test users total across all agents. For larger deployments, contact Boaz to discuss options.</div>
-    </div>
-
-    <p>Note: users can still log in to the agent and use it without being added here. The Google service connection (Gmail, Calendar) is the only thing that requires this step.</p>
-
-    <!-- SLACK -->
-    <h2 id="slack">Slack bot setup</h2>
-    <p>Each agent can have its own Slack bot. Users can ask the agent to send Slack messages from the chat, and can also <strong>@mention the bot</strong> directly in Slack to trigger the agent — with full access to Gmail, Calendar, and all other tools.</p>
-
-    <h3>Step 1 — Create a Slack app</h3>
-    <ol>
-      <li>Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → <strong>Create New App → From scratch</strong></li>
-      <li>Name it (e.g. <em>HR Agent</em>) and select your workspace → <strong>Create App</strong></li>
-    </ol>
-
-    <h3>Step 2 — Add bot scopes</h3>
-    <p>Under <strong>OAuth &amp; Permissions → Bot Token Scopes</strong>, add:</p>
-    <table>
-      <thead><tr><th>Scope</th><th>Why</th></tr></thead>
-      <tbody>
-        <tr><td>chat:write</td><td>Post messages to channels</td></tr>
-        <tr><td>channels:read</td><td>List public channels</td></tr>
-        <tr><td>groups:read</td><td>List private channels (optional)</td></tr>
-        <tr><td>users:read</td><td>Look up Slack users by ID</td></tr>
-        <tr><td>users:read.email</td><td>Match Slack user to their Gmail/Calendar connection</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Step 3 — Install the app</h3>
-    <p>Under <strong>OAuth &amp; Permissions</strong> → click <strong>Install to Workspace</strong>. Copy the <strong>Bot User OAuth Token</strong> (<code>xoxb-...</code>) — this is your <code>SLACK_BOT_TOKEN</code>.</p>
-
-    <h3>Step 4 — Enable Event Subscriptions</h3>
-    <ol>
-      <li>Under <strong>Event Subscriptions</strong>, toggle <strong>Enable Events</strong> on</li>
-      <li>Set Request URL to <code>https://your-agent-url/slack/events</code> — Slack will verify it automatically once your agent is deployed</li>
-      <li>Under <strong>Subscribe to bot events</strong>, add <code>app_mention</code></li>
-      <li>Save changes and reinstall the app if prompted</li>
-    </ol>
-
-    <h3>Step 5 — Get the Signing Secret</h3>
-    <p>Go to <strong>Basic Information → App Credentials → Signing Secret → Show</strong>. This is your <code>SLACK_SIGNING_SECRET</code>.</p>
-
-    <h3>Step 6 — Add repo secrets</h3>
-    <p>Send Boaz the two values so he can add them as repo secrets: <code>SLACK_BOT_TOKEN</code> and <code>SLACK_SIGNING_SECRET</code>.</p>
-
-    <h3>Step 7 — Enable Slack in the agent sidebar</h3>
-    <p>Log in to the agent → <strong>Tools</strong> → toggle <strong>Slack</strong> on → <strong>Publish Changes</strong>.</p>
-
-    <h3>Step 8 — Invite the bot to channels</h3>
-    <p>In Slack, open the channel → click the channel name → <strong>Integrations → Add an App</strong> → search for your bot name.</p>
-
-    <h3>Using the bot</h3>
-    <pre><code>@HRAgent send an email to john@acme.com with today's agenda
-@HRAgent what meetings do I have this afternoon?
-@HRAgent send a message to #general saying the standup is at 10am</code></pre>
-    <p>The bot replies in-thread. It matches your Slack email to your connected Gmail/Calendar, so each person gets personalised access. If you haven't connected via the web UI yet, the bot will prompt you to do so.</p>
-
-    <div class="callout callout-info">
-      <span class="callout-icon">ℹ</span>
-      <div>Each agent has its own Slack app and bot. If you have three agents, you create three Slack apps — each pointing to its own agent URL.</div>
-    </div>
+    <!-- CLIENT DEPLOY -->
+    <h2 id="client-deploy">Client deployment options</h2>
+    <p>For clients who require their data to be hosted in their own GCP environment (full isolation, no shared Firestore), see the dedicated guide:</p>
+    <p><a href="client-hosted-deployment.html">→ Client-hosted deployment options (Option B &amp; C)</a></p>
 
     <!-- ENV VARS -->
-    <h2 id="env-vars">All environment variables</h2>
+    <h2 id="env-vars">Environment variables</h2>
     <table>
-      <thead>
-        <tr><th>Variable</th><th>Required</th><th>Description</th></tr>
-      </thead>
+      <thead><tr><th>Variable</th><th>Status</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td>GEMINI_API_KEY</td><td><span class="badge badge-required">Required</span></td><td>Google AI Studio key. Required for Gemini models.</td></tr>
-        <tr><td>API_KEY</td><td><span class="badge badge-required">Required</span></td><td>Admin API key for programmatic access (<code>x-api-key</code> header).</td></tr>
-        <tr><td>ADMIN_EMAILS</td><td><span class="badge badge-required">Required</span></td><td>Semicolon-separated emails with admin sidebar access.</td></tr>
-        <tr><td>COOKIE_SECRET</td><td><span class="badge badge-required">Required</span></td><td>Long random string to sign session cookies securely.</td></tr>
-        <tr><td>ANTHROPIC_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>Required for Claude models.</td></tr>
-        <tr><td>OPENAI_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>Required for GPT and o1 models.</td></tr>
-        <tr><td>SLACK_BOT_TOKEN</td><td><span class="badge badge-optional">Optional</span></td><td>Bot User OAuth Token (<code>xoxb-...</code>). Required for Slack tools and @mentions.</td></tr>
-        <tr><td>SLACK_SIGNING_SECRET</td><td><span class="badge badge-optional">Optional</span></td><td>Verifies incoming Slack events. Required for @mention support.</td></tr>
-        <tr><td>GH_PAT</td><td><span class="badge badge-auto">Auto</span></td><td>GitHub PAT for committing config changes. Org secret.</td></tr>
-        <tr><td>OAUTH_SERVICE_URL</td><td><span class="badge badge-auto">Auto</span></td><td>URL of the central oauth-service. Org secret.</td></tr>
-        <tr><td>OAUTH_SERVICE_KEY</td><td><span class="badge badge-auto">Auto</span></td><td>Signing key for Google token JWTs. Org secret.</td></tr>
-        <tr><td>AUTOMATION_SECRET</td><td><span class="badge badge-auto">Auto</span></td><td>Secures Cloud Scheduler webhook calls. Org secret.</td></tr>
+        <tr><td>GEMINI_API_KEY</td><td><span class="badge badge-required">Required</span></td><td>Google AI Studio key. <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a></td></tr>
+        <tr><td>ANTHROPIC_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>Claude models. <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></td></tr>
+        <tr><td>OPENAI_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>GPT / o1 models. <a href="https://platform.openai.com" target="_blank">platform.openai.com</a></td></tr>
+        <tr><td>ADMIN_EMAILS</td><td><span class="badge badge-optional">Optional</span></td><td>Comma/semicolon-separated emails with admin sidebar access.</td></tr>
+        <tr><td>SLACK_BOT_TOKEN</td><td><span class="badge badge-optional">Optional</span></td><td>Bot User OAuth Token (<code>xoxb-...</code>). Required for Slack.</td></tr>
+        <tr><td>SLACK_SIGNING_SECRET</td><td><span class="badge badge-optional">Optional</span></td><td>Verifies Slack event payloads. Required for @mentions.</td></tr>
+        <tr><td>JINA_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>Jina AI reader for enhanced web fetch.</td></tr>
+        <tr><td>GH_PAT</td><td><span class="badge badge-auto">Org secret</span></td><td>GitHub PAT for committing config changes via the UI.</td></tr>
+        <tr><td>OAUTH_SERVICE_URL</td><td><span class="badge badge-auto">Org secret</span></td><td>URL of the central oauth-service.</td></tr>
+        <tr><td>OAUTH_SERVICE_KEY</td><td><span class="badge badge-auto">Auto-provisioned</span></td><td>Per-agent scoped key, generated during first deploy and stored in GCP Secret Manager. Do not set manually.</td></tr>
+        <tr><td>API_KEY</td><td><span class="badge badge-auto">Auto-generated</span></td><td>Admin key for programmatic API access. Auto-generated, stored in Secret Manager.</td></tr>
+        <tr><td>COOKIE_SECRET</td><td><span class="badge badge-auto">Auto-generated</span></td><td>Signs user session cookies. Auto-generated, stored in Secret Manager.</td></tr>
+        <tr><td>AUTOMATION_SECRET</td><td><span class="badge badge-auto">Auto-generated</span></td><td>Secures Cloud Scheduler webhook calls. Auto-generated.</td></tr>
+        <tr><td>GOOGLE_CLOUD_PROJECT</td><td><span class="badge badge-auto">Auto-set</span></td><td>The agent's GCP project ID (<code>boost-&lt;name&gt;-v7</code>). Set by CI/CD.</td></tr>
       </tbody>
     </table>
 
     <!-- MODELS -->
     <h2 id="models">Available models</h2>
     <table>
-      <thead>
-        <tr><th>Model ID</th><th>Provider</th><th>Required secret</th><th>Notes</th></tr>
-      </thead>
+      <thead><tr><th>Model ID</th><th>Provider</th><th>Secret needed</th><th>Notes</th></tr></thead>
       <tbody>
         <tr><td>gemini-2.5-flash</td><td>Gemini</td><td>GEMINI_API_KEY</td><td>Default. Fast and capable.</td></tr>
         <tr><td>gemini-2.5-pro</td><td>Gemini</td><td>GEMINI_API_KEY</td><td>More reasoning, slower.</td></tr>
@@ -549,25 +605,9 @@
       </tbody>
     </table>
 
-    <!-- TOOLS -->
-    <h2 id="tools">Available tools</h2>
-    <table>
-      <thead>
-        <tr><th>Tool</th><th>What it does</th><th>Requires</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Web Fetch</td><td>GET any URL and read its content</td><td>Nothing</td></tr>
-        <tr><td>HTTP Request</td><td>POST/PUT/PATCH to REST APIs</td><td>Nothing</td></tr>
-        <tr><td>Google Search</td><td>Search the web via Gemini built-in</td><td>GEMINI_API_KEY</td></tr>
-        <tr><td>Gmail</td><td>Send emails on the user's behalf</td><td>User connects Gmail account + Boaz adds them to OAuth</td></tr>
-        <tr><td>Google Calendar</td><td>List events, create events, check availability</td><td>User connects Calendar account + Boaz adds them to OAuth</td></tr>
-        <tr><td>Slack</td><td>Send messages, list channels, respond to @mentions</td><td>SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET</td></tr>
-      </tbody>
-    </table>
-
     <!-- API -->
     <h2 id="api">API access</h2>
-    <p>The agent exposes a REST API. Authenticate with the <code>x-api-key</code> header.</p>
+    <p>Authenticate with the <code>x-api-key</code> header using the agent's <code>API_KEY</code> (find it in GCP Secret Manager → <code>api-key</code>).</p>
 
     <h3>Basic request</h3>
     <pre><code>curl -X POST https://your-agent-url/api/chat \
@@ -576,13 +616,23 @@
   -d '{"message": "Hello!", "history": []}'</code></pre>
 
     <h3>With Gmail / Calendar access</h3>
-    <p>Pass <code>userEmail</code> to tell the agent which connected user's Google account to use:</p>
     <pre><code>curl -X POST https://your-agent-url/api/chat \
   -H "Content-Type: application/json" \
   -H "x-api-key: YOUR_API_KEY" \
-  -d '{"message": "What meetings do I have today?", "history": [], "userEmail": "user@example.com"}'</code></pre>
+  -d '{
+    "message": "What meetings do I have today?",
+    "history": [],
+    "userEmail": "user@example.com"
+  }'</code></pre>
 
-    <h3>Response format</h3>
+    <h3>Streaming</h3>
+    <pre><code>curl -X POST https://your-agent-url/api/chat \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"message": "Summarize my emails", "history": [], "stream": true}'</code></pre>
+    <p>Streaming returns <code>text/event-stream</code> with <code>data: {type, content}</code> lines. Types: <code>token</code>, <code>tool_start</code>, <code>tool_complete</code>, <code>done</code>, <code>error</code>.</p>
+
+    <h3>Response format (non-streaming)</h3>
     <pre><code>{
   "reply": "You have 3 meetings today…",
   "toolUses": [
@@ -592,6 +642,5 @@
 
   </main>
 </div>
-
 </body>
 </html>

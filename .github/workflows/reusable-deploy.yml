@@ -141,7 +141,32 @@ jobs:
           echo "COOKIE_SECRET=$(fetch cookie-secret)" >> $GITHUB_ENV
           echo "AUTOMATION_SECRET=$(fetch automation-secret)" >> $GITHUB_ENV
 
-      # 5. BUILD WEB then BUILD & DEPLOY single image
+      # 5. PROVISION PER-AGENT OAUTH KEY (idempotent — skipped if already exists)
+      - name: Provision per-agent OAuth key
+        run: |
+          PROJECT="${{ steps.provision.outputs.project_id }}"
+          # Check if key already stored in this agent's Secret Manager
+          if gcloud secrets versions access latest --secret="oauth-agent-key" --project="$PROJECT" 2>/dev/null; then
+            AGENT_OAUTH_KEY=$(gcloud secrets versions access latest --secret="oauth-agent-key" --project="$PROJECT")
+            echo "Per-agent OAuth key already exists — reusing"
+          else
+            # Provision a new scoped key from the oauth-service
+            AGENT_OAUTH_KEY=$(curl -sf -X POST "${{ secrets.OAUTH_SERVICE_URL }}/api/agent-keys" \
+              -H "x-api-key: ${{ secrets.OAUTH_SERVICE_KEY }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"agentId\":\"$PROJECT\"}" | jq -r '.apiKey')
+            if [ -z "$AGENT_OAUTH_KEY" ] || [ "$AGENT_OAUTH_KEY" = "null" ]; then
+              echo "Failed to provision per-agent key — falling back to master key"
+              AGENT_OAUTH_KEY="${{ secrets.OAUTH_SERVICE_KEY }}"
+            else
+              echo -n "$AGENT_OAUTH_KEY" | gcloud secrets create oauth-agent-key \
+                --data-file=- --replication-policy=automatic --project="$PROJECT"
+              echo "Per-agent OAuth key provisioned and stored"
+            fi
+          fi
+          echo "AGENT_OAUTH_KEY=$AGENT_OAUTH_KEY" >> $GITHUB_ENV
+
+      # 6. BUILD WEB then BUILD & DEPLOY single image
       - name: Build Web App
         run: |
           cd apps/web
@@ -174,7 +199,7 @@ jobs:
             GH_PAT=${{ secrets.GH_PAT }}
             GITHUB_REPO=${{ github.repository }}
             OAUTH_SERVICE_URL=${{ secrets.OAUTH_SERVICE_URL }}
-            OAUTH_SERVICE_KEY=${{ secrets.OAUTH_SERVICE_KEY }}
+            OAUTH_SERVICE_KEY=${{ env.AGENT_OAUTH_KEY }}
             ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
             ADMIN_EMAILS=${{ secrets.ADMIN_EMAILS }}

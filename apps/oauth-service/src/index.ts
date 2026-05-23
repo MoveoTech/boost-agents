@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { Firestore } from "@google-cloud/firestore";
 import jwt from "jsonwebtoken";
+import { randomUUID } from "crypto";
 
 const app = express();
 app.use(cors());
@@ -15,6 +16,33 @@ const OAUTH_SERVICE_KEY = process.env.OAUTH_SERVICE_KEY!;
 const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID || "boost-agents-496211";
 
 const db = new Firestore({ projectId: GCP_PROJECT_ID });
+
+// ── Per-agent key auth ────────────────────────────────────────────────────────
+// Each deployed agent has a unique key scoped to its own agentId.
+// The master OAUTH_SERVICE_KEY (org secret, never given to clients) bypasses the
+// scope check so CI/CD and the oauth-service itself retain unrestricted access.
+
+const agentKeyCache = new Map<string, { agentId: string; ts: number }>();
+const AGENT_KEY_CACHE_TTL = 5 * 60_000; // 5 minutes
+
+async function verifyAgentKey(req: express.Request, res: express.Response, agentId: string): Promise<boolean> {
+  const apiKey = req.headers["x-api-key"] as string | undefined;
+  if (!apiKey) { res.status(401).json({ error: "Unauthorized" }); return false; }
+  // Master key — unrestricted
+  if (apiKey === OAUTH_SERVICE_KEY) return true;
+  // Per-agent key — check cache first, then Firestore
+  const cached = agentKeyCache.get(apiKey);
+  if (cached && Date.now() - cached.ts < AGENT_KEY_CACHE_TTL) {
+    if (cached.agentId !== agentId) { res.status(403).json({ error: "Forbidden" }); return false; }
+    return true;
+  }
+  const snap = await db.collection("agent_keys").where("apiKey", "==", apiKey).limit(1).get();
+  if (snap.empty) { res.status(401).json({ error: "Unauthorized" }); return false; }
+  const keyAgentId = snap.docs[0].data().agentId as string;
+  agentKeyCache.set(apiKey, { agentId: keyAgentId, ts: Date.now() });
+  if (keyAgentId !== agentId) { res.status(403).json({ error: "Forbidden" }); return false; }
+  return true;
+}
 
 const SERVICE_SCOPES: Record<string, string> = {
   gmail: [
@@ -137,10 +165,7 @@ app.get("/auth/google/callback", async (req, res) => {
 // Agents call this to get a fresh access token
 // GET /api/access-token/:service/:agentId/:userId
 app.get("/api/access-token/:service/:agentId/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
 
   const { service, agentId, userId } = req.params;
 
@@ -192,10 +217,7 @@ app.get("/api/access-token/:service/:agentId/:userId", async (req, res) => {
 // Issues a signed API token for a connected user
 // GET /api/user-token/:agentId/:service/:userId
 app.get("/api/user-token/:agentId/:service/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, service, userId } = req.params;
   try {
     const doc = await db.collection(`${service}_tokens`).doc(agentId).collection("users").doc(userId).get();
@@ -280,7 +302,7 @@ app.get("/auth/monday/callback", async (req, res) => {
 
 // Per-user settings (model preference, personal instructions, avatar)
 app.get("/api/user-settings/:agentId/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId } = req.params;
   try {
     const doc = await db.collection("user_settings").doc(agentId).collection("users").doc(userId).get();
@@ -289,7 +311,7 @@ app.get("/api/user-settings/:agentId/:userId", async (req, res) => {
 });
 
 app.put("/api/user-settings/:agentId/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId } = req.params;
   try {
     await db.collection("user_settings").doc(agentId).collection("users").doc(userId).set(req.body, { merge: true });
@@ -304,7 +326,7 @@ function chatRef(agentId: string, email: string) {
 }
 
 app.get("/api/chats/:agentId/:email", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, email } = req.params;
   try {
     const snap = await chatRef(agentId, email).orderBy("updatedAt", "desc").limit(50).get();
@@ -317,7 +339,7 @@ app.get("/api/chats/:agentId/:email", async (req, res) => {
 });
 
 app.post("/api/chats/:agentId/:email", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, email } = req.params;
   const { title = "New Chat" } = req.body as { title?: string };
   try {
@@ -328,7 +350,7 @@ app.post("/api/chats/:agentId/:email", async (req, res) => {
 });
 
 app.get("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, email, sessionId } = req.params;
   try {
     const doc = await chatRef(agentId, email).doc(sessionId).get();
@@ -338,7 +360,7 @@ app.get("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
 });
 
 app.put("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, email, sessionId } = req.params;
   try {
     await chatRef(agentId, email).doc(sessionId).set({ ...req.body, updatedAt: new Date() }, { merge: true });
@@ -347,7 +369,7 @@ app.put("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
 });
 
 app.delete("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, email, sessionId } = req.params;
   try {
     await chatRef(agentId, email).doc(sessionId).delete();
@@ -357,10 +379,7 @@ app.delete("/api/chats/:agentId/:email/:sessionId", async (req, res) => {
 
 // Disconnects a user from a service
 app.delete("/api/users/:agentId/:service/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, service, userId } = req.params;
   try {
     await db.collection(`${service}_tokens`).doc(agentId).collection("users").doc(userId).delete();
@@ -372,10 +391,7 @@ app.delete("/api/users/:agentId/:service/:userId", async (req, res) => {
 
 // Returns all users connected for any service in this agent
 app.get("/api/users/:agentId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId } = req.params;
   try {
     const services = ["gmail", "calendar", "monday", "tasks"] as const;
@@ -400,7 +416,7 @@ function memRef(agentId: string, email: string) {
 }
 
 app.get("/api/memories/:agentId/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId } = req.params;
   try {
     const doc = await memRef(agentId, userId).get();
@@ -409,7 +425,7 @@ app.get("/api/memories/:agentId/:userId", async (req, res) => {
 });
 
 app.get("/api/memories/:agentId/:userId/:key", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId, key } = req.params;
   try {
     const doc = await memRef(agentId, userId).get();
@@ -420,7 +436,7 @@ app.get("/api/memories/:agentId/:userId/:key", async (req, res) => {
 });
 
 app.put("/api/memories/:agentId/:userId/:key", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId, key } = req.params;
   const { value } = req.body as { value: string };
   try {
@@ -430,7 +446,7 @@ app.put("/api/memories/:agentId/:userId/:key", async (req, res) => {
 });
 
 app.delete("/api/memories/:agentId/:userId/:key", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId, key } = req.params;
   try {
     const { FieldValue } = await import("@google-cloud/firestore");
@@ -446,7 +462,7 @@ function waRef(agentId: string, userId: string) {
 }
 
 app.get("/api/whatsapp/:agentId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId } = req.params;
   try {
     const snap = await db.collection("whatsapp").doc(agentId).collection("sessions").get();
@@ -455,7 +471,7 @@ app.get("/api/whatsapp/:agentId", async (req, res) => {
 });
 
 app.get("/api/whatsapp/:agentId/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId } = req.params;
   try {
     const snap = await waRef(agentId, userId).get();
@@ -465,7 +481,7 @@ app.get("/api/whatsapp/:agentId/:userId", async (req, res) => {
 });
 
 app.put("/api/whatsapp/:agentId/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId } = req.params;
   const { creds, keys } = req.body as { creds: string; keys: string };
   try {
@@ -475,7 +491,7 @@ app.put("/api/whatsapp/:agentId/:userId", async (req, res) => {
 });
 
 app.patch("/api/whatsapp/:agentId/:userId/config", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId } = req.params;
   const { config } = req.body as { config: string };
   try {
@@ -485,7 +501,7 @@ app.patch("/api/whatsapp/:agentId/:userId/config", async (req, res) => {
 });
 
 app.delete("/api/whatsapp/:agentId/:userId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId, userId } = req.params;
   try {
     // Preserve config settings — only wipe session credentials
@@ -507,7 +523,7 @@ function feedbackRef(agentId: string) {
 }
 
 app.post("/api/feedback/:agentId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId } = req.params;
   const { messageId, userEmail, rating, userMessage, agentResponse, model } = req.body as {
     messageId: string; userEmail: string; rating: number;
@@ -527,7 +543,7 @@ app.post("/api/feedback/:agentId", async (req, res) => {
 });
 
 app.get("/api/feedback/:agentId", async (req, res) => {
-  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
   const { agentId } = req.params;
   const { rating } = req.query;
   try {
@@ -535,6 +551,41 @@ app.get("/api/feedback/:agentId", async (req, res) => {
     if (rating !== undefined) query = query.where("rating", "==", Number(rating));
     const snap = await query.get();
     res.json(snap.docs.map((d) => d.data()));
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// ── Per-agent key provisioning ────────────────────────────────────────────────
+// Called by CI/CD during agent deploy to provision a scoped key for the new agent.
+// Restricted to the master OAUTH_SERVICE_KEY — never callable by an agent itself.
+
+function requireMasterKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (req.headers["x-api-key"] !== OAUTH_SERVICE_KEY) { res.status(403).json({ error: "Forbidden" }); return; }
+  next();
+}
+
+// Check if a key already exists for this agent (idempotency for CI/CD retries)
+app.get("/api/agent-keys/:agentId", requireMasterKey, async (req, res) => {
+  const { agentId } = req.params;
+  try {
+    const snap = await db.collection("agent_keys").where("agentId", "==", agentId).limit(1).get();
+    res.json({ exists: !snap.empty });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// Provision a new scoped key for an agent
+app.post("/api/agent-keys", requireMasterKey, async (req, res) => {
+  const { agentId } = req.body as { agentId: string };
+  if (!agentId) { res.status(400).json({ error: "agentId required" }); return; }
+  try {
+    // Idempotent: return existing key if already provisioned
+    const existing = await db.collection("agent_keys").where("agentId", "==", agentId).limit(1).get();
+    if (!existing.empty) {
+      res.json({ apiKey: existing.docs[0].data().apiKey });
+      return;
+    }
+    const apiKey = randomUUID();
+    await db.collection("agent_keys").add({ apiKey, agentId, createdAt: new Date().toISOString() });
+    res.json({ apiKey });
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 

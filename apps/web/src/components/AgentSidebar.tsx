@@ -57,6 +57,7 @@ const SCHEDULES = [
   { label: "Custom…",            cron: "custom" },
 ];
 
+
 function avatarColor(name: string) {
   const colors = ["#4f46e5","#0891b2","#059669","#d97706","#dc2626","#7c3aed","#db2777"];
   let h = 0;
