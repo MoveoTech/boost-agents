@@ -814,6 +814,7 @@ export async function connectSession(
           const fromMe = !!msg.key.fromMe ||
             (!!myPhoneKey && participantKey === myPhoneKey) ||
             (!!myLidKey && participantKey === myLidKey);
+          waLog("info", email, "fromMe detection", { rawFromMe: !!msg.key.fromMe, fromMe, participantKey, myPhoneKey, myLidKey });
           if (!msg.key.fromMe && fromMe) {
             waLog("info", email, "identified own message via participant match", { participantKey, myPhoneKey, myLidKey });
           }
