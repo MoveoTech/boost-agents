@@ -384,6 +384,9 @@ export async function connectSession(
     // messages gives Baileys enough material to re-establish sessions without using disk.
     const socketMsgStore = new Map<string, any>();
     const SOCKET_MSG_STORE_MAX = 300;
+    // Timestamp set before socket creation — guaranteed non-zero, used to reject
+    // messages from before this session existed (e.g. reconnect sync backlog).
+    const sessionCreatedAt = Date.now();
 
     // Per-socket group metadata cache — groupMetadata() makes a network request and
     // WhatsApp rate-limits it. Cache for 5 minutes to avoid hitting that limit.
@@ -527,14 +530,10 @@ export async function connectSession(
         } else {
           const attempt = (reconnectAttempts.get(email) ?? 0) + 1;
           reconnectAttempts.set(email, attempt);
-          // After 10 failed attempts, give up — the session is degraded and continuing to
-          // retry hogs the Node.js event loop with crypto work, slowing OTHER users' sessions.
-          if (attempt > 10) {
-            waLog("warn", email, `giving up reconnect after ${attempt - 1} attempts — session degraded, user must reconnect via settings`);
-            reconnectAttempts.delete(email);
-            return;
-          }
-          const backoff = Math.min(5000 * attempt, 60_000);
+          // First 10 attempts: fast exponential backoff (5s → 60s).
+          // After that: slow persistent retry every 5 minutes — never give up on transient
+          // network/WhatsApp issues that can last hours overnight.
+          const backoff = attempt <= 10 ? Math.min(5000 * attempt, 60_000) : 5 * 60_000;
           waLog("info", email, `reconnecting in ${backoff / 1000}s (attempt ${attempt})`);
           const carryQR = pendingQRListeners.length ? (qr: string) => pendingQRListeners.forEach((fn) => fn(qr)) : undefined;
           const carryConnected = pendingConnectedListeners.length ? () => pendingConnectedListeners.forEach((fn) => fn()) : undefined;
@@ -708,12 +707,11 @@ export async function connectSession(
           waLog("info", email, "skipping stale message", { sentMsAgo: ageMsec });
           continue;
         }
-        // Also skip messages sent BEFORE this session connected. After a server restart
-        // or reconnect, WhatsApp redelivers recent messages as type:"notify" — without
-        // this gate the agent would reply to messages the user sent before we were online.
-        const connectedAt = session.connectedAt ?? 0;
-        if (connectedAt && msgTs < connectedAt - 5_000) {
-          waLog("info", email, "skipping pre-connect message", { sentMsAgo: ageMsec, msBeforeConnect: connectedAt - msgTs });
+        // Skip messages sent before this session was created. sessionCreatedAt is set
+        // before the socket is even created, so it's always non-zero — unlike connectedAt
+        // which could be 0 if messages.upsert fires before connection.update:"open".
+        if (msgTs < sessionCreatedAt - 5_000) {
+          waLog("info", email, "skipping pre-session message", { sentMsAgo: ageMsec, msBeforeSession: sessionCreatedAt - msgTs });
           continue;
         }
 
