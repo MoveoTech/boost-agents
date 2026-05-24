@@ -86,14 +86,18 @@ app.get("/auth/identity/start", (req, res) => {
 });
 
 // Agent redirects user here to start OAuth
-// ?agentId=xxx&agentUrl=xxx&service=gmail|calendar
+// ?agentId=xxx&agentUrl=xxx&service=gmail|calendar&extraScopes=space-separated (optional)
 app.get("/auth/google/start", (req, res) => {
-  const { agentId, agentUrl, service = "gmail" } = req.query as { agentId: string; agentUrl: string; service?: string };
+  const { agentId, agentUrl, service = "gmail", extraScopes } = req.query as { agentId: string; agentUrl: string; service?: string; extraScopes?: string };
 
   if (!SERVICE_SCOPES[service]) {
     res.status(400).send(`Unknown service: ${service}`);
     return;
   }
+
+  const scopeSet = new Set(SERVICE_SCOPES[service].split(" "));
+  if (extraScopes) extraScopes.split(" ").filter(Boolean).forEach((s) => scopeSet.add(s));
+  const scope = [...scopeSet].join(" ");
 
   const state = Buffer.from(JSON.stringify({ agentId, agentUrl, service })).toString("base64url");
 
@@ -101,7 +105,7 @@ app.get("/auth/google/start", (req, res) => {
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: getRedirectUri(req),
     response_type: "code",
-    scope: SERVICE_SCOPES[service],
+    scope,
     access_type: "offline",
     prompt: "consent",
     state,

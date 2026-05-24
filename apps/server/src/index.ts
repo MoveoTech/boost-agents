@@ -294,6 +294,8 @@ app.get("/api/auth/google/start", (req, res) => {
   const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
   const service = (req.query.service as string) || "gmail";
   const params = new URLSearchParams({ agentId, agentUrl, service });
+  const extra = agentConfig.extraOAuthScopes?.[service as "gmail" | "calendar" | "tasks"];
+  if (extra?.length) params.set("extraScopes", extra.join(" "));
   res.redirect(`${oauthServiceUrl}/auth/google/start?${params}`);
 });
 

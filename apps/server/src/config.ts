@@ -28,6 +28,10 @@ export interface AgentConfig {
     chatEnabled: boolean;
     apiEnabled: boolean;
   };
+  // Extra OAuth scopes appended to the base scopes for a given service.
+  // Example: { gmail: ["https://www.googleapis.com/auth/gmail.modify"] }
+  // The scope must also be added to the GCP OAuth consent screen (boost-agents-496211).
+  extraOAuthScopes?: Partial<Record<"gmail" | "calendar" | "tasks", string[]>>;
   ui: {
     title: string;
     placeholder: string;
