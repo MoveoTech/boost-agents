@@ -284,12 +284,28 @@ app.get("/api/auth/monday/start", (req, res) => {
   res.redirect(`${oauthServiceUrl}/auth/monday/start?${params}`);
 });
 
-app.get("/api/auth/google/start", (req, res) => {
+app.get("/api/auth/google/start", async (req, res) => {
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;
   if (!oauthServiceUrl || !agentId) {
     res.status(500).json({ error: "OAuth service not configured" });
     return;
+  }
+  // If this agent has its own Google OAuth app, register credentials now (synchronous,
+  // so they're guaranteed in Firestore before the oauth-service handles the redirect).
+  const ownClientId = process.env.GOOGLE_CLIENT_ID;
+  const ownClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (ownClientId && ownClientSecret && oauthServiceKey) {
+    try {
+      await fetch(`${oauthServiceUrl}/api/agent-oauth-creds/${agentId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": oauthServiceKey },
+        body: JSON.stringify({ clientId: ownClientId, clientSecret: ownClientSecret }),
+      });
+    } catch (err) {
+      console.warn(`Failed to register agent OAuth credentials: ${(err as Error).message}`);
+    }
   }
   const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
   const service = (req.query.service as string) || "gmail";

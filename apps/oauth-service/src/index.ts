@@ -57,9 +57,11 @@ async function getGoogleCreds(agentId: string): Promise<{ clientId: string; clie
     const snap = await db.collection("agent_oauth_creds").doc(agentId).get();
     if (snap.exists) {
       const { clientId, clientSecret } = snap.data() as { clientId: string; clientSecret: string };
-      const creds = { clientId, clientSecret, ts: Date.now() };
-      googleCredsCache.set(agentId, creds);
-      return creds;
+      if (clientId && clientSecret) {
+        const creds = { clientId, clientSecret, ts: Date.now() };
+        googleCredsCache.set(agentId, creds);
+        return creds;
+      }
     }
   } catch { /* fall through to master */ }
   return { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET };
@@ -108,7 +110,7 @@ app.get("/auth/identity/start", (req, res) => {
 
 // Agent redirects user here to start OAuth
 // ?agentId=xxx&agentUrl=xxx&service=gmail|calendar&extraScopes=space-separated (optional)
-app.get("/auth/google/start", async (req, res) => {
+app.get("/auth/google/start", (req, res) => {
   const { agentId, agentUrl, service = "gmail", extraScopes } = req.query as { agentId: string; agentUrl: string; service?: string; extraScopes?: string };
 
   if (!SERVICE_SCOPES[service]) {
@@ -119,21 +121,38 @@ app.get("/auth/google/start", async (req, res) => {
   const scopeSet = new Set(SERVICE_SCOPES[service].split(" "));
   if (extraScopes) extraScopes.split(" ").filter(Boolean).forEach((s) => scopeSet.add(s));
   const scope = [...scopeSet].join(" ");
-
   const state = Buffer.from(JSON.stringify({ agentId, agentUrl, service })).toString("base64url");
-  const { clientId } = await getGoogleCreds(agentId);
+  const redirectUri = getRedirectUri(req);
 
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: getRedirectUri(req),
-    response_type: "code",
-    scope,
-    access_type: "offline",
-    prompt: "consent",
-    state,
+  // Look up per-agent credentials, fall back to master. Always use GOOGLE_CLIENT_ID as
+  // the safety net so a Firestore failure never breaks the OAuth flow for other agents.
+  getGoogleCreds(agentId).then(({ clientId }) => {
+    const effectiveClientId = clientId || GOOGLE_CLIENT_ID;
+    if (!effectiveClientId) { res.status(500).send("OAuth not configured: missing client_id"); return; }
+    const params = new URLSearchParams({
+      client_id: effectiveClientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope,
+      access_type: "offline",
+      prompt: "consent",
+      state,
+    });
+    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+  }).catch(() => {
+    // getGoogleCreds failed entirely — use master credentials
+    if (!GOOGLE_CLIENT_ID) { res.status(500).send("OAuth not configured: missing client_id"); return; }
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope,
+      access_type: "offline",
+      prompt: "consent",
+      state,
+    });
+    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
   });
-
-  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
 // Google redirects here after user approves
