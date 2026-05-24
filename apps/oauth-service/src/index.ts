@@ -124,34 +124,27 @@ app.get("/auth/google/start", (req, res) => {
   const state = Buffer.from(JSON.stringify({ agentId, agentUrl, service })).toString("base64url");
   const redirectUri = getRedirectUri(req);
 
-  // Look up per-agent credentials, fall back to master. Always use GOOGLE_CLIENT_ID as
-  // the safety net so a Firestore failure never breaks the OAuth flow for other agents.
+  const buildAuthUrl = (clientId: string) => {
+    const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, response_type: "code", scope, access_type: "offline", prompt: "consent", state });
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  };
+
+  // Identity login always uses master credentials — it's platform-level auth, not per-agent.
+  // Per-agent credentials are only for service connections (gmail, calendar, tasks).
+  if (service === "identity") {
+    if (!GOOGLE_CLIENT_ID) { res.status(500).send("OAuth not configured: missing client_id"); return; }
+    res.redirect(buildAuthUrl(GOOGLE_CLIENT_ID));
+    return;
+  }
+
+  // For service connections: look up per-agent credentials, fall back to master.
   getGoogleCreds(agentId).then(({ clientId }) => {
     const effectiveClientId = clientId || GOOGLE_CLIENT_ID;
     if (!effectiveClientId) { res.status(500).send("OAuth not configured: missing client_id"); return; }
-    const params = new URLSearchParams({
-      client_id: effectiveClientId,
-      redirect_uri: redirectUri,
-      response_type: "code",
-      scope,
-      access_type: "offline",
-      prompt: "consent",
-      state,
-    });
-    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+    res.redirect(buildAuthUrl(effectiveClientId));
   }).catch(() => {
-    // getGoogleCreds failed entirely — use master credentials
     if (!GOOGLE_CLIENT_ID) { res.status(500).send("OAuth not configured: missing client_id"); return; }
-    const params = new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: redirectUri,
-      response_type: "code",
-      scope,
-      access_type: "offline",
-      prompt: "consent",
-      state,
-    });
-    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+    res.redirect(buildAuthUrl(GOOGLE_CLIENT_ID));
   });
 });
 
@@ -162,7 +155,10 @@ app.get("/auth/google/callback", async (req, res) => {
   try {
     const { agentId, agentUrl, service } = JSON.parse(Buffer.from(state, "base64url").toString());
 
-    const { clientId: cbClientId, clientSecret: cbClientSecret } = await getGoogleCreds(agentId);
+    // Identity uses master credentials; service connections use per-agent credentials.
+    const { clientId: cbClientId, clientSecret: cbClientSecret } = service === "identity"
+      ? { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET }
+      : await getGoogleCreds(agentId);
     const redirectUri = getRedirectUri(req);
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
