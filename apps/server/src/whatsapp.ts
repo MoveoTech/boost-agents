@@ -435,11 +435,10 @@ export async function connectSession(
           const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError" || errName === "PreKeyError";
           if (!isDecryptError) return;
 
-          // Skip auto-purge for outgoing message copies (fromMe: true).
-          // These are sender-sync copies delivered to the linked device — a decrypt failure
-          // here means the sender session hasn't been established, not that our receiver keys
-          // are corrupt. Purging receiver keys for this JID would break incoming messages.
-          if (detail?.key?.fromMe) {
+          // For outgoing copies (fromMe: true), only purge on SessionError — that means the
+          // Signal session is persistently broken and won't self-heal. PreKeyError is expected
+          // on fresh connect and resolves without intervention, so skip purge for that.
+          if (detail?.key?.fromMe && errName !== "SessionError") {
             waLog("warn", email, "decrypt error on outgoing copy — skipping purge", { remoteJid: detail?.key?.remoteJid, errName });
             return;
           }
