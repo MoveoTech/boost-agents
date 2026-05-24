@@ -30,7 +30,8 @@ export interface AgentConfig {
   };
   // Extra OAuth scopes appended to the base scopes for a given service.
   // Example: { gmail: ["https://www.googleapis.com/auth/gmail.modify"] }
-  // The scope must also be added to the GCP OAuth consent screen (boost-agents-496211).
+  // The scope must be added to the agent's OWN Google OAuth consent screen (not boost-agents-496211).
+  // Requires GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET set as repo secrets so the agent uses its own OAuth app.
   extraOAuthScopes?: Partial<Record<"gmail" | "calendar" | "tasks", string[]>>;
   ui: {
     title: string;
