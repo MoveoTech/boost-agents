@@ -328,7 +328,7 @@ export default function App() {
           <div className="header-title">
             <span className={`header-icon${isResponding ? " responding" : ""}`}>✦</span>
             <h1>{title}</h1>
-            <span className="version-badge">v1</span>
+            <span className="version-badge">v2</span>
           </div>
           <div className="header-actions">
             <span className="model-badge">{modelLabel}</span>
