@@ -44,6 +44,27 @@ async function verifyAgentKey(req: express.Request, res: express.Response, agent
   return true;
 }
 
+// Per-agent Google OAuth credentials — looked up by agentId, fall back to master.
+// Agents with restricted scopes bring their own OAuth app so the master consent screen
+// stays clean and doesn't need restricted-scope verification.
+const googleCredsCache = new Map<string, { clientId: string; clientSecret: string; ts: number }>();
+const GOOGLE_CREDS_CACHE_TTL = 10 * 60_000;
+
+async function getGoogleCreds(agentId: string): Promise<{ clientId: string; clientSecret: string }> {
+  const cached = googleCredsCache.get(agentId);
+  if (cached && Date.now() - cached.ts < GOOGLE_CREDS_CACHE_TTL) return cached;
+  try {
+    const snap = await db.collection("agent_oauth_creds").doc(agentId).get();
+    if (snap.exists) {
+      const { clientId, clientSecret } = snap.data() as { clientId: string; clientSecret: string };
+      const creds = { clientId, clientSecret, ts: Date.now() };
+      googleCredsCache.set(agentId, creds);
+      return creds;
+    }
+  } catch { /* fall through to master */ }
+  return { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET };
+}
+
 const SERVICE_SCOPES: Record<string, string> = {
   gmail: [
     "https://www.googleapis.com/auth/gmail.send",
@@ -87,7 +108,7 @@ app.get("/auth/identity/start", (req, res) => {
 
 // Agent redirects user here to start OAuth
 // ?agentId=xxx&agentUrl=xxx&service=gmail|calendar&extraScopes=space-separated (optional)
-app.get("/auth/google/start", (req, res) => {
+app.get("/auth/google/start", async (req, res) => {
   const { agentId, agentUrl, service = "gmail", extraScopes } = req.query as { agentId: string; agentUrl: string; service?: string; extraScopes?: string };
 
   if (!SERVICE_SCOPES[service]) {
@@ -100,9 +121,10 @@ app.get("/auth/google/start", (req, res) => {
   const scope = [...scopeSet].join(" ");
 
   const state = Buffer.from(JSON.stringify({ agentId, agentUrl, service })).toString("base64url");
+  const { clientId } = await getGoogleCreds(agentId);
 
   const params = new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
+    client_id: clientId,
     redirect_uri: getRedirectUri(req),
     response_type: "code",
     scope,
@@ -121,13 +143,14 @@ app.get("/auth/google/callback", async (req, res) => {
   try {
     const { agentId, agentUrl, service } = JSON.parse(Buffer.from(state, "base64url").toString());
 
+    const { clientId: cbClientId, clientSecret: cbClientSecret } = await getGoogleCreds(agentId);
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
+        client_id: cbClientId,
+        client_secret: cbClientSecret,
         redirect_uri: getRedirectUri(req),
         grant_type: "authorization_code",
       }),
@@ -195,12 +218,13 @@ app.get("/api/access-token/:service/:agentId/:userId", async (req, res) => {
     }
 
     // Google services use refresh token flow
+    const { clientId: rfClientId, clientSecret: rfClientSecret } = await getGoogleCreds(agentId);
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
+        client_id: rfClientId,
+        client_secret: rfClientSecret,
         refresh_token: data.refreshToken!,
         grant_type: "refresh_token",
       }),
@@ -555,6 +579,19 @@ app.get("/api/feedback/:agentId", async (req, res) => {
     if (rating !== undefined) query = query.where("rating", "==", Number(rating));
     const snap = await query.get();
     res.json(snap.docs.map((d) => d.data()));
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// Register per-agent Google OAuth credentials (called by the agent server at startup).
+// Uses the agent's own scoped key — only that agent can write its own credentials.
+app.post("/api/agent-oauth-creds/:agentId", async (req, res) => {
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
+  const { clientId, clientSecret } = req.body as { clientId?: string; clientSecret?: string };
+  if (!clientId || !clientSecret) { res.status(400).json({ error: "clientId and clientSecret required" }); return; }
+  try {
+    await db.collection("agent_oauth_creds").doc(req.params.agentId).set({ clientId, clientSecret, updatedAt: new Date().toISOString() });
+    googleCredsCache.delete(req.params.agentId); // bust cache
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 

@@ -1526,6 +1526,17 @@ app.listen(PORT, () => {
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL ?? "";
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY ?? "";
   const agentId = process.env.GOOGLE_CLOUD_PROJECT ?? "";
+  // If this agent has its own Google OAuth credentials, register them with the oauth-service
+  // so users connect via the agent's own OAuth app (needed for restricted scopes).
+  const ownClientId = process.env.GOOGLE_CLIENT_ID;
+  const ownClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (ownClientId && ownClientSecret && oauthServiceUrl && oauthServiceKey && agentId) {
+    fetch(`${oauthServiceUrl}/api/agent-oauth-creds/${agentId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": oauthServiceKey },
+      body: JSON.stringify({ clientId: ownClientId, clientSecret: ownClientSecret }),
+    }).catch((err) => console.warn(`Failed to register agent OAuth credentials: ${err.message}`));
+  }
   initAllSessions(agentId, oauthServiceUrl, oauthServiceKey, buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey),
     (email) => prewarmWASession(email, agentId, oauthServiceUrl, oauthServiceKey),
     (email) => prewarmWASession(email, agentId, oauthServiceUrl, oauthServiceKey));

@@ -27,6 +27,10 @@ on:
         required: false
       JINA_API_KEY:
         required: false
+      GOOGLE_CLIENT_ID:
+        required: false
+      GOOGLE_CLIENT_SECRET:
+        required: false
       # API_KEY, COOKIE_SECRET, AUTOMATION_SECRET are auto-generated and stored in GCP Secret Manager
 
 jobs:
@@ -193,6 +197,8 @@ jobs:
             SLACK_BOT_TOKEN=${{ secrets.SLACK_BOT_TOKEN }}
             SLACK_SIGNING_SECRET=${{ secrets.SLACK_SIGNING_SECRET }}
             JINA_API_KEY=${{ secrets.JINA_API_KEY }}
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       # Set ADMIN_EMAILS separately — commas in the value break the ^,^ delimiter used by deploy-cloudrun
