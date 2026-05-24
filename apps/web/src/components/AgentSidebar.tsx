@@ -402,7 +402,9 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                         <span className="sidebar-tool-connection">
                           {connected
                             ? <><span className="sidebar-tool-connected">●</span> {userEmail?.split("@")[0] ?? "connected"}</>
-                            : <a className="sidebar-tool-connect-link" href={href}>Connect</a>}
+                            : userEmail
+                              ? <a className="sidebar-tool-connect-link" href={href}>Connect</a>
+                              : <span className="sidebar-tool-connect-link" style={{ opacity: 0.4, cursor: "default" }} title="Sign in with Google first to connect services">Connect</span>}
                           {connected && <button className="sidebar-tool-disconnect" onClick={onDisconnect}>Disconnect</button>}
                         </span>
                       </div>

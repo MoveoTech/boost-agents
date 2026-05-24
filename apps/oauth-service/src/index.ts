@@ -163,6 +163,7 @@ app.get("/auth/google/callback", async (req, res) => {
     const { agentId, agentUrl, service } = JSON.parse(Buffer.from(state, "base64url").toString());
 
     const { clientId: cbClientId, clientSecret: cbClientSecret } = await getGoogleCreds(agentId);
+    const redirectUri = getRedirectUri(req);
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -170,16 +171,22 @@ app.get("/auth/google/callback", async (req, res) => {
         code,
         client_id: cbClientId,
         client_secret: cbClientSecret,
-        redirect_uri: getRedirectUri(req),
+        redirect_uri: redirectUri,
         grant_type: "authorization_code",
       }),
     });
-    const tokens = await tokenRes.json() as { access_token: string; refresh_token: string };
+    const tokens = await tokenRes.json() as { access_token?: string; refresh_token?: string; error?: string; error_description?: string };
+    if (!tokenRes.ok || !tokens.access_token) {
+      console.error("Token exchange failed", { agentId, error: tokens.error, description: tokens.error_description, clientId: cbClientId, redirectUri });
+      throw new Error(`Token exchange failed: ${tokens.error ?? "no access_token"}`);
+    }
 
     const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
-    const { email } = await userInfoRes.json() as { email: string };
+    const userInfo = await userInfoRes.json() as { email?: string };
+    if (!userInfo.email) throw new Error("Failed to retrieve user email from Google");
+    const { email } = userInfo;
 
     if (service === "identity") {
       // Issue a short-lived token the agent server will exchange for a session
