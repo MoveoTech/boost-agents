@@ -384,9 +384,12 @@ export async function connectSession(
     // messages gives Baileys enough material to re-establish sessions without using disk.
     const socketMsgStore = new Map<string, any>();
     const SOCKET_MSG_STORE_MAX = 300;
-    // Timestamp set before socket creation — guaranteed non-zero, used to reject
-    // messages from before this session existed (e.g. reconnect sync backlog).
-    const sessionCreatedAt = Date.now();
+    // On reconnect (existing credentials): allow messages sent up to 2 minutes before
+    // this session was created — the bot was briefly offline and WhatsApp queued those
+    // messages; we should process them. The 5-minute absolute cap below still drops
+    // truly ancient messages. On fresh QR (no savedCreds): use strict cutoff so old
+    // messages from before the QR scan are never replayed.
+    const sessionCreatedAt = savedCreds ? Date.now() - 120_000 : Date.now();
 
     // Per-socket group metadata cache — groupMetadata() makes a network request and
     // WhatsApp rate-limits it. Cache for 5 minutes to avoid hitting that limit.
