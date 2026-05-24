@@ -575,9 +575,13 @@ export async function connectSession(
     const seedOwnerKeys = () => {
       const u = sock.user as { id?: string; lid?: string } | undefined;
       const ph = u?.id?.split(":")[0].split("@")[0];
-      const lid = u?.lid?.split(":")[0].split("@")[0];
+      const sockLid = u?.lid?.split(":")[0].split("@")[0];
+      // Baileys doesn't always populate sock.user.lid — read directly from creds as fallback.
+      // creds.me.lid is stored in Firestore from the original QR scan and is reliable.
+      const credsLid = (auth.state.creds.me as any)?.lid?.split(":")[0].split("@")[0];
       if (ph) ownerKeys.add(ph);
-      if (lid) ownerKeys.add(lid);
+      if (sockLid) ownerKeys.add(sockLid);
+      if (credsLid) ownerKeys.add(credsLid);
     };
 
     // WhatsApp syncs contact data (including LID mappings) shortly after connect.
