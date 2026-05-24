@@ -407,8 +407,10 @@ export async function connectSession(
       shouldSyncHistoryMessage: () => false,
       keepAliveIntervalMs: 20_000,    // ping WhatsApp every 20s to prevent 408 connection-lost drops
       defaultQueryTimeoutMs: 120_000, // give WhatsApp 2min to respond to fetchProps on init (default 60s too tight)
-      maxMsgRetryCount: 2,            // limit Signal session retries — more retries = more key saves = more event loop pressure
-      retryRequestDelayMs: 3000, // 3s between retries — gives Signal sessions time to stabilise
+      maxMsgRetryCount: 0,            // 0 = never send retry requests to WhatsApp — retries cause a flood of undecryptable
+                                      // re-deliveries after fresh QR scan, which triggers WhatsApp server-side disconnects.
+                                      // Signal sessions re-establish automatically on the next fresh message from a contact.
+      retryRequestDelayMs: 3000,
       logger: {
         level: "warn",
         trace: (..._args: any[]) => {},
@@ -434,6 +436,15 @@ export async function connectSession(
           const errName: string = detail?.err?.name ?? "";
           const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError" || errName === "PreKeyError";
           if (!isDecryptError) return;
+
+          // "No session record" / "No matching sessions found" = no Signal session exists for
+          // this contact yet. This is completely expected after a fresh QR scan — old pending
+          // messages were encrypted for the previous session's keys which are now gone.
+          // Nothing to purge (purgedKeys would always be 0), and logging it as an error adds
+          // noise without any actionable information. Drop silently.
+          if (errMsg.includes("No session record") || errMsg.includes("No matching sessions found")) return;
+
+          waLog("error", email, "baileys-error", { detail });
 
           // For outgoing copies (fromMe: true), only purge on SessionError — that means the
           // Signal session is persistently broken and won't self-heal. PreKeyError is expected
