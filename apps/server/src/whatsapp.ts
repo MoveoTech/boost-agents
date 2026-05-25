@@ -42,7 +42,7 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 // email → auth state (for external purge access)
-const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; freezeCredsSave: () => void; resetKeys: () => Promise<void> }>();
+const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; freezeCredsSave: () => void }>();
 // persistent reconnect attempt counter — survives session object recreation so backoff grows correctly
 const reconnectAttempts = new Map<string, number>();
 // consecutive crypto error counter — reset on successful connect
@@ -393,7 +393,7 @@ export async function connectSession(
     }
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
-    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, freezeCredsSave: auth.freezeCredsSave, resetKeys: auth.resetKeys });
+    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, freezeCredsSave: auth.freezeCredsSave });
 
     // Per-socket message store — Baileys calls getMessage when it needs to retry-decrypt
     // a failed message (Signal retries are very common). Returning undefined makes every
@@ -592,14 +592,15 @@ export async function connectSession(
             await deleteCreds(agentId, email, oauthUrl, oauthKey);
           }
         } else if (isCryptoError) {
-          // purgeConnectingSessionKeys() already reset Signal keys in Firestore and closed
-          // the socket. Reconnect — the fresh keys will trigger a new Signal handshake.
-          // Only wipe full credentials after 5 consecutive failures (creds may be corrupt).
+          // Noise protocol error during WebSocket handshake. We don't touch Firestore on
+          // each retry — just close and reconnect. After 3 failures the Noise state in
+          // creds is likely corrupt (e.g. partial update mid-handshake was saved); wipe
+          // everything so the next connect starts clean and prompts for a new QR scan.
           const cryptoAttempt = cryptoRetryCount.get(email) ?? 0;
           const carryEveryConnect = session.onEveryConnect;
           if (cryptoAttempt < 5) {
             const delay = Math.min(10_000 * (cryptoAttempt || 1), 60_000);
-            waLog("warn", email, `crypto error (attempt ${cryptoAttempt}) — Signal keys reset, reconnecting in ${delay / 1000}s`);
+            waLog("warn", email, `crypto error (attempt ${cryptoAttempt}) — reconnecting in ${delay / 1000}s`);
             setTimeout(() => {
               connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, undefined, carryEveryConnect).catch((e) =>
                 waLog("error", email, "reconnect after crypto error failed", { error: e.message })
@@ -607,7 +608,7 @@ export async function connectSession(
             }, delay);
           } else {
             cryptoRetryCount.delete(email);
-            waLog("warn", email, "crypto error after 5 key resets — credentials may be corrupt, wiping for re-scan");
+            waLog("warn", email, "crypto error after 5 retries — Noise credentials corrupt, wiping for re-scan");
             await deleteCreds(agentId, email, oauthUrl, oauthKey);
           }
         } else if (reason?.includes("QR refs attempts ended") || reason?.includes("QR timeout")) {
@@ -1037,11 +1038,11 @@ export function purgeConnectingSessionKeys(): void {
       cryptoRetryCount.set(email, attempt);
       sessions.delete(email); // prevent duplicate calls on rapid re-fire
 
-      // Always reset Signal keys in Firestore (not full creds) — the phone still has this
-      // linked device paired, so account credentials are valid. Stale ratchet keys are the
-      // actual cause of crypto errors; clearing them lets WhatsApp negotiate a fresh session.
-      waLog("warn", email, `native crypto error during connect (attempt ${attempt}) — resetting Signal keys and retrying`);
-      authRegistry.get(email)?.resetKeys().catch(() => {});
+      // Noise protocol error — do NOT touch Firestore here. Baileys may have partially
+      // modified creds.noiseKey mid-handshake before this error fired; calling resetKeys()
+      // would re-save those corrupt creds and lock the failure in. Just close the socket so
+      // connection.update schedules a retry with whatever Firestore already has.
+      waLog("warn", email, `native crypto error during connect (attempt ${attempt}) — closing socket, will retry`);
       try { session.socket?.end?.(new Error("Unsupported state or unable to authenticate data")); } catch {}
     }
   }
