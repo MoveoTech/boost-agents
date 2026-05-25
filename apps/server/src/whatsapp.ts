@@ -58,6 +58,9 @@ const contactDecryptFailures = new Map<string, number>();
 // contacts that had keys purged recently: `${email}::${jidFragment}` → purge timestamp
 // used to trigger immediate resetKeys() on first "No session record" after a purge
 const recentlyPurgedContacts = new Map<string, number>();
+// last time resetKeys() was triggered due to "purged=0 + PreKeyError" — prevents tight loop
+// when WhatsApp replays queued messages encrypted with stale PreKeys after a key reset
+const lastZeroPurgeReset = new Map<string, number>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -528,10 +531,18 @@ export async function connectSession(
               // No local session keys exist for this contact (e.g. fresh QR scan wiped them).
               // Purging nothing can't help — the PreKey is simply gone. Reset all Signal
               // keys so WhatsApp negotiates a fresh PreKey exchange on next message.
-              waLog("warn", email, "PreKeyError with no local keys — resetting Signal keys for fresh PreKey exchange", { participant });
-              auth.resetKeys().catch(() => {}).finally(() => {
-                try { sock.end(new Error("no-prekey-reset")); } catch {}
-              });
+              // Cooldown: 5 minutes between resets — prevents a tight loop when WhatsApp
+              // replays queued stale messages encrypted with old PreKeys after each reset.
+              const lastReset = lastZeroPurgeReset.get(email) ?? 0;
+              if (Date.now() - lastReset > 300_000) {
+                lastZeroPurgeReset.set(email, Date.now());
+                waLog("warn", email, "PreKeyError with no local keys — resetting Signal keys for fresh PreKey exchange", { participant });
+                auth.resetKeys().catch(() => {}).finally(() => {
+                  try { sock.end(new Error("no-prekey-reset")); } catch {}
+                });
+              } else {
+                waLog("warn", email, "PreKeyError with no local keys — skipping reset (cooldown active)", { participant, msSinceLastReset: Date.now() - lastReset });
+              }
               return;
             }
             const contactKey = `${email}::${jidFragment}`;
