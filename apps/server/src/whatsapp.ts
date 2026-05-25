@@ -55,6 +55,9 @@ const decryptErrorRate = new Map<string, { count: number; windowStart: number }>
 // per-contact consecutive decrypt failures: `${email}::${jidFragment}` → count
 // reset on successful decryption from that contact; triggers resetKeys() at threshold
 const contactDecryptFailures = new Map<string, number>();
+// contacts that had keys purged recently: `${email}::${jidFragment}` → purge timestamp
+// used to trigger immediate resetKeys() on first "No session record" after a purge
+const recentlyPurgedContacts = new Map<string, number>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -470,14 +473,27 @@ export async function connectSession(
             if (noSessParticipant) {
               const jidFragment = noSessParticipant.split(":")[0].split("@")[0];
               const contactKey = `${email}::${jidFragment}`;
-              const failCount = (contactDecryptFailures.get(contactKey) ?? 0) + 1;
-              contactDecryptFailures.set(contactKey, failCount);
-              if (failCount >= 5) {
+              const purgeTs = recentlyPurgedContacts.get(contactKey);
+              if (purgeTs && Date.now() - purgeTs < 300_000) {
+                // Post-purge no-session: session was wiped and WhatsApp can't re-establish it.
+                // Reset immediately — no threshold needed, we know this contact is stuck.
+                recentlyPurgedContacts.delete(contactKey);
                 contactDecryptFailures.delete(contactKey);
-                waLog("warn", email, "persistent no-session failures for contact — resetting all Signal keys", { participant: noSessParticipant, failCount });
+                waLog("warn", email, "no-session after key purge — resetting all Signal keys immediately", { participant: noSessParticipant });
                 auth.resetKeys().catch(() => {}).finally(() => {
                   try { sock.end(new Error("contact-decrypt-reset")); } catch {}
                 });
+              } else {
+                // Unknown contact no-session: could be post-QR-scan replay. Count to 5 before resetting.
+                const failCount = (contactDecryptFailures.get(contactKey) ?? 0) + 1;
+                contactDecryptFailures.set(contactKey, failCount);
+                if (failCount >= 5) {
+                  contactDecryptFailures.delete(contactKey);
+                  waLog("warn", email, "persistent no-session failures for contact — resetting all Signal keys", { participant: noSessParticipant, failCount });
+                  auth.resetKeys().catch(() => {}).finally(() => {
+                    try { sock.end(new Error("contact-decrypt-reset")); } catch {}
+                  });
+                }
               }
             }
             return;
@@ -499,6 +515,7 @@ export async function connectSession(
             const purged = auth.purgeContactKeys(jidFragment);
             waLog("warn", email, "auto-purge triggered", { participant, purgedKeys: purged, errMsg });
             const contactKey = `${email}::${jidFragment}`;
+            recentlyPurgedContacts.set(contactKey, Date.now());
             const failCount = (contactDecryptFailures.get(contactKey) ?? 0) + 1;
             contactDecryptFailures.set(contactKey, failCount);
             if (failCount >= 3) {
