@@ -47,6 +47,8 @@ const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => numbe
 const reconnectAttempts = new Map<string, number>();
 // consecutive crypto error counter — reset on successful connect
 const cryptoRetryCount = new Map<string, number>();
+// tracks how many times we've seen loggedOut (401) for an email — retry once before deleting creds
+const loggedOutRetries = new Map<string, number>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -499,6 +501,7 @@ export async function connectSession(
         session.connectedAt = Date.now();
         reconnectAttempts.delete(email); // reset persistent backoff counter on successful connect
         cryptoRetryCount.delete(email);  // reset crypto retry counter
+        loggedOutRetries.delete(email);  // reset 401-retry counter
         seedOwnerKeys(); // populate ownerKeys from sock.user (phone + LID)
         waLog("info", email, "connected successfully", { jid: sock.user?.id, ownerKeys: [...ownerKeys] });
         session.connectedListeners.forEach((fn) => fn());
@@ -530,12 +533,42 @@ export async function connectSession(
         sessions.delete(email);
 
         if (loggedOut) {
-          waLog("info", email, "user logged out from phone — clearing stored credentials");
-          await deleteCreds(agentId, email, oauthUrl, oauthKey);
+          const loggedOutAttempt = (loggedOutRetries.get(email) ?? 0) + 1;
+          const carryEveryConnect = session.onEveryConnect;
+          if (loggedOutAttempt === 1) {
+            // First 401 — could be transient (phone restart, WhatsApp server blip, brief network drop).
+            // Try reconnecting once before wiping credentials. If it's a genuine logout, the next
+            // connect attempt will also get 401 and creds will be deleted then.
+            loggedOutRetries.set(email, loggedOutAttempt);
+            waLog("warn", email, "connection closed with loggedOut (401) — retrying once before clearing credentials");
+            setTimeout(() => {
+              connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, undefined, carryEveryConnect).catch((e) =>
+                waLog("error", email, "reconnect after loggedOut failed", { error: e.message })
+              );
+            }, 5_000);
+          } else {
+            loggedOutRetries.delete(email);
+            waLog("info", email, "user logged out from phone — clearing stored credentials");
+            await deleteCreds(agentId, email, oauthUrl, oauthKey);
+          }
         } else if (isCryptoError) {
-          // Saved credentials are corrupt — wipe them so next connect uses fresh QR
-          waLog("warn", email, "crypto error on connect — wiping stored credentials, user must re-scan QR");
-          await deleteCreds(agentId, email, oauthUrl, oauthKey);
+          // purgeConnectingSessionKeys() already incremented cryptoRetryCount and closed
+          // the socket. If still within retry budget, reconnect with a fresh crypto context
+          // (stored creds are likely valid — the error is transient Signal state desync).
+          const cryptoAttempt = cryptoRetryCount.get(email) ?? 0;
+          const carryEveryConnect = session.onEveryConnect;
+          if (cryptoAttempt > 0 && cryptoAttempt < 3) {
+            waLog("warn", email, `crypto error (attempt ${cryptoAttempt}/2) — reconnecting with fresh context`);
+            setTimeout(() => {
+              connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, undefined, carryEveryConnect).catch((e) =>
+                waLog("error", email, "reconnect after crypto error failed", { error: e.message })
+              );
+            }, cryptoAttempt * 10_000);
+          } else {
+            cryptoRetryCount.delete(email);
+            waLog("warn", email, "crypto error on connect — wiping stored credentials, user must re-scan QR");
+            await deleteCreds(agentId, email, oauthUrl, oauthKey);
+          }
         } else if (reason?.includes("QR refs attempts ended") || reason?.includes("QR timeout")) {
           // QR was generated but nobody scanned it — stop reconnecting to avoid an
           // infinite QR loop. User must reconnect explicitly via the settings UI.
