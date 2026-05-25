@@ -498,8 +498,14 @@ export async function connectSession(
           decryptErrorRate.set(email, rate);
           if (rate.count > 10) {
             decryptErrorRate.delete(email);
-            waLog("warn", email, "decrypt error flood detected — closing socket to force clean reconnect", { errorCount: rate.count });
-            try { sock.end(new Error("decrypt-flood-restart")); } catch {}
+            waLog("warn", email, "decrypt error flood detected — resetting Signal keys before reconnect", { errorCount: rate.count });
+            // Reset keys in Firestore BEFORE closing — the debounced purgeContactKeys save
+            // gets cancelled by freezeCredsSave() on close, so the next session would reload
+            // the same stale keys and trigger another flood. resetKeys() saves synchronously
+            // (bypasses credsSaveEnabled), then we close so the new session starts clean.
+            auth.resetKeys().catch(() => {}).finally(() => {
+              try { sock.end(new Error("decrypt-flood-restart")); } catch {}
+            });
           }
         },
         child: () => ({ trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) }),
