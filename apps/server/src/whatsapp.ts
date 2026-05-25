@@ -466,11 +466,6 @@ export async function connectSession(
           const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError" || errName === "PreKeyError";
           if (!isDecryptError) return;
 
-          // "Invalid PreKey ID" is expected after a fresh QR scan — WhatsApp delivers queued
-          // messages that were encrypted to PreKeys that no longer exist on the new device.
-          // These are unrecoverable and harmless; purging or resetting is pointless and dangerous.
-          if (errMsg.includes("Invalid PreKey ID")) return;
-
           // "No session record" / "No matching sessions found" = no Signal session for this contact.
           // Expected after fresh QR scan (old pending messages), but also happens after a key purge
           // wipes the session — WhatsApp keeps retrying but can't re-establish without a new
