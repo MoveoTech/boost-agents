@@ -504,12 +504,19 @@ export async function connectSession(
 
           waLog("error", email, "baileys-error", { detail });
 
-          // PreKeyError on outgoing copies (fromMe) is expected on fresh connect and resolves
-          // without intervention — skip purge. All other decrypt errors (including
-          // MessageCounterError) must purge even on fromMe to break the retry loop.
+          // PreKeyError on outgoing copies (fromMe=true, remoteJid=someone else) is expected
+          // on fresh connect and resolves without intervention — skip purge.
+          // But self-messages (Boaz → own chat, remoteJid matches owner key) must purge
+          // so the Signal session re-establishes and the bot can decrypt them.
           if (detail?.key?.fromMe && errName === "PreKeyError") {
-            waLog("warn", email, "decrypt error on outgoing copy — skipping purge (PreKeyError expected on fresh connect)", { remoteJid: detail?.key?.remoteJid });
-            return;
+            const remoteJid: string = detail?.key?.remoteJid ?? "";
+            const remoteKey = remoteJid.split(":")[0].split("@")[0];
+            const isSelfMessage = remoteKey.length > 0 && ownerKeys.has(remoteKey);
+            if (!isSelfMessage) {
+              waLog("warn", email, "decrypt error on outgoing copy — skipping purge (PreKeyError expected on fresh connect)", { remoteJid });
+              return;
+            }
+            // Falls through to purge — self-message needs session reset
           }
 
           const participant: string = detail?.key?.participant ?? detail?.key?.remoteJid ?? "";
