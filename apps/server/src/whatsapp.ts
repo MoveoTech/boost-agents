@@ -52,6 +52,9 @@ const loggedOutRetries = new Map<string, number>();
 // decrypt error rate limiter: email → { count, windowStart }
 // if count exceeds threshold within window, we force-close the socket to break the error loop
 const decryptErrorRate = new Map<string, { count: number; windowStart: number }>();
+// per-contact consecutive decrypt failures: `${email}::${jidFragment}` → count
+// reset on successful decryption from that contact; triggers resetKeys() at threshold
+const contactDecryptFailures = new Map<string, number>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -479,6 +482,17 @@ export async function connectSession(
             const jidFragment = participant.split(":")[0].split("@")[0];
             const purged = auth.purgeContactKeys(jidFragment);
             waLog("warn", email, "auto-purge triggered", { participant, purgedKeys: purged, errMsg });
+            const contactKey = `${email}::${jidFragment}`;
+            const failCount = (contactDecryptFailures.get(contactKey) ?? 0) + 1;
+            contactDecryptFailures.set(contactKey, failCount);
+            if (failCount >= 3) {
+              contactDecryptFailures.delete(contactKey);
+              waLog("warn", email, "persistent decrypt failures for contact — resetting all Signal keys", { participant, failCount });
+              auth.resetKeys().catch(() => {}).finally(() => {
+                try { sock.end(new Error("contact-decrypt-reset")); } catch {}
+              });
+              return;
+            }
           } else {
             const purged = auth.purgeContactKeys("session-");
             waLog("warn", email, "auto-purge (no participant) — purged all session keys", { purgedKeys: purged, errMsg });
@@ -837,6 +851,10 @@ export async function connectSession(
           waLog("info", email, "skipping message with no text", { msgTypes, remoteJid: msg.key.remoteJid });
           continue;
         }
+
+        // Successful decryption — reset per-contact failure counter.
+        const senderFrag = (msg.key.participant ?? msg.key.remoteJid ?? "").split(":")[0].split("@")[0];
+        if (senderFrag) contactDecryptFailures.delete(`${email}::${senderFrag}`);
 
         // Text confirmed — mark processed now to prevent duplicate handling.
         // Cap at 5000 entries and evict oldest 1000 to prevent unbounded growth.
