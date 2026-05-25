@@ -10,7 +10,7 @@ import {
   mondayDuplicateItem, mondayCreateSubitem,
   mondayCreateGroup, mondayDeleteGroup, mondayCreateColumn,
   mondayGetUpdates, mondayCreateUpdate, mondayDeleteUpdate,
-  mondayGetMe, mondayGetUsers,
+  mondayGetMe, mondayGetUsers, mondayResolveConnectedItem,
 } from "./monday";
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability, calendarRsvp } from "./calendar";
@@ -279,6 +279,7 @@ Column value formats by type:
 - checkbox: {"checked":"true"}
 - timeline: {"from":"2025-05-24","to":"2025-05-30"}
 - person: {"personsAndTeams":[{"id":12345678,"kind":"person"}]}  ← id MUST be the numeric user ID, never an email. Call monday_get_users first to resolve a name/email to an id.
+- board_relation (connected board): {"item_ids":[123456789]}  ← id MUST be the connected item's numeric ID. Call monday_resolve_connected_item first to resolve a name to an id.
 Only include columns that have actual values — omit the rest.
 ALWAYS include the item ID from the result in your reply (e.g. "Created item ID 123456789") so it can be referenced in follow-up requests.`,
     parameters: {
@@ -438,6 +439,22 @@ IMPORTANT: Use real column IDs from monday_get_board — never guess. Same value
       required: [],
     },
   },
+  monday_resolve_connected_item: {
+    name: "monday_resolve_connected_item",
+    description: `Resolve a text name to an item ID for a connected board column (board_relation type).
+When a user provides a name for a board_relation column (e.g. "Boost Project: Sheba Dev"), call this tool to find the matching item ID in the connected board.
+Returns the best-matching item ID and the ready-to-use column value object {"item_ids":[id]}.
+REQUIRED before setting any board_relation column — never guess or use the name as-is.
+Column can be specified by its ID or title (case-insensitive).`,
+    parameters: {
+      properties: {
+        boardId:    { type: "string", description: "ID of the board that contains the connected column" },
+        columnId:   { type: "string", description: "ID or title of the connected board column (e.g. 'Boost Project' or 'connect_boards7')" },
+        searchName: { type: "string", description: "Item name to search for in the connected board (e.g. 'Sheba Dev')" },
+      },
+      required: ["boardId", "columnId", "searchName"],
+    },
+  },
   read_webpage: {
     name: "read_webpage", description: "Fetch a URL and return its content as clean readable text/markdown. Use this to read articles, websites, and search result pages. Prefer this over fetch_url for any human-readable web content.",
     parameters: {
@@ -525,6 +542,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
     ALL_TOOLS.monday_create_column,
     ALL_TOOLS.monday_get_updates, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_delete_update,
     ALL_TOOLS.monday_get_me, ALL_TOOLS.monday_get_users,
+    ALL_TOOLS.monday_resolve_connected_item,
     ALL_TOOLS.monday_graphql,
   );
   if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
@@ -601,7 +619,8 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
     case "monday_create_update":
     case "monday_delete_update":
     case "monday_get_me":
-    case "monday_get_users": {
+    case "monday_get_users":
+    case "monday_resolve_connected_item": {
       const token = mondayToken;
       if (!token) return "Monday is not connected. Ask the user to connect their Monday account.";
       if (name === "monday_graphql")          return mondayGraphQL(token, args.query as string, args.variables as Record<string, unknown> | undefined);
@@ -632,7 +651,8 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       if (name === "monday_get_updates")      return mondayGetUpdates(token, args.itemId as string, args.limit as number | undefined);
       if (name === "monday_create_update")    return mondayCreateUpdate(token, args.itemId as string, args.body as string);
       if (name === "monday_delete_update")    return mondayDeleteUpdate(token, args.updateId as string);
-      if (name === "monday_get_me")           return mondayGetMe(token);
+      if (name === "monday_get_me")                   return mondayGetMe(token);
+      if (name === "monday_resolve_connected_item")   return mondayResolveConnectedItem(token, args.boardId as string, args.columnId as string, args.searchName as string);
       return mondayGetUsers(token, args.limit as number | undefined, args.name as string | undefined, args.emails as string[] | undefined);
     }
 

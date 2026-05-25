@@ -460,12 +460,28 @@ export async function connectSession(
           const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError" || errName === "PreKeyError";
           if (!isDecryptError) return;
 
-          // "No session record" / "No matching sessions found" = no Signal session exists for
-          // this contact yet. This is completely expected after a fresh QR scan — old pending
-          // messages were encrypted for the previous session's keys which are now gone.
-          // Nothing to purge (purgedKeys would always be 0), and logging it as an error adds
-          // noise without any actionable information. Drop silently.
-          if (errMsg.includes("No session record") || errMsg.includes("No matching sessions found")) return;
+          // "No session record" / "No matching sessions found" = no Signal session for this contact.
+          // Expected after fresh QR scan (old pending messages), but also happens after a key purge
+          // wipes the session — WhatsApp keeps retrying but can't re-establish without a new
+          // PreKey exchange. Count per-contact: after 5 consecutive failures, resetKeys() + reconnect.
+          // Threshold is 5 (not 3) to tolerate post-QR-scan replays of a few old messages per contact.
+          if (errMsg.includes("No session record") || errMsg.includes("No matching sessions found")) {
+            const noSessParticipant: string = detail?.key?.participant ?? detail?.key?.remoteJid ?? "";
+            if (noSessParticipant) {
+              const jidFragment = noSessParticipant.split(":")[0].split("@")[0];
+              const contactKey = `${email}::${jidFragment}`;
+              const failCount = (contactDecryptFailures.get(contactKey) ?? 0) + 1;
+              contactDecryptFailures.set(contactKey, failCount);
+              if (failCount >= 5) {
+                contactDecryptFailures.delete(contactKey);
+                waLog("warn", email, "persistent no-session failures for contact — resetting all Signal keys", { participant: noSessParticipant, failCount });
+                auth.resetKeys().catch(() => {}).finally(() => {
+                  try { sock.end(new Error("contact-decrypt-reset")); } catch {}
+                });
+              }
+            }
+            return;
+          }
 
           waLog("error", email, "baileys-error", { detail });
 

@@ -275,6 +275,77 @@ export async function mondayDeleteUpdate(token: string, updateId: string): Promi
   return `Deleted update ${updateId}`;
 }
 
+// ── Connected Board Resolver ──────────────────────────────────────────────────
+
+export async function mondayResolveConnectedItem(
+  token: string,
+  boardId: string,
+  columnId: string,
+  searchName: string,
+): Promise<string> {
+  const boardData = await gql(token, `
+    query($boardId: ID!) {
+      boards(ids: [$boardId]) {
+        columns { id title type settings_str }
+      }
+    }`, { boardId });
+
+  const columns: any[] = boardData.boards?.[0]?.columns ?? [];
+  const col = columns.find((c: any) =>
+    c.id === columnId || c.title.toLowerCase() === columnId.toLowerCase()
+  );
+  if (!col) return `Column "${columnId}" not found on board ${boardId}.`;
+  if (col.type !== "board_relation") return `Column "${col.title}" is type "${col.type}", not a connected board column (board_relation).`;
+
+  let settings: any = {};
+  try { settings = JSON.parse(col.settings_str ?? "{}"); } catch {}
+  const connectedBoardIds: string[] = (settings.boardIds ?? []).map(String);
+  if (!connectedBoardIds.length) return `Column "${col.title}" has no connected boards configured.`;
+
+  const allMatches: Array<{ id: string; name: string; boardId: string; boardName: string; score: number }> = [];
+
+  for (const cbId of connectedBoardIds) {
+    const searchData = await gql(token, `
+      query($boardId: ID!, $searchTerm: String!) {
+        boards(ids: [$boardId]) {
+          name
+          items_page(limit: 20, query_params: {
+            rules: [{ column_id: "__any__", compare_value: [$searchTerm], operator: "contains_terms" }]
+          }) {
+            items { id name }
+          }
+        }
+      }`, { boardId: cbId, searchTerm: searchName });
+
+    const board = searchData.boards?.[0];
+    if (!board) continue;
+    const items: any[] = board.items_page?.items ?? [];
+    for (const item of items) {
+      const nameLower = (item.name as string).toLowerCase();
+      const searchLower = searchName.toLowerCase();
+      const score = nameLower === searchLower ? 100
+        : nameLower.startsWith(searchLower) ? 80
+        : nameLower.includes(searchLower) ? 60 : 40;
+      allMatches.push({ id: item.id, name: item.name, boardId: cbId, boardName: board.name, score });
+    }
+  }
+
+  if (!allMatches.length) {
+    return `No items matching "${searchName}" found in connected boards for column "${col.title}". Try a shorter or different search term.`;
+  }
+
+  allMatches.sort((a, b) => b.score - a.score);
+  const top = allMatches[0];
+
+  return json({
+    columnTitle: col.title,
+    columnId: col.id,
+    bestMatch: { id: top.id, name: top.name, boardId: top.boardId, boardName: top.boardName },
+    otherMatches: allMatches.slice(1, 5).map(m => ({ id: m.id, name: m.name, boardId: m.boardId, boardName: m.boardName })),
+    columnValue: { item_ids: [Number(top.id)] },
+  });
+}
+
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 export async function mondayGetMe(token: string): Promise<string> {
