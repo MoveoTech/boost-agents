@@ -42,13 +42,16 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 // email → auth state (for external purge access)
-const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; freezeCredsSave: () => void }>();
+const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; freezeCredsSave: () => void; resetKeys: () => Promise<void> }>();
 // persistent reconnect attempt counter — survives session object recreation so backoff grows correctly
 const reconnectAttempts = new Map<string, number>();
 // consecutive crypto error counter — reset on successful connect
 const cryptoRetryCount = new Map<string, number>();
 // tracks how many times we've seen loggedOut (401) for an email — retry once before deleting creds
 const loggedOutRetries = new Map<string, number>();
+// decrypt error rate limiter: email → { count, windowStart }
+// if count exceeds threshold within window, we force-close the socket to break the error loop
+const decryptErrorRate = new Map<string, { count: number; windowStart: number }>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -255,6 +258,18 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
       credsSaveEnabled = false;
       await deleteCreds(agentId, email, oauthUrl, oauthKey);
     },
+    // Wipe only Signal session keys from Firestore, preserving account credentials (creds).
+    // Used on crypto errors during reconnect: the linked device pairing is still valid on
+    // the phone, but the local Signal ratchet state is stale. Clearing keys lets WhatsApp
+    // negotiate a fresh Signal session without a QR re-scan.
+    resetKeys: async () => {
+      if (saveDebounceTimer) { clearTimeout(saveDebounceTimer); saveDebounceTimer = null; }
+      for (const k of Object.keys(keyMap)) delete keyMap[k];
+      await saveCredsToFirestore(agentId, email, oauthUrl, oauthKey, {
+        creds: await serialize(creds),
+        keys: await serialize({}),
+      });
+    },
   };
 }
 
@@ -378,7 +393,7 @@ export async function connectSession(
     }
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
-    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, freezeCredsSave: auth.freezeCredsSave });
+    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, freezeCredsSave: auth.freezeCredsSave, resetKeys: auth.resetKeys });
 
     // Per-socket message store — Baileys calls getMessage when it needs to retry-decrypt
     // a failed message (Signal retries are very common). Returning undefined makes every
@@ -451,11 +466,11 @@ export async function connectSession(
 
           waLog("error", email, "baileys-error", { detail });
 
-          // For outgoing copies (fromMe: true), only purge on SessionError — that means the
-          // Signal session is persistently broken and won't self-heal. PreKeyError is expected
-          // on fresh connect and resolves without intervention, so skip purge for that.
-          if (detail?.key?.fromMe && errName !== "SessionError") {
-            waLog("warn", email, "decrypt error on outgoing copy — skipping purge", { remoteJid: detail?.key?.remoteJid, errName });
+          // PreKeyError on outgoing copies (fromMe) is expected on fresh connect and resolves
+          // without intervention — skip purge. All other decrypt errors (including
+          // MessageCounterError) must purge even on fromMe to break the retry loop.
+          if (detail?.key?.fromMe && errName === "PreKeyError") {
+            waLog("warn", email, "decrypt error on outgoing copy — skipping purge (PreKeyError expected on fresh connect)", { remoteJid: detail?.key?.remoteJid });
             return;
           }
 
@@ -467,6 +482,24 @@ export async function connectSession(
           } else {
             const purged = auth.purgeContactKeys("session-");
             waLog("warn", email, "auto-purge (no participant) — purged all session keys", { purgedKeys: purged, errMsg });
+          }
+
+          // Rate-limit check: if decrypt errors flood (>10 in 15s), WhatsApp is re-delivering
+          // undecryptable history messages after a reconnect. Purging alone won't stop it —
+          // force-close the socket so the reconnect gets a clean slate and WhatsApp stops replaying.
+          const now = Date.now();
+          const rate = decryptErrorRate.get(email) ?? { count: 0, windowStart: now };
+          if (now - rate.windowStart > 15_000) {
+            rate.count = 1;
+            rate.windowStart = now;
+          } else {
+            rate.count += 1;
+          }
+          decryptErrorRate.set(email, rate);
+          if (rate.count > 10) {
+            decryptErrorRate.delete(email);
+            waLog("warn", email, "decrypt error flood detected — closing socket to force clean reconnect", { errorCount: rate.count });
+            try { sock.end(new Error("decrypt-flood-restart")); } catch {}
           }
         },
         child: () => ({ trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) }),
@@ -502,6 +535,7 @@ export async function connectSession(
         reconnectAttempts.delete(email); // reset persistent backoff counter on successful connect
         cryptoRetryCount.delete(email);  // reset crypto retry counter
         loggedOutRetries.delete(email);  // reset 401-retry counter
+        decryptErrorRate.delete(email);  // reset decrypt flood counter
         seedOwnerKeys(); // populate ownerKeys from sock.user (phone + LID)
         waLog("info", email, "connected successfully", { jid: sock.user?.id, ownerKeys: [...ownerKeys] });
         session.connectedListeners.forEach((fn) => fn());
@@ -552,21 +586,22 @@ export async function connectSession(
             await deleteCreds(agentId, email, oauthUrl, oauthKey);
           }
         } else if (isCryptoError) {
-          // purgeConnectingSessionKeys() already incremented cryptoRetryCount and closed
-          // the socket. If still within retry budget, reconnect with a fresh crypto context
-          // (stored creds are likely valid — the error is transient Signal state desync).
+          // purgeConnectingSessionKeys() already reset Signal keys in Firestore and closed
+          // the socket. Reconnect — the fresh keys will trigger a new Signal handshake.
+          // Only wipe full credentials after 5 consecutive failures (creds may be corrupt).
           const cryptoAttempt = cryptoRetryCount.get(email) ?? 0;
           const carryEveryConnect = session.onEveryConnect;
-          if (cryptoAttempt > 0 && cryptoAttempt < 3) {
-            waLog("warn", email, `crypto error (attempt ${cryptoAttempt}/2) — reconnecting with fresh context`);
+          if (cryptoAttempt < 5) {
+            const delay = Math.min(10_000 * (cryptoAttempt || 1), 60_000);
+            waLog("warn", email, `crypto error (attempt ${cryptoAttempt}) — Signal keys reset, reconnecting in ${delay / 1000}s`);
             setTimeout(() => {
               connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, undefined, carryEveryConnect).catch((e) =>
                 waLog("error", email, "reconnect after crypto error failed", { error: e.message })
               );
-            }, cryptoAttempt * 10_000);
+            }, delay);
           } else {
             cryptoRetryCount.delete(email);
-            waLog("warn", email, "crypto error on connect — wiping stored credentials, user must re-scan QR");
+            waLog("warn", email, "crypto error after 5 key resets — credentials may be corrupt, wiping for re-scan");
             await deleteCreds(agentId, email, oauthUrl, oauthKey);
           }
         } else if (reason?.includes("QR refs attempts ended") || reason?.includes("QR timeout")) {
@@ -996,17 +1031,12 @@ export function purgeConnectingSessionKeys(): void {
       cryptoRetryCount.set(email, attempt);
       sessions.delete(email); // prevent duplicate calls on rapid re-fire
 
-      if (attempt >= 3) {
-        // Three consecutive crypto errors on connect = credentials are corrupt.
-        // Wipe them so the next session starts clean and prompts for a new QR scan.
-        cryptoRetryCount.delete(email);
-        waLog("warn", email, `crypto error on connect attempt ${attempt} — wiping corrupt credentials, user must re-scan QR`);
-        authRegistry.get(email)?.deleteAllCreds().catch(() => {});
-      } else {
-        waLog("warn", email, `native crypto error during connect (attempt ${attempt}) — closing socket, will retry`);
-        // Pass the error so connection.update sees isCryptoError=true if it fires
-        try { session.socket?.end?.(new Error("Unsupported state or unable to authenticate data")); } catch {}
-      }
+      // Always reset Signal keys in Firestore (not full creds) — the phone still has this
+      // linked device paired, so account credentials are valid. Stale ratchet keys are the
+      // actual cause of crypto errors; clearing them lets WhatsApp negotiate a fresh session.
+      waLog("warn", email, `native crypto error during connect (attempt ${attempt}) — resetting Signal keys and retrying`);
+      authRegistry.get(email)?.resetKeys().catch(() => {});
+      try { session.socket?.end?.(new Error("Unsupported state or unable to authenticate data")); } catch {}
     }
   }
 }
