@@ -524,6 +524,16 @@ export async function connectSession(
             const jidFragment = participant.split(":")[0].split("@")[0];
             const purged = auth.purgeContactKeys(jidFragment);
             waLog("warn", email, "auto-purge triggered", { participant, purgedKeys: purged, errMsg });
+            if (purged === 0 && errName === "PreKeyError") {
+              // No local session keys exist for this contact (e.g. fresh QR scan wiped them).
+              // Purging nothing can't help — the PreKey is simply gone. Reset all Signal
+              // keys so WhatsApp negotiates a fresh PreKey exchange on next message.
+              waLog("warn", email, "PreKeyError with no local keys — resetting Signal keys for fresh PreKey exchange", { participant });
+              auth.resetKeys().catch(() => {}).finally(() => {
+                try { sock.end(new Error("no-prekey-reset")); } catch {}
+              });
+              return;
+            }
             const contactKey = `${email}::${jidFragment}`;
             recentlyPurgedContacts.set(contactKey, Date.now());
             const failCount = (contactDecryptFailures.get(contactKey) ?? 0) + 1;
