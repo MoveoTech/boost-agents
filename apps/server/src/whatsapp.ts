@@ -264,16 +264,19 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
       credsSaveEnabled = false;
       await deleteCreds(agentId, email, oauthUrl, oauthKey);
     },
-    // Wipe only Signal session keys from Firestore, preserving account credentials (creds).
-    // Used on crypto errors during reconnect: the linked device pairing is still valid on
-    // the phone, but the local Signal ratchet state is stale. Clearing keys lets WhatsApp
-    // negotiate a fresh Signal session without a QR re-scan.
+    // Wipe only Signal session keys from Firestore, preserving account credentials (creds)
+    // and app-state-sync keys. Used on crypto errors during reconnect: the linked device
+    // pairing is still valid on the phone, but the local Signal ratchet state is stale.
+    // IMPORTANT: app-state-sync-* keys must NOT be wiped — WhatsApp uses them to verify
+    // the linked device's identity. Wiping them causes a 401 loggedOut on next connect.
     resetKeys: async () => {
       if (saveDebounceTimer) { clearTimeout(saveDebounceTimer); saveDebounceTimer = null; }
-      for (const k of Object.keys(keyMap)) delete keyMap[k];
+      for (const k of Object.keys(keyMap)) {
+        if (!k.startsWith("app-state-sync-")) delete keyMap[k];
+      }
       await saveCredsToFirestore(agentId, email, oauthUrl, oauthKey, {
         creds: await serialize(creds),
-        keys: await serialize({}),
+        keys: await serialize(keyMap),
       });
     },
   };
@@ -462,6 +465,11 @@ export async function connectSession(
           const errName: string = detail?.err?.name ?? "";
           const isDecryptError = errMsg.includes("Bad MAC") || errMsg.includes("MessageCounterError") || errMsg.includes("Key used already") || errName === "SessionError" || errName === "PreKeyError";
           if (!isDecryptError) return;
+
+          // "Invalid PreKey ID" is expected after a fresh QR scan — WhatsApp delivers queued
+          // messages that were encrypted to PreKeys that no longer exist on the new device.
+          // These are unrecoverable and harmless; purging or resetting is pointless and dangerous.
+          if (errMsg.includes("Invalid PreKey ID")) return;
 
           // "No session record" / "No matching sessions found" = no Signal session for this contact.
           // Expected after fresh QR scan (old pending messages), but also happens after a key purge
