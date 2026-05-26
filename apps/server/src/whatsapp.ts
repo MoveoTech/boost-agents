@@ -670,14 +670,18 @@ export async function connectSession(
             await deleteCreds(agentId, email, oauthUrl, oauthKey);
           }
         } else if (isCryptoError) {
-          // Noise protocol error during WebSocket handshake. We don't touch Firestore on
-          // each retry — just close and reconnect. After 3 failures the Noise state in
-          // creds is likely corrupt (e.g. partial update mid-handshake was saved); wipe
-          // everything so the next connect starts clean and prompts for a new QR scan.
+          // Noise protocol error during WebSocket handshake. "Unsupported state or unable
+          // to authenticate data" is often transient — WA force-closes the stream (code 500)
+          // and its noise session state resets; our noise key is still valid. Fast retries
+          // handle transient cases; slow retries (3 min) handle extended WA outages.
+          // Only delete creds after 10 failures (~16 min total), which indicates genuine
+          // Noise key corruption rather than a transient server-side reset.
           const cryptoAttempt = cryptoRetryCount.get(email) ?? 0;
           const carryEveryConnect = session.onEveryConnect;
-          if (cryptoAttempt < 5) {
-            const delay = Math.min(10_000 * (cryptoAttempt || 1), 60_000);
+          if (cryptoAttempt < 10) {
+            const delay = cryptoAttempt < 5
+              ? Math.min(10_000 * (cryptoAttempt || 1), 60_000)
+              : 3 * 60_000; // slow retries: give WA time to reset its session state
             waLog("warn", email, `crypto error (attempt ${cryptoAttempt}) — reconnecting in ${delay / 1000}s`);
             setTimeout(() => {
               connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, undefined, carryEveryConnect).catch((e) =>
@@ -686,7 +690,7 @@ export async function connectSession(
             }, delay);
           } else {
             cryptoRetryCount.delete(email);
-            waLog("warn", email, "crypto error after 5 retries — Noise credentials corrupt, wiping for re-scan");
+            waLog("warn", email, "crypto error after 10 retries — Noise credentials corrupt, wiping for re-scan");
             await deleteCreds(agentId, email, oauthUrl, oauthKey);
           }
         } else if (reason?.includes("QR refs attempts ended") || reason?.includes("QR timeout")) {
