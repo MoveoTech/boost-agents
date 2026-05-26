@@ -620,8 +620,9 @@ export async function connectSession(
         cryptoRetryCount.delete(email);  // reset crypto retry counter
         loggedOutRetries.delete(email);  // reset 401-retry counter
         decryptErrorRate.delete(email);  // reset decrypt flood counter
-        // Clear per-contact counters so backlogged messages on reconnect don't immediately re-trigger closes.
+        // Clear per-contact state so backlogged messages on reconnect don't immediately re-trigger closes.
         for (const k of contactDecryptFailures.keys()) { if (k.startsWith(email + "::")) contactDecryptFailures.delete(k); }
+        for (const k of recentlyPurgedContacts.keys()) { if (k.startsWith(email + "::")) recentlyPurgedContacts.delete(k); }
         seedOwnerKeys(); // populate ownerKeys from sock.user (phone + LID)
         waLog("info", email, "connected successfully", { jid: sock.user?.id, ownerKeys: [...ownerKeys] });
         session.connectedListeners.forEach((fn) => fn());
