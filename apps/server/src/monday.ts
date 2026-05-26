@@ -199,11 +199,21 @@ export async function mondayCreateSubitem(token: string, parentItemId: string, i
 }
 
 export async function mondayCreateItem(token: string, boardId: string, itemName: string, columnValues?: Record<string, unknown>, groupId?: string): Promise<string> {
+  // Create item with name only — Monday silently drops column_values on create if any
+  // value fails validation. Setting columns separately via change_multiple_column_values
+  // surfaces real errors instead of silently succeeding with empty columns.
   const data = await gql(token, `
-    mutation($boardId: ID!, $itemName: String!, $columnValues: JSON, $groupId: String) {
-      create_item(board_id: $boardId, item_name: $itemName, column_values: $columnValues, group_id: $groupId) { id name }
-    }`, { boardId, itemName, columnValues: columnValues ? JSON.stringify(columnValues) : undefined, groupId });
-  return `Created item "${data.create_item.name}" (id: ${data.create_item.id})`;
+    mutation($boardId: ID!, $itemName: String!, $groupId: String) {
+      create_item(board_id: $boardId, item_name: $itemName, group_id: $groupId) { id name }
+    }`, { boardId, itemName, groupId });
+  const item = data.create_item;
+  if (columnValues && Object.keys(columnValues).length > 0) {
+    await gql(token, `
+      mutation($boardId: ID!, $itemId: ID!, $columnValues: JSON!) {
+        change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $columnValues) { id }
+      }`, { boardId, itemId: item.id, columnValues: JSON.stringify(columnValues) });
+  }
+  return `Created item "${item.name}" (id: ${item.id})`;
 }
 
 export async function mondayUpdateItem(token: string, boardId: string, itemId: string, columnValues: Record<string, unknown>): Promise<string> {
@@ -299,8 +309,10 @@ export async function mondayResolveConnectedItem(
 
   let settings: any = {};
   try { settings = JSON.parse(col.settings_str ?? "{}"); } catch {}
-  const connectedBoardIds: string[] = (settings.boardIds ?? []).map(String);
-  if (!connectedBoardIds.length) return `Column "${col.title}" has no connected boards configured.`;
+  // Monday uses "boardIds" for multi-board connections; fall back to other known field names.
+  const rawIds: unknown[] = settings.boardIds ?? settings.boardId ? [settings.boardId] : settings.linked_board_ids ?? [];
+  const connectedBoardIds: string[] = (rawIds as any[]).map(String).filter(Boolean);
+  if (!connectedBoardIds.length) return `Column "${col.title}" has no connected boards configured. Raw settings: ${JSON.stringify(settings)}`;
 
   const allMatches: Array<{ id: string; name: string; boardId: string; boardName: string; score: number }> = [];
 
@@ -341,12 +353,24 @@ export async function mondayResolveConnectedItem(
   }
 
   if (!allMatches.length) {
-    return `No items matching "${searchName}" found in connected boards for column "${col.title}". Try a shorter or different search term.`;
+    return `No items matching "${searchName}" found in connected boards (searched board IDs: ${connectedBoardIds.join(", ")}) for column "${col.title}". Try a shorter or different search term.`;
   }
 
   allMatches.sort((a, b) => b.score - a.score);
-  const top = allMatches[0];
-  const second = allMatches[1];
+
+  // Verify the top candidates actually exist — items_page can return stale/ghost IDs.
+  const candidateIds = allMatches.slice(0, 5).map(m => m.id);
+  const verifyData = await gql(token, `
+    query($ids: [ID!]!) { items(ids: $ids) { id name } }`, { ids: candidateIds });
+  const liveIds = new Set<string>((verifyData.items ?? []).map((i: any) => String(i.id)));
+  const verified = allMatches.filter(m => liveIds.has(String(m.id)));
+
+  if (!verified.length) {
+    return `Found ${allMatches.length} candidate(s) for "${searchName}" but none could be verified as existing items. Candidates: ${allMatches.map(m => `${m.name} (id: ${m.id})`).join(", ")}. Ask the user to provide the exact item name or ID.`;
+  }
+
+  const top = verified[0];
+  const second = verified[1];
 
   // Confidence: high = clear winner (score≥80, gap≥20 over 2nd or only one result)
   //             medium = plausible but ambiguous (score≥60 or close competitors)
@@ -369,7 +393,7 @@ export async function mondayResolveConnectedItem(
     confidence,
     suggestion,
     bestMatch: { id: top.id, name: top.name, boardId: top.boardId, boardName: top.boardName },
-    otherMatches: allMatches.slice(1, 5).map(m => ({ id: m.id, name: m.name, boardId: m.boardId, boardName: m.boardName })),
+    otherMatches: verified.slice(1, 5).map(m => ({ id: m.id, name: m.name, boardId: m.boardId, boardName: m.boardName })),
     columnValue: { item_ids: [Number(top.id)] },
   });
 }
