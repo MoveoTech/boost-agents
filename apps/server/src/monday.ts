@@ -308,35 +308,36 @@ export async function mondayResolveConnectedItem(
   const searchNorm = normalize(searchName);
   const searchLower = searchName.toLowerCase();
 
-  // Use Monday's search API — the correct way to find items by name.
-  // items_page query_params does not support a wildcard column_id for text search.
-  const searchData = await gql(token, `
-    query($searchName: String!, $boardIds: [ID!]) {
-      search {
-        items(query: $searchName, limit: 20, board_ids: $boardIds) {
-          results {
-            live_data {
-              id name
-              board { id name }
-            }
+  // items_page with column_id:"name" + contains_text is the correct way to search
+  // items by name — no wildcard column_id exists in Monday API 2026-04.
+  for (const cbId of connectedBoardIds) {
+    const queryParams = {
+      rules: [{ column_id: "name", compare_value: [searchName], operator: "contains_text" }],
+    };
+    const searchData = await gql(token, `
+      query($boardId: ID!, $queryParams: ItemsQuery) {
+        boards(ids: [$boardId]) {
+          name
+          items_page(limit: 20, query_params: $queryParams) {
+            items { id name }
           }
         }
-      }
-    }`, { searchName, boardIds: connectedBoardIds });
+      }`, { boardId: cbId, queryParams });
 
-  const results: any[] = searchData?.search?.items?.results ?? [];
-  for (const r of results) {
-    const item = r.live_data;
-    if (!item) continue;
-    const nameLower = (item.name as string).toLowerCase();
-    const nameNorm = normalize(item.name);
-    const score = nameLower === searchLower ? 100
-      : nameNorm === searchNorm ? 95
-      : nameLower.startsWith(searchLower) ? 80
-      : nameNorm.startsWith(searchNorm) ? 75
-      : nameLower.includes(searchLower) ? 60
-      : nameNorm.includes(searchNorm) ? 55 : 40;
-    allMatches.push({ id: item.id, name: item.name, boardId: item.board?.id ?? "", boardName: item.board?.name ?? "", score });
+    const board = searchData.boards?.[0];
+    if (!board) continue;
+    const items: any[] = board.items_page?.items ?? [];
+    for (const item of items) {
+      const nameLower = (item.name as string).toLowerCase();
+      const nameNorm = normalize(item.name);
+      const score = nameLower === searchLower ? 100
+        : nameNorm === searchNorm ? 95
+        : nameLower.startsWith(searchLower) ? 80
+        : nameNorm.startsWith(searchNorm) ? 75
+        : nameLower.includes(searchLower) ? 60
+        : nameNorm.includes(searchNorm) ? 55 : 40;
+      allMatches.push({ id: item.id, name: item.name, boardId: cbId, boardName: board.name, score });
+    }
   }
 
   if (!allMatches.length) {
