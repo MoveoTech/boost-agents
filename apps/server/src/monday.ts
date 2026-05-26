@@ -309,9 +309,12 @@ export async function mondayResolveConnectedItem(
 
   let settings: any = {};
   try { settings = JSON.parse(col.settings_str ?? "{}"); } catch {}
-  // Monday uses "boardIds" for multi-board connections; fall back to other known field names.
-  const rawIds: unknown[] = settings.boardIds ?? settings.boardId ? [settings.boardId] : settings.linked_board_ids ?? [];
-  const connectedBoardIds: string[] = (rawIds as any[]).map(String).filter(Boolean);
+  // Monday uses "boardIds" (array) or "boardId" (scalar); fall back to "linked_board_ids".
+  let rawIds: unknown[];
+  if (Array.isArray(settings.boardIds) && settings.boardIds.length) rawIds = settings.boardIds;
+  else if (settings.boardId != null) rawIds = [settings.boardId];
+  else rawIds = settings.linked_board_ids ?? [];
+  const connectedBoardIds: string[] = (rawIds as any[]).map(String).filter(id => id && id !== "undefined");
   if (!connectedBoardIds.length) return `Column "${col.title}" has no connected boards configured. Raw settings: ${JSON.stringify(settings)}`;
 
   const allMatches: Array<{ id: string; name: string; boardId: string; boardName: string; score: number }> = [];
