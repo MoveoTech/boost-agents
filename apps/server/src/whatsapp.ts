@@ -680,7 +680,7 @@ export async function connectSession(
           const carryEveryConnect = session.onEveryConnect;
           if (cryptoAttempt < 10) {
             const delay = cryptoAttempt < 5
-              ? Math.min(10_000 * (cryptoAttempt || 1), 60_000)
+              ? Math.min(10_000 * (cryptoAttempt + 1), 60_000)
               : 3 * 60_000; // slow retries: give WA time to reset its session state
             waLog("warn", email, `crypto error (attempt ${cryptoAttempt}) — reconnecting in ${delay / 1000}s`);
             setTimeout(() => {

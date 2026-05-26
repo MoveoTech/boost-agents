@@ -304,28 +304,36 @@ export async function mondayResolveConnectedItem(
 
   const allMatches: Array<{ id: string; name: string; boardId: string; boardName: string; score: number }> = [];
 
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const searchNorm = normalize(searchName);
+  const searchLower = searchName.toLowerCase();
+
   for (const cbId of connectedBoardIds) {
+    const queryParams = {
+      rules: [{ column_id: "__any__", compare_value: [searchName], operator: "contains_terms" }],
+    };
     const searchData = await gql(token, `
-      query($boardId: ID!, $searchTerm: String!) {
+      query($boardId: ID!, $queryParams: ItemsQuery) {
         boards(ids: [$boardId]) {
           name
-          items_page(limit: 20, query_params: {
-            rules: [{ column_id: "__any__", compare_value: [$searchTerm], operator: "contains_terms" }]
-          }) {
+          items_page(limit: 20, query_params: $queryParams) {
             items { id name }
           }
         }
-      }`, { boardId: cbId, searchTerm: searchName });
+      }`, { boardId: cbId, queryParams });
 
     const board = searchData.boards?.[0];
     if (!board) continue;
     const items: any[] = board.items_page?.items ?? [];
     for (const item of items) {
       const nameLower = (item.name as string).toLowerCase();
-      const searchLower = searchName.toLowerCase();
+      const nameNorm = normalize(item.name);
       const score = nameLower === searchLower ? 100
+        : nameNorm === searchNorm ? 95
         : nameLower.startsWith(searchLower) ? 80
-        : nameLower.includes(searchLower) ? 60 : 40;
+        : nameNorm.startsWith(searchNorm) ? 75
+        : nameLower.includes(searchLower) ? 60
+        : nameNorm.includes(searchNorm) ? 55 : 40;
       allMatches.push({ id: item.id, name: item.name, boardId: cbId, boardName: board.name, score });
     }
   }
@@ -336,10 +344,28 @@ export async function mondayResolveConnectedItem(
 
   allMatches.sort((a, b) => b.score - a.score);
   const top = allMatches[0];
+  const second = allMatches[1];
+
+  // Confidence: high = clear winner (score≥80, gap≥20 over 2nd or only one result)
+  //             medium = plausible but ambiguous (score≥60 or close competitors)
+  //             low = weak match, must verify
+  const gap = second ? top.score - second.score : 999;
+  const confidence: "high" | "medium" | "low" =
+    top.score >= 80 && gap >= 20 ? "high" :
+    top.score >= 60 ? "medium" : "low";
+
+  const suggestion =
+    confidence === "high"
+      ? "High confidence — proceed with bestMatch."
+      : confidence === "medium"
+      ? "Medium confidence — show the user bestMatch name and otherMatches and ask them to confirm before creating the item."
+      : "Low confidence — show all options to the user and ask them to pick one before proceeding.";
 
   return json({
     columnTitle: col.title,
     columnId: col.id,
+    confidence,
+    suggestion,
     bestMatch: { id: top.id, name: top.name, boardId: top.boardId, boardName: top.boardName },
     otherMatches: allMatches.slice(1, 5).map(m => ({ id: m.id, name: m.name, boardId: m.boardId, boardName: m.boardName })),
     columnValue: { item_ids: [Number(top.id)] },

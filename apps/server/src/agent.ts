@@ -443,7 +443,11 @@ IMPORTANT: Use real column IDs from monday_get_board — never guess. Same value
     name: "monday_resolve_connected_item",
     description: `Resolve a text name to an item ID for a connected board column (board_relation type).
 When a user provides a name for a board_relation column (e.g. "Boost Project: Sheba Dev"), call this tool to find the matching item ID in the connected board.
-Returns the best-matching item ID and the ready-to-use column value object {"item_ids":[id]}.
+Returns bestMatch, otherMatches, columnValue (ready-to-use), and a confidence level with a suggestion field.
+IMPORTANT: always follow the suggestion field in the response:
+- confidence "high" → proceed with bestMatch automatically
+- confidence "medium" → show the user the bestMatch name and ask them to confirm before creating/updating
+- confidence "low" → show all options and ask the user to pick one before proceeding
 REQUIRED before setting any board_relation column — never guess or use the name as-is.
 Column can be specified by its ID or title (case-insensitive).`,
     parameters: {
