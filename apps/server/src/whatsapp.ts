@@ -450,9 +450,10 @@ export async function connectSession(
       shouldSyncHistoryMessage: () => false,
       keepAliveIntervalMs: 20_000,    // ping WhatsApp every 20s to prevent 408 connection-lost drops
       defaultQueryTimeoutMs: 120_000, // give WhatsApp 2min to respond to fetchProps on init (default 60s too tight)
-      maxMsgRetryCount: 0,            // 0 = never send retry requests to WhatsApp — retries cause a flood of undecryptable
-                                      // re-deliveries after fresh QR scan, which triggers WhatsApp server-side disconnects.
-                                      // Signal sessions re-establish automatically on the next fresh message from a contact.
+      maxMsgRetryCount: 3,            // Allow up to 3 retries per message so Baileys can request sender key redistribution
+                                      // after reconnect. Without retries, group messages fail to decrypt permanently until
+                                      // the sender naturally sends a new message with a fresh key distribution.
+                                      // The original MessageCounterError flood was a Noise protocol issue, not Signal retries.
       retryRequestDelayMs: 3000,
       logger: {
         level: "warn",
