@@ -394,8 +394,12 @@ export async function connectSession(
     try {
       savedCreds = await loadCreds(agentId, email, oauthUrl, oauthKey);
     } catch (err) {
-      waLog("warn", email, "deferring session — could not load credentials", { error: (err as Error).message });
+      waLog("warn", email, "could not load credentials (transient) — retrying in 30s", { error: (err as Error).message });
       sessions.delete(email);
+      const carryEveryConnect2 = onEveryConnect;
+      setTimeout(() => {
+        connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, undefined, carryEveryConnect2).catch(() => {});
+      }, 30_000);
       return;
     }
     if (!savedCreds && !onQR) {
@@ -430,11 +434,18 @@ export async function connectSession(
       version,
       auth: auth.state,
       printQRInTerminal: false,
-      browser: ["Chrome", "Chrome", "120.0.0"],
+      browser: ["Ubuntu", "Chrome", "22.04.4"],
       syncFullHistory: false,
       markOnlineOnConnect: false,
       // Return stored messages so Baileys can retry-decrypt Signal failures instead of giving up
       getMessage: async (key) => socketMsgStore.get(key.id ?? "") ?? undefined,
+      // Wire our group metadata cache into Baileys so it uses it internally (retry logic,
+      // participant lookups during decrypt) instead of making cold network requests.
+      cachedGroupMetadata: async (jid: string) => {
+        const cached = groupMetaCache.get(jid);
+        if (cached && Date.now() - cached.ts < GROUP_META_TTL_MS) return { subject: cached.subject } as any;
+        return undefined;
+      },
       // Never process history messages — we only want real-time messages
       shouldSyncHistoryMessage: () => false,
       keepAliveIntervalMs: 20_000,    // ping WhatsApp every 20s to prevent 408 connection-lost drops
@@ -482,30 +493,24 @@ export async function connectSession(
               const purgeTs = recentlyPurgedContacts.get(contactKey);
               if (purgeTs && Date.now() - purgeTs < 300_000) {
                 // Post-purge no-session: session was wiped and WhatsApp can't re-establish it.
-                // Reset immediately — no threshold needed, we know this contact is stuck.
+                // Reset keys — don't close, closing just creates another reconnect burst with the same errors.
                 recentlyPurgedContacts.delete(contactKey);
                 contactDecryptFailures.delete(contactKey);
-                waLog("warn", email, "no-session after key purge — resetting all Signal keys immediately", { participant: noSessParticipant });
-                auth.resetKeys().catch(() => {}).finally(() => {
-                  try { sock.end(new Error("contact-decrypt-reset")); } catch {}
-                });
+                waLog("warn", email, "no-session after key purge — resetting Signal keys (staying connected)", { participant: noSessParticipant });
+                auth.resetKeys().catch(() => {});
               } else {
                 // Unknown contact no-session: could be post-QR-scan replay. Count to 5 before resetting.
                 const failCount = (contactDecryptFailures.get(contactKey) ?? 0) + 1;
                 contactDecryptFailures.set(contactKey, failCount);
                 if (failCount >= 5) {
                   contactDecryptFailures.delete(contactKey);
-                  waLog("warn", email, "persistent no-session failures for contact — resetting all Signal keys", { participant: noSessParticipant, failCount });
-                  auth.resetKeys().catch(() => {}).finally(() => {
-                    try { sock.end(new Error("contact-decrypt-reset")); } catch {}
-                  });
+                  waLog("warn", email, "persistent no-session failures for contact — resetting Signal keys (staying connected)", { participant: noSessParticipant, failCount });
+                  auth.resetKeys().catch(() => {});
                 }
               }
             }
             return;
           }
-
-          waLog("error", email, "baileys-error", { detail });
 
           // PreKeyError on outgoing copies (fromMe=true, remoteJid=someone else) is expected
           // on fresh connect and resolves without intervention — skip purge.
@@ -536,10 +541,8 @@ export async function connectSession(
               const lastReset = lastZeroPurgeReset.get(email) ?? 0;
               if (Date.now() - lastReset > 300_000) {
                 lastZeroPurgeReset.set(email, Date.now());
-                waLog("warn", email, "PreKeyError with no local keys — resetting Signal keys for fresh PreKey exchange", { participant });
-                auth.resetKeys().catch(() => {}).finally(() => {
-                  try { sock.end(new Error("no-prekey-reset")); } catch {}
-                });
+                waLog("warn", email, "PreKeyError with no local keys — resetting Signal keys for fresh PreKey exchange (staying connected)", { participant });
+                auth.resetKeys().catch(() => {});
               } else {
                 waLog("warn", email, "PreKeyError with no local keys — skipping reset (cooldown active)", { participant, msSinceLastReset: Date.now() - lastReset });
               }
@@ -551,11 +554,8 @@ export async function connectSession(
             contactDecryptFailures.set(contactKey, failCount);
             if (failCount >= 3) {
               contactDecryptFailures.delete(contactKey);
-              waLog("warn", email, "persistent decrypt failures for contact — resetting all Signal keys", { participant, failCount });
-              auth.resetKeys().catch(() => {}).finally(() => {
-                try { sock.end(new Error("contact-decrypt-reset")); } catch {}
-              });
-              return;
+              waLog("warn", email, "persistent decrypt failures for contact — resetting Signal keys (staying connected)", { participant, failCount });
+              auth.resetKeys().catch(() => {});
             }
           } else {
             const purged = auth.purgeContactKeys("session-");
@@ -620,6 +620,7 @@ export async function connectSession(
         cryptoRetryCount.delete(email);  // reset crypto retry counter
         loggedOutRetries.delete(email);  // reset 401-retry counter
         decryptErrorRate.delete(email);  // reset decrypt flood counter
+        lastZeroPurgeReset.delete(email); // reset PreKeyError cooldown (stale cooldown blocks needed resets)
         // Clear per-contact state so backlogged messages on reconnect don't immediately re-trigger closes.
         for (const k of contactDecryptFailures.keys()) { if (k.startsWith(email + "::")) contactDecryptFailures.delete(k); }
         for (const k of recentlyPurgedContacts.keys()) { if (k.startsWith(email + "::")) recentlyPurgedContacts.delete(k); }
@@ -681,21 +682,20 @@ export async function connectSession(
           // Noise key corruption rather than a transient server-side reset.
           const cryptoAttempt = cryptoRetryCount.get(email) ?? 0;
           const carryEveryConnect = session.onEveryConnect;
-          if (cryptoAttempt < 10) {
-            const delay = cryptoAttempt < 5
-              ? Math.min(10_000 * (cryptoAttempt + 1), 60_000)
-              : 3 * 60_000; // slow retries: give WA time to reset its session state
-            waLog("warn", email, `crypto error (attempt ${cryptoAttempt}) — reconnecting in ${delay / 1000}s`);
-            setTimeout(() => {
-              connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, undefined, carryEveryConnect).catch((e) =>
-                waLog("error", email, "reconnect after crypto error failed", { error: e.message })
-              );
-            }, delay);
-          } else {
-            cryptoRetryCount.delete(email);
-            waLog("warn", email, "crypto error after 10 retries — Noise credentials corrupt, wiping for re-scan");
-            await deleteCreds(agentId, email, oauthUrl, oauthKey);
-          }
+          // Never delete credentials on crypto errors — Noise handshake failures are
+          // caused by transient networking or WA server issues, not by corrupt credentials.
+          // The phone's linked device pairing is still valid. Keep retrying indefinitely:
+          // fast for the first 5 attempts, then slow (3 min). The user can always manually
+          // disconnect and re-scan if they genuinely need to re-pair.
+          const delay = cryptoAttempt < 5
+            ? Math.min(10_000 * (cryptoAttempt + 1), 60_000)
+            : 3 * 60_000;
+          waLog("warn", email, `crypto error (attempt ${cryptoAttempt}) — reconnecting in ${delay / 1000}s`);
+          setTimeout(() => {
+            connectSession(email, agentId, oauthUrl, oauthKey, mentionHandler, undefined, undefined, carryEveryConnect).catch((e) =>
+              waLog("error", email, "reconnect after crypto error failed", { error: e.message })
+            );
+          }, delay);
         } else if (reason?.includes("QR refs attempts ended") || reason?.includes("QR timeout")) {
           // QR was generated but nobody scanned it — stop reconnecting to avoid an
           // infinite QR loop. User must reconnect explicitly via the settings UI.
