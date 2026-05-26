@@ -530,6 +530,11 @@ export async function connectSession(
 
           const participant: string = detail?.key?.participant ?? detail?.key?.remoteJid ?? "";
           if (participant) {
+            // @lid = WA internal linked-device protocol messages. Pre-key failures here are
+            // backlog replay from old sessions — we never need to decrypt these. Calling
+            // resetKeys() or purgeContactKeys() for @lid breaks Signal state for ALL real
+            // contacts and causes a self-perpetuating Invalid-PreKey-ID cycle on every reconnect.
+            if (participant.endsWith("@lid")) return;
             const jidFragment = participant.split(":")[0].split("@")[0];
             const purged = auth.purgeContactKeys(jidFragment);
             waLog("warn", email, "auto-purge triggered", { participant, purgedKeys: purged, errMsg });
