@@ -78,14 +78,7 @@ jobs:
           printf '%s' "${{ inputs.gemini_api_key }}" | gh secret set GEMINI_API_KEY --repo "$REPO"
           echo "✓ GEMINI_API_KEY"
 
-          if [ -n "${{ secrets.OAUTH_SERVICE_URL }}" ]; then
-            printf '%s' "${{ secrets.OAUTH_SERVICE_URL }}" | gh secret set OAUTH_SERVICE_URL --repo "$REPO"
-            echo "✓ OAUTH_SERVICE_URL"
-          fi
-          if [ -n "${{ secrets.OAUTH_SERVICE_KEY }}" ]; then
-            printf '%s' "${{ secrets.OAUTH_SERVICE_KEY }}" | gh secret set OAUTH_SERVICE_KEY --repo "$REPO"
-            echo "✓ OAUTH_SERVICE_KEY (master — replaced by per-agent key on first deploy)"
-          fi
+          # OAUTH_SERVICE_URL and OAUTH_SERVICE_KEY are org-level secrets inherited via "secrets: inherit" — no need to copy
 
           if [ -n "${{ inputs.admin_emails }}" ]; then
             printf '%s' "${{ inputs.admin_emails }}" | gh secret set ADMIN_EMAILS --repo "$REPO"

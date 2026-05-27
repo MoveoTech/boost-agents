@@ -72,17 +72,20 @@ jobs:
       - name: Provision GCP Project
         id: provision
         run: |
+          # Hub repo deploys to its own master project — no provisioning needed
+          if [ "${{ github.repository }}" = "MoveoTech/boost-agents" ]; then
+            echo "project_id=boost-agents-496211" >> $GITHUB_OUTPUT
+            echo "BOOST_HUB=true" >> $GITHUB_ENV
+            echo "OAUTH_MASTER_KEY_VALUE=${{ secrets.OAUTH_SERVICE_KEY }}" >> $GITHUB_ENV
+            exit 0
+          fi
+
           RAW_NAME="${{ github.event.repository.name }}"
           STRIPPED_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-20)
           # Strip leading "boost-" to avoid double-prefix (repo named "boost-X" → project "boost-X-v7" not "boost-boost-X-v7")
           STRIPPED_NAME="${STRIPPED_NAME#boost-}"
           PROJECT_ID="boost-${STRIPPED_NAME}-v7"
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
-          # Mark hub deployment so server enables Create Agent features
-          if [ "${{ github.repository }}" = "MoveoTech/boost-agents" ]; then
-            echo "BOOST_HUB=true" >> $GITHUB_ENV
-            echo "OAUTH_MASTER_KEY_VALUE=${{ secrets.OAUTH_SERVICE_KEY }}" >> $GITHUB_ENV
-          fi
 
           echo "Attempting to manage project $PROJECT_ID..."
           gcloud projects create $PROJECT_ID --folder=324333743991 --name="$RAW_NAME" || echo "Already exists."
