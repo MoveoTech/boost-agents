@@ -300,7 +300,9 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
     resetKeys: async () => {
       if (saveDebounceTimer) { clearTimeout(saveDebounceTimer); saveDebounceTimer = null; }
       for (const k of Object.keys(keyMap)) {
-        if (!k.startsWith("app-state-sync-")) delete keyMap[k];
+        // Keep app-state-sync (prevents 401 loggedOut) and pre-keys (needed for new session establishment).
+        // Only wipe session state — the actual stale Signal ratchet state per contact.
+        if (!k.startsWith("app-state-sync-") && !k.startsWith("pre-key") && !k.startsWith("signed-pre-key")) delete keyMap[k];
       }
       await saveCredsToFirestore(agentId, email, oauthUrl, oauthKey, {
         creds: await serialize(creds),
@@ -518,6 +520,10 @@ export async function connectSession(
           if (errMsg.includes("No session record") || errMsg.includes("No matching sessions found")) {
             const noSessParticipant: string = detail?.key?.participant ?? detail?.key?.remoteJid ?? "";
             if (noSessParticipant) {
+              // @lid messages are WhatsApp-internal linked-device protocol. We never have sessions
+              // for them and never need to — they're not real contacts. Counting these toward
+              // resetKeys() wipes prekeys for all real contacts on every reconnect burst.
+              if (noSessParticipant.endsWith("@lid")) return;
               const jidFragment = noSessParticipant.split(":")[0].split("@")[0];
               const contactKey = `${email}::${jidFragment}`;
               const purgeTs = recentlyPurgedContacts.get(contactKey);
