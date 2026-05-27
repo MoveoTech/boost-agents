@@ -618,13 +618,13 @@ export async function connectSession(
           decryptErrorRate.set(email, rate);
           if (rate.count > 10) {
             decryptErrorRate.delete(email);
-            waLog("warn", email, "decrypt error flood detected — resetting Signal keys before reconnect", { errorCount: rate.count });
-            // Reset keys in Firestore BEFORE closing — flushAndFreeze() on close will
-            // also flush, but resetKeys() wipes stale keys synchronously, ensuring the next
-            // session starts clean rather than reloading the same corrupted state.
-            auth.resetKeys().catch(() => {}).finally(() => {
-              try { sock.end(new Error("decrypt-flood-restart")); } catch {}
-            });
+            waLog("warn", email, "decrypt error flood detected — resetting session keys (staying connected)", { errorCount: rate.count });
+            // Reset session keys (preserving prekeys) so WhatsApp can complete the retry/PreKey
+            // exchange without interruption. Previously we closed the socket here, but that
+            // re-delivered the backlog on every reconnect, creating an infinite retry loop.
+            // With prekeys preserved, staying connected lets the retry cycle (retryCount 0→1→2→PreKey)
+            // complete — the sender's final retry sends a PreKeyMessage we can decrypt.
+            auth.resetKeys().catch(() => {});
           }
         },
         child: () => ({ trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) }),
