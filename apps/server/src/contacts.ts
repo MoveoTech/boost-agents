@@ -1,6 +1,6 @@
 import { memorySave, memoryRecall } from "./memory";
 
-const CONTACTS_KEY = "__contacts__";
+const CONTACTS_KEY = "contacts";
 
 interface ContactEntry { name: string; phone: string; }
 type ContactMap = Record<string, ContactEntry>;

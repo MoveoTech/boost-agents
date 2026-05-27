@@ -1,5 +1,6 @@
 import { useState, useRef, forwardRef, useEffect, type KeyboardEvent } from "react";
 import type { Skill } from "../types";
+import { listContacts } from "../api/client";
 
 interface Attachment {
   data: string;
@@ -90,9 +91,15 @@ const InputBar = forwardRef<HTMLTextAreaElement, Props>(
     const [value, setValue] = useState("");
     const [isListening, setIsListening] = useState(false);
     const [paletteIdx, setPaletteIdx] = useState(0);
+    const [contacts, setContacts] = useState<{ name: string; phone: string }[]>([]);
+    const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+    const [mentionStart, setMentionStart] = useState(0);
+    const [mentionIdx, setMentionIdx] = useState(0);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const recognitionRef = useRef<any>(null);
     const paletteRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => { listContacts().then(setContacts).catch(() => {}); }, []);
 
     useEffect(() => {
       if (!prefillInput?.text) return;
@@ -117,6 +124,35 @@ const InputBar = forwardRef<HTMLTextAreaElement, Props>(
       ...BUILTIN_COMMANDS.filter((c) => !c.providers || c.providers.includes(currentProvider)),
       ...skillCommands,
     ];
+
+    const mentionFiltered = mentionQuery !== null
+      ? contacts.filter((c) => c.name.toLowerCase().includes(mentionQuery!))
+      : [];
+    const showMention = mentionQuery !== null && mentionFiltered.length > 0 && !disabled;
+
+    const checkMention = (text: string, cursor: number) => {
+      const before = text.slice(0, cursor);
+      const m = before.match(/@([^\s]*)$/);
+      if (m) {
+        setMentionQuery(m[1].toLowerCase());
+        setMentionStart(cursor - m[0].length);
+        setMentionIdx(0);
+      } else {
+        setMentionQuery(null);
+      }
+    };
+
+    const applyMention = (contact: { name: string; phone: string }) => {
+      const queryLen = mentionQuery?.length ?? 0;
+      const newValue = value.slice(0, mentionStart) + "@" + contact.name + " " + value.slice(mentionStart + 1 + queryLen);
+      setValue(newValue);
+      setMentionQuery(null);
+      const pos = mentionStart + 1 + contact.name.length + 1;
+      setTimeout(() => {
+        const el = ref && "current" in ref ? ref.current : null;
+        if (el) { el.focus(); el.setSelectionRange(pos, pos); el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; }
+      }, 0);
+    };
 
     // Detect /command pattern at start of input
     const slashMatch = value.match(/^\/(\S*)/);
@@ -169,6 +205,13 @@ const InputBar = forwardRef<HTMLTextAreaElement, Props>(
     };
 
     const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (showMention) {
+        if (e.key === "ArrowDown") { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionFiltered.length); return; }
+        if (e.key === "ArrowUp")   { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionFiltered.length) % mentionFiltered.length); return; }
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); applyMention(mentionFiltered[mentionIdx]); return; }
+        if (e.key === "Tab") { e.preventDefault(); applyMention(mentionFiltered[mentionIdx]); return; }
+        if (e.key === "Escape") { setMentionQuery(null); return; }
+      }
       if (showPalette && filtered.length > 0) {
         if (e.key === "ArrowDown") { e.preventDefault(); setPaletteIdx((i) => (i + 1) % filtered.length); return; }
         if (e.key === "ArrowUp")   { e.preventDefault(); setPaletteIdx((i) => (i - 1 + filtered.length) % filtered.length); return; }
@@ -221,8 +264,26 @@ const InputBar = forwardRef<HTMLTextAreaElement, Props>(
 
     return (
       <div className="input-bar" style={{ position: "relative" }}>
+        {/* Contact mention picker */}
+        {showMention && (
+          <div className="slash-palette">
+            {mentionFiltered.map((c, idx) => (
+              <button
+                key={c.phone}
+                className={`slash-item${idx === mentionIdx ? " active" : ""}`}
+                onMouseDown={(e) => { e.preventDefault(); applyMention(c); }}
+                onMouseEnter={() => setMentionIdx(idx)}
+              >
+                <span className="slash-icon">👤</span>
+                <span className="slash-name">{c.name}</span>
+                <span className="slash-desc">{c.phone}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Slash command palette */}
-        {showPalette && filtered.length > 0 && (
+        {!showMention && showPalette && filtered.length > 0 && (
           <div className="slash-palette" ref={paletteRef}>
             {Object.entries(grouped).map(([category, cmds]) => (
               <div key={category}>
@@ -266,7 +327,8 @@ const InputBar = forwardRef<HTMLTextAreaElement, Props>(
           <textarea
             ref={ref}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => { const v = e.target.value; setValue(v); checkMention(v, e.target.selectionStart ?? v.length); }}
+            onSelect={(e) => checkMention(value, (e.target as HTMLTextAreaElement).selectionStart ?? value.length)}
             onKeyDown={handleKeyDown}
             onInput={handleInput}
             placeholder={placeholder ?? "Message… (/ for commands, Enter to send)"}
