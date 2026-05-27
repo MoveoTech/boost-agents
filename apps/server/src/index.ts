@@ -1277,7 +1277,13 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       for (const m of historyRaw) {
         if (!m.text) continue;
         const role: "user" | "model" = m.from === "Assistant" ? "model" : "user";
-        const content = m.from === "Assistant" ? m.text : `${m.from}: ${m.text}`;
+        // Strip "🤖 " prefix and "_(Ns)_" timing suffix from stored bot replies — the AI
+        // sees these as part of the text and mimics the "🤖 " prefix in subsequent responses,
+        // causing the server to add a second prefix and producing "🤖 🤖 " in the output.
+        const rawText = m.from === "Assistant"
+          ? m.text.replace(/^🤖 /, "").replace(/\n\n_\(\d+s\)_$/, "")
+          : m.text;
+        const content = m.from === "Assistant" ? rawText : `${m.from}: ${rawText}`;
         const last = history[history.length - 1];
         if (last && last.role === role) {
           // Merge consecutive same-role messages

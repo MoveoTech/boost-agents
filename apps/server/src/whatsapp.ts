@@ -61,6 +61,11 @@ const recentlyPurgedContacts = new Map<string, number>();
 // last time resetKeys() was triggered due to "purged=0 + PreKeyError" — prevents tight loop
 // when WhatsApp replays queued messages encrypted with stale PreKeys after a key reset
 const lastZeroPurgeReset = new Map<string, number>();
+// email → Set of processed msgIds. Module-level so dedup survives reconnects within the same
+// Cloud Run instance. WhatsApp re-delivers messages that weren't ACK'd before a disconnect;
+// without this, a fast reconnect (< 5s) creates a fresh per-session Set that allows reprocessing
+// the same message → double reply.
+const processedMsgIdsByEmail = new Map<string, Set<string>>();
 
 // Cache the WhatsApp protocol version globally — fetchLatestBaileysVersion() makes a
 // slow HTTPS request to WhatsApp servers that can hang for 3+ minutes in Cloud Run.
@@ -728,9 +733,11 @@ export async function connectSession(
 
     // Track IDs of messages sent by this bot instance to prevent reply loops.
     const sentByBot = new Set<string>();
-    // Track processed message IDs to prevent duplicate processing when WhatsApp
-    // delivers the same message under multiple JID formats (e.g. @s.whatsapp.net + @lid).
-    const processedMsgIds = new Set<string>();
+    // Track processed message IDs to prevent duplicate processing. Module-level map
+    // so dedup survives reconnects — WhatsApp re-delivers unACK'd messages on reconnect,
+    // and a fresh per-session Set would allow reprocessing → double reply.
+    if (!processedMsgIdsByEmail.has(email)) processedMsgIdsByEmail.set(email, new Set<string>());
+    const processedMsgIds = processedMsgIdsByEmail.get(email)!;
 
     // All known participant key fragments that belong to the account owner.
     // Seeded from sock.user (phone + LID) at connect time, then updated whenever
