@@ -99,6 +99,21 @@ function waLog(level: "info" | "warn" | "error", email: string, msg: string, ext
   else console.log(JSON.stringify(entry));
 }
 
+// Watchdog: detect zombie connections where the socket reports "connected" but the
+// underlying WebSocket is actually closed (silent TCP drop). Runs every 90s.
+// Forces end() on the dead socket so connection.update triggers a fresh reconnect.
+setInterval(() => {
+  for (const [email, session] of sessions) {
+    if (session.status !== "connected") continue;
+    const wsState = (session.socket?.ws as { readyState?: number } | undefined)?.readyState;
+    if (wsState === undefined) continue;
+    if (wsState !== 1 /* WebSocket.OPEN */) {
+      waLog("warn", email, "watchdog: zombie socket detected — forcing reconnect", { wsReadyState: wsState });
+      try { session.socket?.end?.(new Error("watchdog-reset")); } catch {}
+    }
+  }
+}, 90_000);
+
 // ── Firestore credential helpers ──────────────────────────────────────────────
 // Use Baileys' own BufferJSON format so keys from libsignal round-trip correctly.
 // Baileys uses { type:"Buffer", data:[...] } — never use a custom format here.
@@ -208,16 +223,16 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
     await doSave();
   };
 
-  // Debounced save — used for Signal key changes (keys.set fires for every group participant).
-  // In a busy group, keys.set can fire 50+ times/second; saving on each call floods the
-  // oauth-service and stalls the event loop, causing sendMessage to time out.
+  // Debounced save — used for Signal key changes (keys.set fires on every ratchet advance).
+  // Signal session keys can tolerate being ~30s stale on crash — Baileys retries decryption
+  // automatically (maxMsgRetryCount: 3). Account creds (creds.update) still save immediately.
   const persist = () => {
     if (!credsSaveEnabled) return;
     if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
     saveDebounceTimer = setTimeout(() => {
       saveDebounceTimer = null;
       doSave().catch(() => {});
-    }, 2_000);
+    }, 30_000);
   };
 
   return {
@@ -715,9 +730,8 @@ export async function connectSession(
           const attempt = (reconnectAttempts.get(email) ?? 0) + 1;
           reconnectAttempts.set(email, attempt);
           // First 10 attempts: fast exponential backoff (5s → 60s).
-          // After that: slow persistent retry every 5 minutes — never give up on transient
-          // network/WhatsApp issues that can last hours overnight.
-          const backoff = attempt <= 10 ? Math.min(5000 * attempt, 60_000) : 5 * 60_000;
+          // After that: retry every 30s — 5 min was too slow; 3 failed slow retries = 15+ min dead.
+          const backoff = attempt <= 10 ? Math.min(5000 * attempt, 60_000) : 30_000;
           waLog("info", email, `reconnecting in ${backoff / 1000}s (attempt ${attempt})`);
           const carryQR = pendingQRListeners.length ? (qr: string) => pendingQRListeners.forEach((fn) => fn(qr)) : undefined;
           const carryConnected = pendingConnectedListeners.length ? () => pendingConnectedListeners.forEach((fn) => fn()) : undefined;
