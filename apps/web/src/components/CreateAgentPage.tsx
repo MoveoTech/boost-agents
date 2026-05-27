@@ -11,7 +11,10 @@ const MODELS = [
 ];
 
 function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+  return name.toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
+    .replace(/^boost-/, "")
+    .slice(0, 30);
 }
 
 export default function CreateAgentPage({ email }: { email?: string | null }) {
@@ -251,7 +254,7 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
 
               {(!failed || deployTriggered) && (
                 <a href={`https://github.com/MoveoTech/${repoName}/actions`} target="_blank" rel="noopener" className="cap-link-row">
-                  <span>GitHub Actions {done ? "(agent URL in deploy summary)" : "(view error details)"}</span>
+                  <span>GitHub Actions {done ? (agentUrl ? "(deploy logs)" : "(agent URL in deploy summary)") : "(view error details)"}</span>
                   <span className="cap-link-arrow">↗</span>
                 </a>
               )}

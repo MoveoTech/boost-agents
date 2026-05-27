@@ -656,6 +656,7 @@ app.post("/api/admin/create-agent", requireAdmin, async (req, res) => {
       .replace(/[^a-z0-9-]/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "")
+      .replace(/^boost-/, "")
       .slice(0, 30);
 
     // Wait for GitHub to register the dispatched run, then capture its ID
