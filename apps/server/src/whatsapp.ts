@@ -42,7 +42,7 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 // email → auth state (for external purge access)
-const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; freezeCredsSave: () => void }>();
+const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; flushAndFreeze: () => Promise<void> }>();
 // persistent reconnect attempt counter — survives session object recreation so backoff grows correctly
 const reconnectAttempts = new Map<string, number>();
 // consecutive crypto error counter — reset on successful connect
@@ -275,11 +275,16 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
       if (toDelete.length > 0) persist();
       return toDelete.length;
     },
-    // Stop any further saves from this socket instance immediately — call on disconnect
-    // to prevent the old socket's in-flight saves from corrupting the next session's creds.
-    freezeCredsSave: () => {
+    // Flush any pending debounced key save, then stop further saves. Call on disconnect:
+    // first flush so the new session starts with up-to-date Signal keys, then freeze so
+    // the old socket's in-flight saves can't race-corrupt the new session's creds.
+    flushAndFreeze: async () => {
+      if (saveDebounceTimer) {
+        clearTimeout(saveDebounceTimer);
+        saveDebounceTimer = null;
+        if (credsSaveEnabled) await doSave().catch(() => {});
+      }
       credsSaveEnabled = false;
-      if (saveDebounceTimer) { clearTimeout(saveDebounceTimer); saveDebounceTimer = null; }
     },
     // Wipe all credentials from Firestore and prevent further saves — called when the noise
     // session is irreparably corrupt after N retries.
@@ -429,7 +434,7 @@ export async function connectSession(
     }
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
-    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, freezeCredsSave: auth.freezeCredsSave });
+    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, flushAndFreeze: auth.flushAndFreeze });
 
     // Per-socket message store — Baileys calls getMessage when it needs to retry-decrypt
     // a failed message (Signal retries are very common). Returning undefined makes every
@@ -479,7 +484,11 @@ export async function connectSession(
         level: "warn",
         trace: (..._args: any[]) => {},
         debug: (..._args: any[]) => {},
-        info:  (..._args: any[]) => {},
+        info:  (...args: any[]) => {
+          // Log retry receipts — these are the silent signal that a message failed to decrypt.
+          // Without this, decrypt failures produce only a creds.update flood with no explanation.
+          if (args[1] === "sent retry receipt") waLog("warn", email, "wa-decrypt-retry", typeof args[0] === "object" ? args[0] : {});
+        },
         warn:  (...args: any[]) => waLog("warn", email, "baileys-warn", { detail: args[0] }),
         error: (...args: any[]) => {
           const detail = args[0] ?? {};
@@ -520,10 +529,11 @@ export async function connectSession(
                 waLog("warn", email, "no-session after key purge — resetting Signal keys (staying connected)", { participant: noSessParticipant });
                 auth.resetKeys().catch(() => {});
               } else {
-                // Unknown contact no-session: could be post-QR-scan replay. Count to 5 before resetting.
+                // Unknown contact no-session: could be post-QR-scan replay, but more likely stale
+                // Signal keys after reconnect. 3 = one full message retry cycle (maxMsgRetryCount).
                 const failCount = (contactDecryptFailures.get(contactKey) ?? 0) + 1;
                 contactDecryptFailures.set(contactKey, failCount);
-                if (failCount >= 5) {
+                if (failCount >= 3) {
                   contactDecryptFailures.delete(contactKey);
                   waLog("warn", email, "persistent no-session failures for contact — resetting Signal keys (staying connected)", { participant: noSessParticipant, failCount });
                   auth.resetKeys().catch(() => {});
@@ -603,10 +613,9 @@ export async function connectSession(
           if (rate.count > 10) {
             decryptErrorRate.delete(email);
             waLog("warn", email, "decrypt error flood detected — resetting Signal keys before reconnect", { errorCount: rate.count });
-            // Reset keys in Firestore BEFORE closing — the debounced purgeContactKeys save
-            // gets cancelled by freezeCredsSave() on close, so the next session would reload
-            // the same stale keys and trigger another flood. resetKeys() saves synchronously
-            // (bypasses credsSaveEnabled), then we close so the new session starts clean.
+            // Reset keys in Firestore BEFORE closing — flushAndFreeze() on close will
+            // also flush, but resetKeys() wipes stale keys synchronously, ensuring the next
+            // session starts clean rather than reloading the same corrupted state.
             auth.resetKeys().catch(() => {}).finally(() => {
               try { sock.end(new Error("decrypt-flood-restart")); } catch {}
             });
@@ -659,9 +668,9 @@ export async function connectSession(
       }
 
       if (connection === "close") {
-        // Immediately stop the old socket from saving credentials — prevents race-condition
-        // corruption where in-flight saves overwrite fresh credentials on the new session.
-        auth.freezeCredsSave();
+        // Flush any pending debounced key save, then freeze. Flush first so the next session
+        // loads up-to-date Signal keys; freeze after so old socket can't corrupt new session.
+        await auth.flushAndFreeze();
 
         const err = lastDisconnect?.error as InstanceType<typeof Boom> | undefined;
         const code = err?.output?.statusCode;
