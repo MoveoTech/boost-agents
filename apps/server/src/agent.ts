@@ -15,6 +15,7 @@ import {
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability, calendarRsvp } from "./calendar";
 import { memorySave, memoryRecall, memoryDelete } from "./memory";
+import { lookupContact, listContacts as listContactsFn } from "./contacts";
 import { sendMessage as waSendMessage, getStatus as waGetStatus } from "./whatsapp";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
@@ -473,6 +474,19 @@ Column can be specified by its ID or title (case-insensitive).`,
       required: ["query"],
     },
   },
+  contacts_lookup: {
+    name: "contacts_lookup",
+    description: "Look up a saved contact by name and return their phone number. Use this before whatsapp_send_message when the user refers to someone by name (e.g. '@nami', 'mom', 'John'). Strips leading @ automatically.",
+    parameters: {
+      properties: { name: { type: "string", description: "Contact name or @mention (e.g. 'nami', '@mom', 'John Cohen')" } },
+      required: ["name"],
+    },
+  },
+  contacts_list: {
+    name: "contacts_list",
+    description: "List all saved contacts (names and phone numbers). Use this to show the user their contact book or to find the right name before calling contacts_lookup.",
+    parameters: { properties: {}, required: [] },
+  },
   memory_save: {
     name: "memory_save", description: "Save a fact, preference, or piece of information about the user to remember in future conversations. Use a short descriptive key.",
     parameters: {
@@ -551,6 +565,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   );
   if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
   if ((agentConfig.tools.memory ?? true) && memoryUser) tools.push(ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete);
+  if (memoryUser) tools.push(ALL_TOOLS.contacts_lookup, ALL_TOOLS.contacts_list);
   return tools;
 }
 
@@ -693,6 +708,20 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       if (!whatsappUser) return "WhatsApp is not connected. Ask the user to connect WhatsApp first.";
       await waSendMessage(whatsappUser, args.to as string, args.message as string);
       return `WhatsApp message sent to ${args.to}`;
+
+    case "contacts_lookup": {
+      if (!memoryUser) return "Contacts require a logged-in user.";
+      const contact = await lookupContact(memoryUser, args.name as string);
+      if (!contact) return `No contact found for "${args.name}". The user may need to import their contacts first.`;
+      return `Found: ${contact.name} — ${contact.phone}`;
+    }
+
+    case "contacts_list": {
+      if (!memoryUser) return "Contacts require a logged-in user.";
+      const all = await listContactsFn(memoryUser);
+      if (!all.length) return "No contacts saved. Ask the user to import their contacts (.vcf from iPhone) first.";
+      return all.map((c) => `• ${c.name}: ${c.phone}`).join("\n");
+    }
 
     default:
       return null; // not a builtin tool

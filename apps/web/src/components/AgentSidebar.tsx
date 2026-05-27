@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import SidebarSection from "./SidebarSection";
 import SkillsModal from "./SkillsModal";
 import UsageAnalytics from "./UsageAnalytics";
-import { saveConfig, applyConfigLive, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders, subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, type WhatsAppConfig } from "../api/client";
+import { saveConfig, applyConfigLive, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders, subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts, type WhatsAppConfig } from "../api/client";
 import type { AgentConfig, Automation, Skill, UserSettings } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
@@ -121,6 +121,8 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   const [waConfig, setWaConfig] = useState<WhatsAppConfig>({ replyTrigger: "mention", replyInGroups: true, replyInDMs: false });
   const [waConfigSaving, setWaConfigSaving] = useState(false);
   const [waConfigSaved, setWaConfigSaved] = useState(false);
+  const [contactImportStatus, setContactImportStatus] = useState<string | null>(null);
+  const contactFileRef = useRef<HTMLInputElement>(null);
 
   // Load config when already connected on mount
   useEffect(() => {
@@ -128,6 +130,22 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       getWhatsAppConfig().then(setWaConfig).catch(() => {});
     }
   }, [whatsappConnected]);
+
+  const handleContactFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setContactImportStatus("Importing…");
+    try {
+      const text = await file.text();
+      const { imported } = await importContacts(text);
+      setContactImportStatus(`${imported} contact${imported !== 1 ? "s" : ""} imported`);
+      setTimeout(() => setContactImportStatus(null), 4000);
+    } catch (err) {
+      setContactImportStatus(`Error: ${(err as Error).message}`);
+      setTimeout(() => setContactImportStatus(null), 5000);
+    }
+    if (contactFileRef.current) contactFileRef.current.value = "";
+  }, []);
 
   const handleSaveWaConfig = useCallback(async () => {
     setWaConfigSaving(true);
@@ -517,6 +535,31 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                     >
                       {waConfigSaved ? "Saved ✓" : waConfigSaving ? "Saving…" : "Save settings"}
                     </button>
+
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
+                        Import iPhone contacts to send WhatsApp messages by name (e.g. "send a message to @nami")
+                      </div>
+                      <input
+                        ref={contactFileRef}
+                        type="file"
+                        accept=".vcf,text/vcard"
+                        style={{ display: "none" }}
+                        onChange={handleContactFileChange}
+                      />
+                      <button
+                        className="sidebar-save-btn"
+                        onClick={() => contactFileRef.current?.click()}
+                        style={{ fontSize: 12, background: "var(--surface-2, #2a2a2a)" }}
+                      >
+                        Import Contacts (.vcf)
+                      </button>
+                      {contactImportStatus && (
+                        <div style={{ fontSize: 11, marginTop: 4, color: contactImportStatus.startsWith("Error") ? "#ef4444" : "#22c55e" }}>
+                          {contactImportStatus}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

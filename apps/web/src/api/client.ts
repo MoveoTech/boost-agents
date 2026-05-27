@@ -313,6 +313,26 @@ export async function disconnectAgentConnection(repoName: string, service: strin
   return res.ok ? { ok: true } : { ok: false, error: data.error };
 }
 
+export async function importContacts(vcf: string): Promise<{ imported: number; contacts: { name: string; phone: string }[] }> {
+  const res = await fetch(`${BASE}/api/contacts/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vcf }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Import failed" }));
+    throw new Error(err.error ?? "Import failed");
+  }
+  return res.json();
+}
+
+export async function listContacts(): Promise<{ name: string; phone: string }[]> {
+  const res = await fetch(`${BASE}/api/contacts`);
+  if (!res.ok) return [];
+  const { contacts } = await res.json();
+  return contacts ?? [];
+}
+
 export async function getAnalytics(): Promise<AnalyticsData> {
   const res = await fetch(`${BASE}/api/analytics`);
   if (!res.ok) throw new Error("Failed to load analytics");

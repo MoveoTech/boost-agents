@@ -14,6 +14,7 @@ import type { AgentConfig } from "./config";
 import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets } from "./automations";
 import type { Automation } from "./automations";
 import { connectSession, disconnectSession, getStatus, initAllSessions, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
+import { parseVCards, importContacts, listContacts } from "./contacts";
 import type { Content } from "@google/generative-ai";
 import QRCode from "qrcode";
 
@@ -1355,6 +1356,34 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
     }
   };
 }
+
+// ── Contacts ──────────────────────────────────────────────────────────────────
+
+app.post("/api/contacts/import", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { vcf } = req.body as { vcf: string };
+  if (!vcf?.trim()) { res.status(400).json({ error: "vcf required" }); return; }
+  try {
+    const parsed = parseVCards(vcf);
+    if (!parsed.length) { res.status(400).json({ error: "No contacts found in vCard data" }); return; }
+    const count = await importContacts(email, parsed);
+    res.json({ ok: true, imported: count, contacts: parsed });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.get("/api/contacts", async (req, res) => {
+  const email = getSessionEmail(req);
+  if (!email) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const contacts = await listContacts(email);
+    res.json({ contacts });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
 
 // In-memory feedback store (keyed by messageId)
 const feedbackStore = new Map<string, { rating: number; comment?: string }>();
