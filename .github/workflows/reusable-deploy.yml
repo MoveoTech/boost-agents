@@ -72,11 +72,12 @@ jobs:
       - name: Provision GCP Project
         id: provision
         run: |
-          # Hub repo deploys to its own master project — no provisioning needed
+          # Hub repo deploys to its own master project — skip GCP provisioning but ensure AR repo exists
           if [ "${{ github.repository }}" = "MoveoTech/boost-agents" ]; then
             echo "project_id=boost-agents-496211" >> $GITHUB_OUTPUT
             echo "BOOST_HUB=true" >> $GITHUB_ENV
             echo "OAUTH_MASTER_KEY_VALUE=${{ secrets.OAUTH_SERVICE_KEY }}" >> $GITHUB_ENV
+            gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=boost-agents-496211 || true
             exit 0
           fi
 
