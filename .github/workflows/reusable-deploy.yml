@@ -97,11 +97,11 @@ jobs:
           echo "Attempting to Enable APIs..."
           gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com iamcredentials.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com --project=$PROJECT_ID || echo "API failed."
 
-          echo "Waiting 30s for APIs to activate..."
-          sleep 30
-
           # Grant master SA owner on every deploy (idempotent) — master SA does all builds/pushes/deploys
           gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@boost-agents-496211.iam.gserviceaccount.com" --role="roles/owner" || true
+
+          echo "Waiting 60s for APIs and IAM to propagate..."
+          sleep 60
 
           # Artifact Registry is always needed (idempotent)
           gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID || true
@@ -129,7 +129,7 @@ jobs:
             if ! gcloud secrets describe "$SECRET_NAME" --project="$PROJECT_ID" &>/dev/null; then
               printf '%s' "$(openssl rand -hex 32)" | \
                 gcloud secrets create "$SECRET_NAME" --data-file=- \
-                  --replication-policy=automatic --project="$PROJECT_ID"
+                  --replication-policy=automatic --project="$PROJECT_ID" || true
               echo "Created secret: $SECRET_NAME"
             fi
           done
