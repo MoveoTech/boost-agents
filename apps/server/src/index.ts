@@ -11,7 +11,7 @@ import { slackSendMessage, slackGetUserEmail } from "./slack";
 import { agentConfig } from "./config";
 import { commitConfig, commitConfigToRepo, readConfigFromRepo } from "./configure";
 import type { AgentConfig } from "./config";
-import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets } from "./automations";
+import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets, getAutomation } from "./automations";
 import type { Automation, AutomationStep } from "./automations";
 import { connectSession, disconnectSession, getStatus, initAllSessions, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
 import { parseVCards, importContacts, listContacts } from "./contacts";
@@ -128,23 +128,53 @@ const FLOW_TOOL_LABELS: Record<string, string> = {
   http_request: "HTTP Request",
   web_fetch: "Web Fetch",
   google_search: "Google Search",
+  agent_prompt: "AI Processing",
 };
 
-function compileStepsToPrompt(steps: AutomationStep[]): string {
-  if (!steps.length) return "";
-  const lines = [
-    "Execute the following steps in order. Each step builds on the previous — use outputs and results from earlier steps when needed.",
-    "",
-  ];
-  steps.forEach((step, i) => {
+interface StepResult {
+  id: string;
+  tool: string;
+  output: string;
+  error?: string;
+  durationMs: number;
+}
+
+async function executeStepsSequentially(
+  steps: AutomationStep[],
+  gmailUser: string | undefined,
+  calendarUser: string | undefined,
+  mondayToken: string | undefined,
+  tasksUser: string | undefined,
+  whatsappUser: string | undefined,
+): Promise<StepResult[]> {
+  const results: StepResult[] = [];
+  let context = "";
+
+  for (const step of steps) {
+    const stepStart = Date.now();
     const label = FLOW_TOOL_LABELS[step.tool] ?? step.tool;
-    let line = `Step ${i + 1} (${label}): ${step.instruction}`;
+    let instruction = step.instruction;
     if (step.tool === "http_request" && step.httpUrl) {
-      line += ` Use HTTP ${step.httpMethod ?? "POST"} to ${step.httpUrl}.`;
+      instruction += ` Use HTTP ${step.httpMethod ?? "POST"} to ${step.httpUrl}.`;
     }
-    lines.push(line);
-  });
-  return lines.join("\n");
+    const prompt = context
+      ? `Context from previous steps:\n${context}\n\nCurrent task (${label}): ${instruction}`
+      : instruction;
+
+    const systemPrompt = step.tool === "agent_prompt"
+      ? "Process and transform the provided information. Return a concise, structured result. Do not call any tools."
+      : undefined;
+
+    try {
+      const result = await chat(prompt, [], "tools", systemPrompt, gmailUser, calendarUser, undefined, mondayToken, tasksUser, undefined, undefined, whatsappUser);
+      results.push({ id: step.id, tool: step.tool, output: result.reply, durationMs: Date.now() - stepStart });
+      context += `\n[Step ${results.length} — ${label}]:\n${result.reply}`;
+    } catch (err) {
+      results.push({ id: step.id, tool: step.tool, output: "", error: (err as Error).message, durationMs: Date.now() - stepStart });
+      break;
+    }
+  }
+  return results;
 }
 
 // Called by Cloud Scheduler — no user JWT, secured by AUTOMATION_SECRET header
@@ -154,7 +184,6 @@ app.post("/api/run-automation", async (req, res) => {
     return;
   }
   const { steps, id, oneTime, createdBy } = req.body as { steps?: AutomationStep[]; name: string; id: string; oneTime?: boolean; createdBy?: string };
-  const prompt = compileStepsToPrompt(steps ?? []);
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;
@@ -176,15 +205,17 @@ app.post("/api/run-automation", async (req, res) => {
       res.status(404).json({ error: `User ${createdBy} not found — they may have disconnected` });
       return;
     }
-    const autoMondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
-    const autoTasksUser = user.tasks ? user.email : undefined;
-    const result = await chat(prompt, [], "tools", undefined,
+    const mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
+    const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+    const stepResults = await executeStepsSequentially(
+      steps ?? [],
       user.gmail ? user.email : undefined,
       user.calendar ? user.email : undefined,
-      undefined, autoMondayToken, autoTasksUser,
+      mondayToken,
+      user.tasks ? user.email : undefined,
+      whatsappUser,
     );
-    res.json({ ok: true, results: [{ email: user.email, success: true, reply: result.reply }] });
-    // Self-delete after running if this is a one-time automation
+    res.json({ ok: true, stepResults });
     if (oneTime && id) {
       await deleteAutomation(id).catch(() => {});
     }
@@ -423,6 +454,41 @@ app.post("/api/automations/:id/run", requireAdmin, async (req, res) => {
   }
 });
 
+app.post("/api/flows/:id/run-direct", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) {
+    res.status(500).json({ error: "Not configured" });
+    return;
+  }
+  try {
+    const automation = await getAutomation(id);
+    if (!automation) { res.status(404).json({ error: "Flow not found" }); return; }
+    if (!automation.createdBy) { res.status(400).json({ error: "Flow has no owner" }); return; }
+    const usersRes = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
+      headers: { "x-api-key": oauthServiceKey },
+    });
+    const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
+    const user = users.find((u) => u.email === automation.createdBy);
+    if (!user) { res.status(404).json({ error: `User ${automation.createdBy} not found` }); return; }
+    const mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
+    const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+    const stepResults = await executeStepsSequentially(
+      automation.steps,
+      user.gmail ? user.email : undefined,
+      user.calendar ? user.email : undefined,
+      mondayToken,
+      user.tasks ? user.email : undefined,
+      whatsappUser,
+    );
+    res.json({ ok: true, stepResults });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.post("/api/flows/generate", requireAdmin, async (req, res) => {
   const { description, connectedTools } = req.body as { description: string; connectedTools: string[] };
   if (!description?.trim()) { res.status(400).json({ error: "description required" }); return; }
@@ -433,8 +499,8 @@ app.post("/api/flows/generate", requireAdmin, async (req, res) => {
 
   const systemPrompt = `You are an automation flow designer. Given a description of what a user wants to automate, generate a structured list of steps.
 
-Available tool keys: ${connectedTools.length ? connectedTools.join(", ") : Object.keys(FLOW_TOOL_LABELS).join(", ")}
-Available tool labels: ${toolList}
+Available tool keys: ${connectedTools.length ? connectedTools.join(", ") : Object.keys(FLOW_TOOL_LABELS).join(", ")}, agent_prompt
+Available tool labels: ${toolList}, AI Processing
 
 Return ONLY valid JSON — no markdown, no explanation. Format:
 {
@@ -446,9 +512,10 @@ Return ONLY valid JSON — no markdown, no explanation. Format:
   ]
 }
 
-Rules:
-- Only use tool keys from the available list
-- For http_request steps, add "httpUrl" and "httpMethod" fields
+Tool selection rules:
+- Use "agent_prompt" for any reasoning, filtering, summarizing, formatting, or data transformation — the AI processes context from prior steps internally. Do NOT use http_request for this.
+- Use "http_request" ONLY when calling a real known external API endpoint (e.g. a webhook or REST API the user explicitly mentioned). Add "httpUrl" and "httpMethod" fields.
+- Use service-specific tools (gmail, google_tasks, whatsapp, etc.) for interacting with those services.
 - Step instructions should reference prior steps naturally (e.g. "using the tasks from step 1")
 - suggestedSchedule must be a valid cron expression`;
 

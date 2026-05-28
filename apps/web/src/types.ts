@@ -90,6 +90,14 @@ export interface AgentConfig {
   skills: Skill[];
 }
 
+export interface FlowStepResult {
+  id: string;
+  tool: string;
+  output: string;
+  error?: string;
+  durationMs: number;
+}
+
 export interface AnalyticsDayStat {
   date: string;
   messages: number;

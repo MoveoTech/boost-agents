@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { listAutomations, saveAutomation, removeAutomation, triggerAutomation, generateFlow } from "../api/client";
-import type { Automation, AutomationStep } from "../types";
+import { listAutomations, saveAutomation, removeAutomation, runFlowDirect, generateFlow } from "../api/client";
+import type { Automation, AutomationStep, FlowStepResult } from "../types";
 import FlowStepCard, { FLOW_TOOLS, type Connections } from "./FlowStepCard";
 
 const SCHEDULE_OPTIONS = [
@@ -46,6 +46,8 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
   const [saving, setSaving] = useState(false);
   const [customCron, setCustomCron] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [runResults, setRunResults] = useState<Record<string, FlowStepResult[]>>({});
+  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -127,7 +129,22 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
 
   const handleRun = async (id: string) => {
     setRunningId(id);
-    try { await triggerAutomation(id); } finally { setRunningId(null); }
+    try {
+      const { stepResults } = await runFlowDirect(id);
+      setRunResults((prev) => ({ ...prev, [id]: stepResults }));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+  const toggleStep = (stepId: string) => {
+    setExpandedSteps((prev) => {
+      const next = new Set(prev);
+      if (next.has(stepId)) next.delete(stepId); else next.add(stepId);
+      return next;
+    });
   };
 
   const updateStep = (idx: number, step: AutomationStep) => {
@@ -160,6 +177,8 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
             <button className="flows-new-btn" onClick={openNew}>+ New Flow</button>
           )}
         </div>
+
+        {error && <div className="flows-error flows-error--list">{error}<button onClick={() => setError(null)}>✕</button></div>}
 
         {loading ? (
           <div className="flows-empty">Loading flows…</div>
@@ -205,12 +224,31 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
                         disabled={runningId === flow.id}
                         title="Run now"
                       >
-                        {runningId === flow.id ? "…" : "▶"}
+                        {runningId === flow.id ? <span className="flows-spinner flows-spinner--sm" /> : "▶"}
                       </button>
                       <button className="flow-card-delete" onClick={() => handleDelete(flow.id)} title="Delete">✕</button>
                     </>
                   )}
                 </div>
+                {runResults[flow.id] && (
+                  <div className="flow-run-results">
+                    <span className="flow-run-results-label">Last run</span>
+                    {runResults[flow.id].map((r, i) => {
+                      const t = FLOW_TOOLS.find((ft) => ft.key === r.tool);
+                      const expanded = expandedSteps.has(r.id);
+                      return (
+                        <div key={r.id} className={`flow-run-step${r.error ? " flow-run-step--error" : ""}`} onClick={() => toggleStep(r.id)}>
+                          <span className="flow-run-step-status">{r.error ? "✕" : "✓"}</span>
+                          <span className="flow-run-step-name">{t?.icon} Step {i + 1} · {t?.label ?? r.tool}</span>
+                          <span className="flow-run-step-ms">{r.durationMs}ms</span>
+                          <div className={`flow-run-step-output${expanded ? " flow-run-step-output--expanded" : ""}`}>
+                            {r.error ?? r.output}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ))}
           </div>

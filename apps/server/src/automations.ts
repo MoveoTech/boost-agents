@@ -116,6 +116,16 @@ export async function runAutomationNow(automationId: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to trigger job: ${res.status}`);
 }
 
+export async function getAutomation(automationId: string): Promise<Automation | null> {
+  const token = await gcpToken();
+  const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automationId)}`;
+  const res = await fetch(`https://cloudscheduler.googleapis.com/v1/${fullName}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  return parseJob(await res.json() as Record<string, unknown>);
+}
+
 export async function deleteAutomation(automationId: string): Promise<void> {
   const token = await gcpToken();
   const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automationId)}`;

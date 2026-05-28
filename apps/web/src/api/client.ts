@@ -1,4 +1,4 @@
-import type { ChatResponse, HistoryItem, AgentConfig, Automation, AutomationStep, ChatSession, DisplayMessage, AnalyticsData } from "../types";
+import type { ChatResponse, HistoryItem, AgentConfig, Automation, AutomationStep, ChatSession, DisplayMessage, AnalyticsData, FlowStepResult } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 
@@ -208,6 +208,15 @@ export function subscribeWhatsAppQR(
 
 export async function triggerAutomation(id: string): Promise<void> {
   await fetch(`${BASE}/api/automations/${id}/run`, { method: "POST" });
+}
+
+export async function runFlowDirect(id: string): Promise<{ stepResults: FlowStepResult[] }> {
+  const res = await fetch(`${BASE}/api/flows/${id}/run-direct`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Run failed" }));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function generateFlow(

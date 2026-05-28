@@ -7,12 +7,14 @@ export const FLOW_TOOLS = [
   { key: "google_calendar", label: "Google Calendar", icon: "📅", requires: "calendar" as const },
   { key: "slack",           label: "Slack",           icon: "💬", requires: "slack" as const },
   { key: "monday",          label: "Monday.com",      icon: "📊", requires: "monday" as const },
+  { key: "agent_prompt",    label: "AI Processing",   icon: "✨", requires: null },
   { key: "http_request",    label: "HTTP Request",    icon: "🔗", requires: null },
   { key: "web_fetch",       label: "Web Fetch",       icon: "🌐", requires: null },
   { key: "google_search",   label: "Google Search",   icon: "🔍", requires: null },
 ] as const;
 
 const TOOL_PLACEHOLDERS: Record<string, string> = {
+  agent_prompt: "e.g. Filter and summarize the tasks from step 1, group them by category, and generate 3 suggested action items",
   google_tasks: "e.g. List all tasks due today from my 'Work' task list",
   whatsapp: "e.g. Send me a WhatsApp message with a summary of the results above and 3 action items",
   gmail: "e.g. Send an email to me summarising the results above",
