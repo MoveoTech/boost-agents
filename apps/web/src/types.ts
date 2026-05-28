@@ -32,11 +32,19 @@ export interface Skill {
   enabled: boolean;
 }
 
+export interface AutomationStep {
+  id: string;
+  tool: string;
+  instruction: string;
+  httpUrl?: string;
+  httpMethod?: string;
+}
+
 export interface Automation {
   id: string;
   name: string;
   schedule: string;
-  prompt: string;
+  steps: AutomationStep[];
   enabled: boolean;
   createdBy?: string;
   oneTime?: boolean;

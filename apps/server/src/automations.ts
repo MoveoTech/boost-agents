@@ -2,11 +2,19 @@ const PROJECT = process.env.GOOGLE_CLOUD_PROJECT ?? "";
 const REGION = "us-central1";
 const AUTOMATION_SECRET = process.env.AUTOMATION_SECRET ?? "";
 
+export interface AutomationStep {
+  id: string;
+  tool: string;
+  instruction: string;
+  httpUrl?: string;
+  httpMethod?: string;
+}
+
 export interface Automation {
   id: string;
   name: string;
   schedule: string;
-  prompt: string;
+  steps: AutomationStep[];
   enabled: boolean;
   createdBy?: string;
   oneTime?: boolean;
@@ -30,13 +38,13 @@ function jobId(automationId: string) {
 function parseJob(job: Record<string, unknown>): Automation {
   const httpTarget = job.httpTarget as Record<string, string> | undefined;
   const bodyStr = httpTarget?.body ? Buffer.from(httpTarget.body, "base64").toString() : "{}";
-  const body = JSON.parse(bodyStr) as { name?: string; prompt?: string; createdBy?: string; oneTime?: boolean };
+  const body = JSON.parse(bodyStr) as { name?: string; steps?: AutomationStep[]; createdBy?: string; oneTime?: boolean };
   const name = job.name as string;
   return {
     id: name.split("/jobs/automation--")[1],
     name: body.name ?? "Unnamed",
     schedule: (job.schedule as string) ?? "",
-    prompt: body.prompt ?? "",
+    steps: body.steps ?? [],
     enabled: job.state !== "PAUSED" && job.state !== "DISABLED",
     createdBy: body.createdBy,
     oneTime: body.oneTime,
@@ -67,7 +75,7 @@ export async function upsertAutomation(automation: Automation, agentUrl: string)
     httpTarget: {
       uri: `${agentUrl}/api/run-automation`,
       httpMethod: "POST",
-      body: Buffer.from(JSON.stringify({ id: automation.id, name: automation.name, prompt: automation.prompt, createdBy: automation.createdBy, oneTime: automation.oneTime })).toString("base64"),
+      body: Buffer.from(JSON.stringify({ id: automation.id, name: automation.name, steps: automation.steps, createdBy: automation.createdBy, oneTime: automation.oneTime })).toString("base64"),
       headers: {
         "Content-Type": "application/json",
         "x-automation-secret": AUTOMATION_SECRET,

@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import SidebarSection from "./SidebarSection";
 import SkillsModal from "./SkillsModal";
 import UsageAnalytics from "./UsageAnalytics";
-import { saveConfig, applyConfigLive, getApiKey, listAutomations, saveAutomation, removeAutomation, triggerAutomation, getProviders, subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts, type WhatsAppConfig } from "../api/client";
-import type { AgentConfig, Automation, Skill, UserSettings } from "../types";
+import { saveConfig, applyConfigLive, getApiKey, getProviders, subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts, type WhatsAppConfig } from "../api/client";
+import type { AgentConfig, Skill, UserSettings } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
 
@@ -49,15 +49,6 @@ const TOOL_DEFS = [
   { key: "monday" as const, label: "Monday.com", icon: "📋", desc: "Read boards, create & update items", service: "monday" as const },
 ];
 
-const SCHEDULES = [
-  { label: "Every hour",         cron: "0 * * * *" },
-  { label: "Daily at 6am UTC",   cron: "0 6 * * *" },
-  { label: "Daily at 9am UTC",   cron: "0 9 * * *" },
-  { label: "Weekly Mon 9am UTC", cron: "0 9 * * 1" },
-  { label: "Custom…",            cron: "custom" },
-];
-
-
 function avatarColor(name: string) {
   const colors = ["#4f46e5","#0891b2","#059669","#d97706","#dc2626","#7c3aed","#db2777"];
   let h = 0;
@@ -100,14 +91,10 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   } : agentConfig;
 
   const [config, setConfig] = useState<AgentConfig | null>(merged);
-  const [automations, setAutomations] = useState<Automation[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [avatarUrl, setAvatarUrl] = useState(userSettings.avatar ?? "");
   const [publishing, setPublishing] = useState(false);
   const [publishStatus, setPublishStatus] = useState<"idle" | "done" | "error">("idle");
-  const [newAuto, setNewAuto] = useState<Automation | null>(null);
-  const [customCron, setCustomCron] = useState(false);
-  const [runningId, setRunningId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -195,7 +182,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
   useEffect(() => { if (userSettings.avatar) setAvatarUrl(userSettings.avatar); }, [userSettings.avatar]);
   // Sync instructions from server-loaded settings (async load arrives after mount)
   useEffect(() => { setDraftInstructions(userSettings.systemPrompt); }, [userSettings.systemPrompt]);
-  useEffect(() => { listAutomations().then(setAutomations).catch(() => {}); }, []);
   useEffect(() => { getApiKey().then(setApiKey).catch(() => {}); }, []);
   useEffect(() => { getProviders().then(setProviders).catch(() => {}); }, []);
 
@@ -250,33 +236,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       onUserSettingsChange({ ...userSettings, avatar: url } as UserSettings);
     };
     reader.readAsDataURL(file);
-  };
-
-  const handleSaveAutomation = async () => {
-    if (!newAuto) return;
-    await saveAutomation(newAuto);
-    setAutomations((prev) => {
-      const exists = prev.find((a) => a.id === newAuto.id);
-      return exists ? prev.map((a) => a.id === newAuto.id ? newAuto : a) : [...prev, newAuto];
-    });
-    setNewAuto(null);
-  };
-
-  const handleDeleteAutomation = async (id: string) => {
-    await removeAutomation(id);
-    setAutomations((prev) => prev.filter((a) => a.id !== id));
-  };
-
-  const handleToggleAutomation = async (auto: Automation) => {
-    const updated = { ...auto, enabled: !auto.enabled };
-    await saveAutomation(updated);
-    setAutomations((prev) => prev.map((a) => a.id === updated.id ? updated : a));
-  };
-
-  const handleRunNow = async (id: string) => {
-    setRunningId(id);
-    try { await triggerAutomation(id); }
-    finally { setTimeout(() => setRunningId(null), 2000); }
   };
 
   const copy = (text: string) => {
@@ -587,95 +546,6 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
       {/* ── AGENT SETTINGS TAB ──────────────────────────────────── */}
       {settingsTab === "org" && (
         <>
-          {/* Automations — admin only */}
-          {isAdmin && (
-        <SidebarSection
-          title="Automations"
-          action={
-            <button className="sidebar-add-btn" onClick={() => {
-              setCustomCron(false);
-              setNewAuto({ id: crypto.randomUUID(), name: "", schedule: "0 9 * * *", prompt: "", enabled: true, createdBy: userEmail ?? undefined, oneTime: false });
-            }}>+ Add</button>
-          }
-        >
-          {automations.length === 0 && !newAuto && (
-            <p className="sidebar-empty">No automations yet. Add one to run tasks on a schedule.</p>
-          )}
-          {automations.map((a) => (
-            <div key={a.id} className="sidebar-automation-row">
-              <div className="sidebar-automation-info">
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span className="sidebar-automation-name">{a.name || "Unnamed"}</span>
-                  {a.createdBy && (
-                    <span className="sidebar-automation-owner" title={a.createdBy}>
-                      {a.createdBy.split("@")[0]}
-                    </span>
-                  )}
-                </div>
-                <span className="sidebar-automation-schedule">
-                  {a.oneTime ? "Runs once" : (SCHEDULES.find((s) => s.cron === a.schedule)?.label ?? a.schedule)}
-                </span>
-              </div>
-              <div className="sidebar-automation-actions">
-                <button
-                  className="sidebar-run-btn"
-                  onClick={() => handleRunNow(a.id)}
-                  title="Run now"
-                  disabled={runningId === a.id}
-                >
-                  {runningId === a.id ? "…" : "▶"}
-                </button>
-                <input type="checkbox" checked={a.enabled} onChange={() => handleToggleAutomation(a)}
-                  className="configure-checkbox" title={a.enabled ? "Enabled" : "Paused"} />
-                <button className="automation-delete-btn" onClick={() => handleDeleteAutomation(a.id)}>✕</button>
-              </div>
-            </div>
-          ))}
-
-          {newAuto && (
-            <div className="sidebar-automation-form">
-              <input className="configure-input" placeholder="Name" value={newAuto.name}
-                onChange={(e) => setNewAuto({ ...newAuto, name: e.target.value })} />
-
-              <label className="sidebar-onetime-toggle">
-                <input type="checkbox" checked={!!newAuto.oneTime}
-                  onChange={(e) => setNewAuto({ ...newAuto, oneTime: e.target.checked })} />
-                <span>Run once</span>
-              </label>
-
-              {newAuto.oneTime ? (
-                <input className="configure-input" type="datetime-local"
-                  onChange={(e) => {
-                    const d = new Date(e.target.value);
-                    const cron = `${d.getUTCMinutes()} ${d.getUTCHours()} ${d.getUTCDate()} ${d.getUTCMonth() + 1} *`;
-                    setNewAuto({ ...newAuto, schedule: cron });
-                  }} />
-              ) : (
-                <>
-                  <select className="configure-input" value={customCron ? "custom" : newAuto.schedule}
-                    onChange={(e) => {
-                      if (e.target.value === "custom") setCustomCron(true);
-                      else { setCustomCron(false); setNewAuto({ ...newAuto, schedule: e.target.value }); }
-                    }}>
-                    {SCHEDULES.map((s) => <option key={s.cron} value={s.cron}>{s.label}</option>)}
-                  </select>
-                  {customCron && (
-                    <input className="configure-input" placeholder="0 9 * * 1-5" value={newAuto.schedule}
-                      onChange={(e) => setNewAuto({ ...newAuto, schedule: e.target.value })} />
-                  )}
-                </>
-              )}
-              <textarea className="configure-textarea" rows={3} placeholder="Describe what the agent should do…"
-                value={newAuto.prompt} onChange={(e) => setNewAuto({ ...newAuto, prompt: e.target.value })} />
-              <div className="sidebar-automation-form-actions">
-                <button className="automation-cancel-btn" onClick={() => setNewAuto(null)}>Cancel</button>
-                <button className="sidebar-save-btn" onClick={handleSaveAutomation}>Save</button>
-              </div>
-            </div>
-          )}
-        </SidebarSection>
-      )}
-
           {/* Org default model — admin editable */}
           {isAdmin ? (
             <SidebarSection title="Default Model">

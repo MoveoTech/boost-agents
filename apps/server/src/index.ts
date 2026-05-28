@@ -12,7 +12,7 @@ import { agentConfig } from "./config";
 import { commitConfig, commitConfigToRepo, readConfigFromRepo } from "./configure";
 import type { AgentConfig } from "./config";
 import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets } from "./automations";
-import type { Automation } from "./automations";
+import type { Automation, AutomationStep } from "./automations";
 import { connectSession, disconnectSession, getStatus, initAllSessions, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
 import { parseVCards, importContacts, listContacts } from "./contacts";
 import type { Content } from "@google/generative-ai";
@@ -118,13 +118,43 @@ app.post("/api/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
+const FLOW_TOOL_LABELS: Record<string, string> = {
+  google_tasks: "Google Tasks",
+  whatsapp: "WhatsApp",
+  gmail: "Gmail",
+  google_calendar: "Google Calendar",
+  slack: "Slack",
+  monday: "Monday.com",
+  http_request: "HTTP Request",
+  web_fetch: "Web Fetch",
+  google_search: "Google Search",
+};
+
+function compileStepsToPrompt(steps: AutomationStep[]): string {
+  if (!steps.length) return "";
+  const lines = [
+    "Execute the following steps in order. Each step builds on the previous — use outputs and results from earlier steps when needed.",
+    "",
+  ];
+  steps.forEach((step, i) => {
+    const label = FLOW_TOOL_LABELS[step.tool] ?? step.tool;
+    let line = `Step ${i + 1} (${label}): ${step.instruction}`;
+    if (step.tool === "http_request" && step.httpUrl) {
+      line += ` Use HTTP ${step.httpMethod ?? "POST"} to ${step.httpUrl}.`;
+    }
+    lines.push(line);
+  });
+  return lines.join("\n");
+}
+
 // Called by Cloud Scheduler — no user JWT, secured by AUTOMATION_SECRET header
 app.post("/api/run-automation", async (req, res) => {
   if (req.headers["x-automation-secret"] !== process.env.AUTOMATION_SECRET) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const { prompt, id, oneTime, createdBy } = req.body as { prompt: string; name: string; id: string; oneTime?: boolean; createdBy?: string };
+  const { steps, id, oneTime, createdBy } = req.body as { steps?: AutomationStep[]; name: string; id: string; oneTime?: boolean; createdBy?: string };
+  const prompt = compileStepsToPrompt(steps ?? []);
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;
@@ -388,6 +418,50 @@ app.post("/api/automations/:id/run", requireAdmin, async (req, res) => {
   try {
     await runAutomationNow(req.params.id);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/flows/generate", requireAdmin, async (req, res) => {
+  const { description, connectedTools } = req.body as { description: string; connectedTools: string[] };
+  if (!description?.trim()) { res.status(400).json({ error: "description required" }); return; }
+
+  const toolList = connectedTools.length
+    ? connectedTools.map((k) => FLOW_TOOL_LABELS[k] ?? k).join(", ")
+    : Object.values(FLOW_TOOL_LABELS).join(", ");
+
+  const systemPrompt = `You are an automation flow designer. Given a description of what a user wants to automate, generate a structured list of steps.
+
+Available tool keys: ${connectedTools.length ? connectedTools.join(", ") : Object.keys(FLOW_TOOL_LABELS).join(", ")}
+Available tool labels: ${toolList}
+
+Return ONLY valid JSON — no markdown, no explanation. Format:
+{
+  "suggestedName": "...",
+  "suggestedSchedule": "0 9 * * *",
+  "steps": [
+    { "id": "step-1", "tool": "<tool_key>", "instruction": "..." },
+    { "id": "step-2", "tool": "<tool_key>", "instruction": "... using results from step 1 ..." }
+  ]
+}
+
+Rules:
+- Only use tool keys from the available list
+- For http_request steps, add "httpUrl" and "httpMethod" fields
+- Step instructions should reference prior steps naturally (e.g. "using the tasks from step 1")
+- suggestedSchedule must be a valid cron expression`;
+
+  try {
+    const result = await chat(description, [], "tools", systemPrompt);
+    const jsonMatch = result.reply.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) { res.status(500).json({ error: "LLM did not return valid JSON" }); return; }
+    const parsed = JSON.parse(jsonMatch[0]) as { suggestedName?: string; suggestedSchedule?: string; steps?: AutomationStep[] };
+    res.json({
+      suggestedName: parsed.suggestedName ?? "",
+      suggestedSchedule: parsed.suggestedSchedule ?? "0 9 * * *",
+      steps: (parsed.steps ?? []).map((s, i) => ({ ...s, id: s.id ?? `step-${i + 1}` })),
+    });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

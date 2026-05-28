@@ -1,4 +1,4 @@
-import type { ChatResponse, HistoryItem, AgentConfig, Automation, ChatSession, DisplayMessage, AnalyticsData } from "../types";
+import type { ChatResponse, HistoryItem, AgentConfig, Automation, AutomationStep, ChatSession, DisplayMessage, AnalyticsData } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 
@@ -208,6 +208,22 @@ export function subscribeWhatsAppQR(
 
 export async function triggerAutomation(id: string): Promise<void> {
   await fetch(`${BASE}/api/automations/${id}/run`, { method: "POST" });
+}
+
+export async function generateFlow(
+  description: string,
+  connectedTools: string[],
+): Promise<{ suggestedName: string; suggestedSchedule: string; steps: AutomationStep[] }> {
+  const res = await fetch(`${BASE}/api/flows/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ description, connectedTools }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Generation failed" }));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function removeAutomation(id: string): Promise<void> {
