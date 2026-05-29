@@ -511,6 +511,64 @@ Column can be specified by its ID or title (case-insensitive).`,
       required: ["key"],
     },
   },
+  apollo_people_search: {
+    name: "apollo_people_search",
+    description: "Search for people (prospects, leads) using Apollo.io. Filter by job title, company, industry, location, seniority, and more. Returns name, title, company, email, LinkedIn URL, and location.",
+    parameters: {
+      properties: {
+        job_titles:                         { type: "array",  items: { type: "string" }, description: "Job titles to filter by (e.g. ['VP of Sales', 'Head of Marketing'])" },
+        person_locations:                   { type: "array",  items: { type: "string" }, description: "Person locations (e.g. ['United States', 'New York, NY'])" },
+        organization_locations:             { type: "array",  items: { type: "string" }, description: "Company HQ locations (e.g. ['Israel', 'San Francisco, CA'])" },
+        organization_num_employees_ranges:  { type: "array",  items: { type: "string" }, description: "Employee count ranges (e.g. ['1,10', '11,50', '51,200', '201,500', '501,1000', '1001,5000', '5001,10000', '10001,'])" },
+        q_organization_keyword_tags:        { type: "array",  items: { type: "string" }, description: "Industry/keyword tags for the company (e.g. ['saas', 'b2b', 'fintech'])" },
+        seniority:                          { type: "array",  items: { type: "string" }, description: "Seniority levels (e.g. ['vp', 'director', 'manager', 'c_suite', 'founder'])" },
+        per_page:                           { type: "number", description: "Results per page (default 10, max 25)" },
+        page:                               { type: "number", description: "Page number (default 1)" },
+      },
+      required: [],
+    },
+  },
+  apollo_org_search: {
+    name: "apollo_org_search",
+    description: "Search for organizations/companies using Apollo.io. Filter by name keywords, industry, location, size, and more. Returns company name, website, industry, employee count, and location.",
+    parameters: {
+      properties: {
+        q_organization_keyword_tags: { type: "array",  items: { type: "string" }, description: "Industry/keyword tags (e.g. ['saas', 'healthcare', 'fintech'])" },
+        organization_locations:      { type: "array",  items: { type: "string" }, description: "HQ locations (e.g. ['United States', 'Tel Aviv'])" },
+        organization_num_employees_ranges: { type: "array", items: { type: "string" }, description: "Employee count ranges (e.g. ['11,50', '51,200'])" },
+        q_organization_name:         { type: "string", description: "Keyword search within organization names" },
+        per_page:                    { type: "number", description: "Results per page (default 10, max 25)" },
+        page:                        { type: "number", description: "Page number (default 1)" },
+      },
+      required: [],
+    },
+  },
+  apollo_person_enrich: {
+    name: "apollo_person_enrich",
+    description: "Enrich / look up a specific person's full profile on Apollo.io. Returns detailed info including email, phone, LinkedIn, employment history, and more. Provide email and/or name+company.",
+    parameters: {
+      properties: {
+        email:             { type: "string", description: "Person's email address (most reliable identifier)" },
+        first_name:        { type: "string", description: "First name" },
+        last_name:         { type: "string", description: "Last name" },
+        organization_name: { type: "string", description: "Company name" },
+        domain:            { type: "string", description: "Company domain (e.g. 'acme.com')" },
+        linkedin_url:      { type: "string", description: "LinkedIn profile URL" },
+      },
+      required: [],
+    },
+  },
+  apollo_org_enrich: {
+    name: "apollo_org_enrich",
+    description: "Enrich / look up a specific organization's full profile on Apollo.io. Returns company details, tech stack, funding info, industry, size, and more.",
+    parameters: {
+      properties: {
+        domain: { type: "string", description: "Company domain (e.g. 'acme.com') — preferred identifier" },
+        name:   { type: "string", description: "Company name (use if domain unknown)" },
+      },
+      required: [],
+    },
+  },
 };
 
 function buildSystemPrompt(override?: string, addition?: string): string {
@@ -541,7 +599,7 @@ function buildSystemPrompt(override?: string, addition?: string): string {
   return `${base}${skillsBlock}${additionBlock}${capsBlock}`;
 }
 
-function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string): ToolDecl[] {
+function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string, apolloApiKey?: string): ToolDecl[] {
   const tools: ToolDecl[] = [];
   if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
@@ -566,13 +624,14 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
   if ((agentConfig.tools.memory ?? true) && memoryUser) tools.push(ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete);
   if (memoryUser) tools.push(ALL_TOOLS.contacts_lookup, ALL_TOOLS.contacts_list);
+  if (apolloApiKey) tools.push(ALL_TOOLS.apollo_people_search, ALL_TOOLS.apollo_org_search, ALL_TOOLS.apollo_person_enrich, ALL_TOOLS.apollo_org_enrich);
   return tools;
 }
 
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string): Promise<string | null> {
+async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string, apolloApiKey?: string): Promise<string | null> {
   switch (name) {
     case "fetch_url":
       return fetchUrl(args.url as string);
@@ -723,6 +782,53 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       return all.map((c) => `• ${c.name}: ${c.phone}`).join("\n");
     }
 
+    case "apollo_people_search":
+    case "apollo_org_search":
+    case "apollo_person_enrich":
+    case "apollo_org_enrich": {
+      if (!apolloApiKey) return "Apollo.io is not connected. Ask the user to add their Apollo API key in My Connections.";
+      const headers = { "x-api-key": apolloApiKey, "Content-Type": "application/json", "Cache-Control": "no-cache" };
+      try {
+        if (name === "apollo_people_search") {
+          const { per_page = 10, page = 1, ...rest } = args as Record<string, unknown>;
+          const r = await fetch("https://api.apollo.io/api/v1/mixed_people/search", { method: "POST", headers, body: JSON.stringify({ page, per_page, ...rest }) });
+          const data = await r.json() as { people?: Record<string, unknown>[]; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          const people = (data.people ?? []).slice(0, 25).map((p: Record<string, unknown>) => ({
+            name: p.name, title: p.title, company: p.organization_name,
+            email: p.email, linkedin: p.linkedin_url,
+            location: [p.city, p.state, p.country].filter(Boolean).join(", "),
+          }));
+          return `Found ${people.length} people:\n${JSON.stringify(people, null, 2)}`;
+        }
+        if (name === "apollo_org_search") {
+          const { per_page = 10, page = 1, ...rest } = args as Record<string, unknown>;
+          const r = await fetch("https://api.apollo.io/api/v1/mixed_companies/search", { method: "POST", headers, body: JSON.stringify({ page, per_page, ...rest }) });
+          const data = await r.json() as { organizations?: Record<string, unknown>[]; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          const orgs = (data.organizations ?? []).slice(0, 25).map((o: Record<string, unknown>) => ({
+            name: o.name, website: o.website_url, industry: o.industry,
+            employees: o.estimated_num_employees,
+            location: [o.city, o.country].filter(Boolean).join(", "),
+          }));
+          return `Found ${orgs.length} organizations:\n${JSON.stringify(orgs, null, 2)}`;
+        }
+        if (name === "apollo_person_enrich") {
+          const r = await fetch("https://api.apollo.io/api/v1/people/match", { method: "POST", headers, body: JSON.stringify({ reveal_personal_emails: true, ...args }) });
+          const data = await r.json() as { person?: Record<string, unknown>; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          return JSON.stringify(data.person ?? data, null, 2);
+        }
+        // apollo_org_enrich
+        const r = await fetch("https://api.apollo.io/api/v1/organizations/enrich", { method: "POST", headers, body: JSON.stringify(args) });
+        const data = await r.json() as { organization?: Record<string, unknown>; error?: string };
+        if (data.error) return `Apollo error: ${data.error}`;
+        return JSON.stringify(data.organization ?? data, null, 2);
+      } catch (err) {
+        return `Apollo request failed: ${(err as Error).message}`;
+      }
+    }
+
     default:
       return null; // not a builtin tool
   }
@@ -756,6 +862,7 @@ async function runChat(
   memoryUser?: string,
   image?: ImageAttachment,
   whatsappUser?: string,
+  apolloApiKey?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
   const builtPrompt = buildSystemPrompt(systemPrompt);
@@ -778,13 +885,13 @@ async function runChat(
     return chatWithModel(model, builtPrompt, history, message, [], async () => "Tool not available", false, image);
   }
 
-  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser);
+  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey);
   const nativeSearch = agentConfig.tools.googleSearch;
 
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
     const t0 = Date.now();
     console.log(JSON.stringify({ tag: "agent", msg: "tool call", name, argsKeys: Object.keys(args) }));
-    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser);
+    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey);
     console.log(JSON.stringify({ tag: "agent", msg: "tool done", name, ms: Date.now() - t0 }));
     return result ?? "Tool not implemented";
   };
@@ -809,8 +916,9 @@ export async function chat(
   memoryUser?: string,
   image?: ImageAttachment,
   whatsappUser?: string,
+  apolloApiKey?: string,
 ): Promise<ChatResult> {
-  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image, whatsappUser);
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey);
 }
 
 export async function chatStream(
@@ -827,8 +935,9 @@ export async function chatStream(
   memoryUser?: string,
   image?: ImageAttachment,
   whatsappUser?: string,
+  apolloApiKey?: string,
 ): Promise<ToolUse[]> {
-  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image, whatsappUser);
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey);
   return result.toolUses;
 }
 

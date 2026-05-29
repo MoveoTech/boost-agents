@@ -71,6 +71,7 @@ export interface UserSettings {
   systemPrompt?: string;
   avatar?: string;
   apolloApiKey?: string;
+  googleMapsApiKey?: string;
 }
 
 

@@ -2,8 +2,8 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import ChatWindow from "./components/ChatWindow";
 import InputBar from "./components/InputBar";
 import LoginPage from "./components/LoginPage";
-import AgentSidebar from "./components/AgentSidebar";
 import ChatHistorySidebar from "./components/ChatHistorySidebar";
+import LeftPanel, { type PanelId } from "./components/LeftPanel";
 import WelcomeAnimation from "./components/WelcomeAnimation";
 import CreateAgentPage from "./components/CreateAgentPage";
 import SuperAdminPage from "./components/SuperAdminPage";
@@ -26,8 +26,10 @@ export default function App() {
   const [canCreateAgents, setCanCreateAgents] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings>({});
-  const [mobileTab, setMobileTab] = useState<"history" | "chat" | "settings" | "flows">("chat");
+  const [mobileTab, setMobileTab] = useState<"history" | "chat" | "panel" | "flows">("chat");
   const [activeView, setActiveView] = useState<"chat" | "flows">("chat");
+  const [activePanel, setActivePanel] = useState<PanelId | null>(null);
+  const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
@@ -53,7 +55,6 @@ export default function App() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
-  const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [darkMode, setDarkMode] = useState(getStoredDarkMode);
   const [showWelcome, setShowWelcome] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<{ data: string; mimeType: string; name: string } | null>(null);
@@ -305,162 +306,170 @@ export default function App() {
     return <CreateAgentPage email={userEmail} />;
   }
 
+  const togglePanel = (p: PanelId) => {
+    setActivePanel((prev) => prev === p ? null : p);
+    setMobileTab("panel");
+  };
+
+  const handleAgentConfigChange = (c: typeof agentConfig) => {
+    if (c) setAgentConfig(c);
+  };
+
   return (
     <>
-    {showWelcome && (
-      <WelcomeAnimation
-        agentName={title}
-        onDone={() => setShowWelcome(false)}
-      />
-    )}
+    {showWelcome && <WelcomeAnimation agentName={title} onDone={() => setShowWelcome(false)} />}
     <div className="app app-admin">
-      {/* Nav rail — chat vs flows */}
+
+      {/* Nav rail */}
       <div className="app-nav-rail">
         <button
-          className={`nav-rail-btn${activeView === "chat" ? " active" : ""}`}
-          onClick={() => { setActiveView("chat"); setMobileTab("chat"); }}
+          className={`nav-rail-btn${activeView === "chat" && !activePanel ? " active" : ""}`}
+          onClick={() => { setActiveView("chat"); setActivePanel(null); setMobileTab("chat"); }}
           title="Chat"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
           </svg>
         </button>
         <button
-          className={`nav-rail-btn${activeView === "flows" ? " active" : ""}`}
-          onClick={() => { setActiveView("flows"); setMobileTab("flows"); }}
+          className={`nav-rail-btn${activeView === "flows" && !activePanel ? " active" : ""}`}
+          onClick={() => { setActiveView("flows"); setActivePanel(null); setMobileTab("flows"); }}
           title="Flows"
+        >⚡</button>
+
+        <div className="nav-rail-divider" />
+
+        <button className={`nav-rail-btn${activePanel === "brain" ? " active" : ""}`} onClick={() => togglePanel("brain")} title="Brain">
+          🧠
+        </button>
+        <button className={`nav-rail-btn${activePanel === "connectors" ? " active" : ""}`} onClick={() => togglePanel("connectors")} title="Connectors">
+          🔌
+        </button>
+        <button className={`nav-rail-btn${activePanel === "skills" ? " active" : ""}`} onClick={() => togglePanel("skills")} title="Skills">
+          🛠️
+        </button>
+        <button className={`nav-rail-btn${activePanel === "access" ? " active" : ""}`} onClick={() => togglePanel("access")} title="API Access">
+          🔑
+        </button>
+
+        <div style={{ flex: 1 }} />
+
+        <button
+          className="nav-rail-btn"
+          onClick={handleLogout}
+          title={`Signed in as ${userEmail ?? ""} — click to sign out`}
         >
-          ⚡
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+        </button>
+        <button className="nav-rail-btn" onClick={() => setDarkMode((v) => !v)} title={darkMode ? "Light mode" : "Dark mode"}>
+          {darkMode
+            ? <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="2" fill="none"/></svg>
+            : <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>}
         </button>
       </div>
 
+      {/* Left panel slot — chat history OR settings panel */}
+      {activePanel ? (
+        <LeftPanel
+          panel={activePanel}
+          onClose={() => { setActivePanel(null); setMobileTab(activeView === "chat" ? "history" : "flows"); }}
+          userEmail={userEmail}
+          userSettings={userSettings}
+          onUserSettingsChange={handleUserSettingsChange}
+          agentConfig={agentConfig}
+          onAgentConfigChange={handleAgentConfigChange}
+          gmailConnected={gmailConnected}
+          calendarConnected={calendarConnected}
+          mondayConnected={mondayConnected}
+          tasksConnected={tasksConnected}
+          whatsappConnected={whatsappConnected}
+          whatsappStatus={whatsappStatus}
+          whatsappOwners={whatsappOwners}
+          googleMapsConnected={googleMapsConnected}
+          connectionsLoading={connectionsLoading}
+          onGmailDisconnect={() => disconnectService("gmail").then(() => setGmailConnected(false))}
+          onCalendarDisconnect={() => disconnectService("calendar").then(() => setCalendarConnected(false))}
+          onMondayDisconnect={() => disconnectService("monday").then(() => setMondayConnected(false))}
+          onTasksDisconnect={() => disconnectService("tasks").then(() => setTasksConnected(false))}
+          onWhatsappConnected={() => { setWhatsappConnected(true); setWhatsappStatus("connected"); }}
+          onWhatsappDisconnect={() => disconnectWhatsApp().then(() => { setWhatsappConnected(false); setWhatsappStatus("disconnected"); })}
+          className={mobileTab !== "panel" ? "mobile-hidden" : ""}
+        />
+      ) : activeView === "chat" ? (
+        <ChatHistorySidebar
+          sessions={chatSessions}
+          loading={historyLoading}
+          currentId={currentChatId}
+          onSelect={handleSelectChat}
+          onNew={handleNewChat}
+          onDelete={handleDeleteChat}
+          collapsed={historyCollapsed}
+          onToggle={() => setHistoryCollapsed((v) => !v)}
+          className={mobileTab !== "history" ? "mobile-hidden" : ""}
+        />
+      ) : null}
+
+      {/* Main content */}
       {activeView === "flows" ? (
         <FlowsPage
           connections={{
-            gmail: gmailConnected,
-            calendar: calendarConnected,
-            monday: mondayConnected,
-            tasks: tasksConnected,
-            whatsapp: whatsappConnected,
+            gmail: gmailConnected, calendar: calendarConnected, monday: mondayConnected,
+            tasks: tasksConnected, whatsapp: whatsappConnected,
             googleMaps: googleMapsConnected,
             apollo: !!(userSettings as any).apolloApiKey,
           }}
           isAdmin={isAdmin}
         />
       ) : (
-        <>
-      <ChatHistorySidebar
-        sessions={chatSessions}
-        loading={historyLoading}
-        currentId={currentChatId}
-        onSelect={handleSelectChat}
-        onNew={handleNewChat}
-        onDelete={handleDeleteChat}
-        collapsed={historyCollapsed}
-        onToggle={() => setHistoryCollapsed((v) => !v)}
-        className={mobileTab !== "history" ? "mobile-hidden" : ""}
-      />
-
-      <div className={`chat-area${mobileTab !== "chat" ? " mobile-hidden" : ""}`}>
-        <header className="header">
-          <div className="header-title">
-            <span className={`header-icon${isResponding ? " responding" : ""}`}>✦</span>
-            <h1>{title}</h1>
-            <span className="version-badge">v2</span>
-          </div>
-          <div className="header-actions">
-            <span className="model-badge">{modelLabel}</span>
-            <button
-              className="header-icon-btn"
-              onClick={handleLogout}
-              title={`Signed in as ${userEmail ?? ""} — click to sign out`}
-              style={{ fontSize: 11, width: "auto", padding: "0 8px", gap: 4, display: "flex", alignItems: "center" }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
-              </svg>
-              {userEmail?.split("@")[0]}
-            </button>
-            {messages.length > 0 && (
-              <button className="header-icon-btn" onClick={handleExport} title="Export chat (⌘K=new, ⌘/=focus)">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-                </svg>
-              </button>
-            )}
-            <button
-              className="header-icon-btn"
-              onClick={() => setDarkMode((v) => !v)}
-              title={darkMode ? "Light mode" : "Dark mode"}
-            >
-              {darkMode ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="2" fill="none"/>
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
-                </svg>
+        <div className={`chat-area${mobileTab !== "chat" ? " mobile-hidden" : ""}`}>
+          <header className="header">
+            <div className="header-title">
+              <span className={`header-icon${isResponding ? " responding" : ""}`}>✦</span>
+              <h1>{title}</h1>
+              <span className="version-badge">v2</span>
+            </div>
+            <div className="header-actions">
+              <span className="model-badge">{modelLabel}</span>
+              {messages.length > 0 && (
+                <button className="header-icon-btn" onClick={handleExport} title="Export chat">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                  </svg>
+                </button>
               )}
-            </button>
-          </div>
-        </header>
+            </div>
+          </header>
 
-        <ChatWindow
-          messages={messages}
-          onPromptClick={(p) => handleSend(p)}
-          onRetry={handleRetry}
-          onEditRetry={handleEditRetry}
-        />
+          <ChatWindow
+            messages={messages}
+            onPromptClick={(p) => handleSend(p)}
+            onRetry={handleRetry}
+            onEditRetry={handleEditRetry}
+            onFeedback={handleFeedback}
+          />
 
-        <InputBar
-          ref={inputRef}
-          onSend={handleSend}
-          disabled={loading}
-          placeholder={placeholder}
-          attachment={pendingAttachment}
-          onAttachmentChange={setPendingAttachment}
-          skills={agentConfig?.skills ?? []}
-          currentProvider={(userSettings.model ?? agentConfig?.model)?.provider ?? "gemini"}
-          onNewChat={handleNewChat}
-          prefillInput={prefillInput}
-        />
-      </div>
-
-      <AgentSidebar
-        isAdmin={isAdmin}
-        userEmail={userEmail}
-        agentConfig={agentConfig}
-        connectionsLoading={connectionsLoading}
-        onSave={(c) => setAgentConfig(c)}
-        userSettings={userSettings}
-        onUserSettingsChange={handleUserSettingsChange}
-        gmailConnected={gmailConnected}
-        calendarConnected={calendarConnected}
-        mondayConnected={mondayConnected}
-        onGmailDisconnect={() => disconnectService("gmail").then(() => setGmailConnected(false))}
-        onCalendarDisconnect={() => disconnectService("calendar").then(() => setCalendarConnected(false))}
-        onMondayDisconnect={() => disconnectService("monday").then(() => setMondayConnected(false))}
-        tasksConnected={tasksConnected}
-        onTasksDisconnect={() => disconnectService("tasks").then(() => setTasksConnected(false))}
-        whatsappConnected={whatsappConnected}
-        whatsappStatus={whatsappStatus}
-        whatsappOwners={whatsappOwners}
-        onWhatsappConnected={() => { setWhatsappConnected(true); setWhatsappStatus("connected"); }}
-        onWhatsappDisconnect={() => disconnectWhatsApp().then(() => { setWhatsappConnected(false); setWhatsappStatus("disconnected"); })}
-        className={mobileTab !== "settings" ? "mobile-hidden" : ""}
-        onFeedback={handleFeedback}
-        isResponding={isResponding}
-      />
-
-        </>
+          <InputBar
+            ref={inputRef}
+            onSend={handleSend}
+            disabled={loading}
+            placeholder={placeholder}
+            attachment={pendingAttachment}
+            onAttachmentChange={setPendingAttachment}
+            skills={agentConfig?.skills ?? []}
+            currentProvider={(userSettings.model ?? agentConfig?.model)?.provider ?? "gemini"}
+            onNewChat={handleNewChat}
+            prefillInput={prefillInput}
+          />
+        </div>
       )}
 
       <nav className="mobile-tab-bar">
-        <button className={`mobile-tab-btn${mobileTab === "history" ? " active" : ""}`} onClick={() => { setMobileTab("history"); setActiveView("chat"); }}>History</button>
-        <button className={`mobile-tab-btn${mobileTab === "chat" ? " active" : ""}`} onClick={() => { setMobileTab("chat"); setActiveView("chat"); }}>Chat</button>
-        <button className={`mobile-tab-btn${mobileTab === "settings" ? " active" : ""}`} onClick={() => { setMobileTab("settings"); setActiveView("chat"); }}>Settings</button>
-        <button className={`mobile-tab-btn${mobileTab === "flows" ? " active" : ""}`} onClick={() => { setMobileTab("flows"); setActiveView("flows"); }}>⚡ Flows</button>
+        <button className={`mobile-tab-btn${mobileTab === "history" ? " active" : ""}`} onClick={() => { setMobileTab("history"); setActiveView("chat"); setActivePanel(null); }}>History</button>
+        <button className={`mobile-tab-btn${mobileTab === "chat" ? " active" : ""}`} onClick={() => { setMobileTab("chat"); setActiveView("chat"); setActivePanel(null); }}>Chat</button>
+        <button className={`mobile-tab-btn${mobileTab === "panel" ? " active" : ""}`} onClick={() => { setMobileTab("panel"); if (!activePanel) setActivePanel("connectors"); }}>Settings</button>
+        <button className={`mobile-tab-btn${mobileTab === "flows" ? " active" : ""}`} onClick={() => { setMobileTab("flows"); setActiveView("flows"); setActivePanel(null); }}>⚡ Flows</button>
       </nav>
     </div>
     </>

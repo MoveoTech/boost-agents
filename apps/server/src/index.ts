@@ -154,6 +154,7 @@ async function executeStepsSequentially(
   onStepDone?: (result: StepResult) => void,
   priorResults?: StepResult[],
   apolloApiKey?: string,
+  googleMapsApiKey?: string,
 ): Promise<StepResult[]> {
   const results: StepResult[] = [];
   let context = "";
@@ -208,7 +209,7 @@ async function executeStepsSequentially(
 
     // Google Maps: direct API calls (geocode / places search / directions)
     if (step.tool === "google_maps") {
-      const mapsKey = process.env.GOOGLE_MAPS_API_KEY;
+      const mapsKey = googleMapsApiKey ?? process.env.GOOGLE_MAPS_API_KEY;
       if (!mapsKey) {
         const stepResult: StepResult = { id: step.id, tool: step.tool, output: "", error: "GOOGLE_MAPS_API_KEY not configured", durationMs: Date.now() - stepStart };
         results.push(stepResult); onStepDone?.(stepResult); break;
@@ -343,6 +344,12 @@ app.post("/api/run-automation", async (req, res) => {
     }
     const mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
     const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+    let apolloApiKeyCron: string | undefined;
+    let googleMapsApiKeyCron: string | undefined;
+    try {
+      const settingsRes = await fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(user.email)}`, { headers: { "x-api-key": oauthServiceKey } });
+      if (settingsRes.ok) { const s = await settingsRes.json() as { apolloApiKey?: string; googleMapsApiKey?: string }; apolloApiKeyCron = s.apolloApiKey; googleMapsApiKeyCron = s.googleMapsApiKey; }
+    } catch { /* non-fatal — fall back to env vars */ }
     const runStart = Date.now();
     const stepResults = await executeStepsSequentially(
       steps ?? [],
@@ -351,6 +358,11 @@ app.post("/api/run-automation", async (req, res) => {
       mondayToken,
       user.tasks ? user.email : undefined,
       whatsappUser,
+      undefined,
+      undefined,
+      undefined,
+      apolloApiKeyCron,
+      googleMapsApiKeyCron,
     );
     res.json({ ok: true, stepResults });
     // Async post-run: save history + notify on failure
@@ -632,9 +644,10 @@ app.post("/api/flows/:id/run-direct", requireAdmin, async (req, res) => {
     const mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
     const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
     let apolloApiKeyDirect: string | undefined;
+    let googleMapsApiKeyDirect: string | undefined;
     try {
       const settingsRes = await fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(user.email)}`, { headers: { "x-api-key": oauthServiceKey } });
-      if (settingsRes.ok) { const s = await settingsRes.json() as { apolloApiKey?: string }; apolloApiKeyDirect = s.apolloApiKey; }
+      if (settingsRes.ok) { const s = await settingsRes.json() as { apolloApiKey?: string; googleMapsApiKey?: string }; apolloApiKeyDirect = s.apolloApiKey; googleMapsApiKeyDirect = s.googleMapsApiKey; }
     } catch { /* non-fatal */ }
     const runStart = Date.now();
     const stepResults = await executeStepsSequentially(
@@ -648,6 +661,7 @@ app.post("/api/flows/:id/run-direct", requireAdmin, async (req, res) => {
       undefined,
       undefined,
       apolloApiKeyDirect,
+      googleMapsApiKeyDirect,
     );
     res.json({ ok: true, stepResults });
     const hasError = stepResults.some((r) => r.error);
@@ -706,6 +720,7 @@ app.post("/api/flows/run-steps", requireAdmin, async (req, res) => {
     let tasksUser: string | undefined;
     let whatsappUser: string | undefined;
     let apolloApiKey: string | undefined;
+    let googleMapsApiKey: string | undefined;
 
     if (userEmail) {
       const [usersRes, settingsRes] = await Promise.all([
@@ -722,8 +737,9 @@ app.post("/api/flows/run-steps", requireAdmin, async (req, res) => {
         whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
       }
       if (settingsRes.ok) {
-        const settings = await settingsRes.json() as { apolloApiKey?: string };
+        const settings = await settingsRes.json() as { apolloApiKey?: string; googleMapsApiKey?: string };
         apolloApiKey = settings.apolloApiKey;
+        googleMapsApiKey = settings.googleMapsApiKey;
       }
     }
 
@@ -738,6 +754,7 @@ app.post("/api/flows/run-steps", requireAdmin, async (req, res) => {
       (result) => send({ type: "done", ...result }),
       priorResults,
       apolloApiKey,
+      googleMapsApiKey,
     );
   } catch (err) {
     send({ type: "error", error: (err as Error).message });
@@ -1922,6 +1939,13 @@ app.post("/api/chat", async (req, res) => {
     const mondayTokenStream = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
     const tasksUserStream   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
     const waUserStream      = sessionEmail && getStatus(sessionEmail) === "connected" ? sessionEmail : undefined;
+    let apolloApiKeyStream: string | undefined;
+    if (sessionEmail && process.env.OAUTH_SERVICE_URL && process.env.OAUTH_SERVICE_KEY) {
+      try {
+        const s = await fetch(`${process.env.OAUTH_SERVICE_URL}/api/user-settings/${process.env.GOOGLE_CLOUD_PROJECT}/${encodeURIComponent(sessionEmail)}`, { headers: { "x-api-key": process.env.OAUTH_SERVICE_KEY } });
+        if (s.ok) { const d = await s.json() as { apolloApiKey?: string }; apolloApiKeyStream = d.apolloApiKey; }
+      } catch { /* non-fatal */ }
+    }
     try {
       await chatStream(
         effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model,
@@ -1942,6 +1966,7 @@ app.post("/api/chat", async (req, res) => {
         sessionEmail,
         imageAttachment,
         waUserStream,
+        apolloApiKeyStream,
       );
       send({ type: "done", toolUses });
       trackUsage(modelId, toolUses.map((t) => t.name), Date.now() - t0);
@@ -1957,7 +1982,14 @@ app.post("/api/chat", async (req, res) => {
     const mondayToken = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
     const tasksUser   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
     const waUser      = sessionEmail && getStatus(sessionEmail) === "connected" ? sessionEmail : undefined;
-    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail, imageAttachment, waUser);
+    let apolloApiKey: string | undefined;
+    if (sessionEmail && process.env.OAUTH_SERVICE_URL && process.env.OAUTH_SERVICE_KEY) {
+      try {
+        const s = await fetch(`${process.env.OAUTH_SERVICE_URL}/api/user-settings/${process.env.GOOGLE_CLOUD_PROJECT}/${encodeURIComponent(sessionEmail)}`, { headers: { "x-api-key": process.env.OAUTH_SERVICE_KEY } });
+        if (s.ok) { const d = await s.json() as { apolloApiKey?: string }; apolloApiKey = d.apolloApiKey; }
+      } catch { /* non-fatal */ }
+    }
+    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail, imageAttachment, waUser, apolloApiKey);
     trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
   } catch (err) {
