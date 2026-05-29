@@ -38,6 +38,8 @@ export interface AutomationStep {
   instruction: string;
   httpUrl?: string;
   httpMethod?: string;
+  httpAuthHeader?: string;
+  httpAuthValue?: string;
 }
 
 export interface RunHistoryEntry {

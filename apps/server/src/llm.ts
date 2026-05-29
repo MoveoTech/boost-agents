@@ -3,10 +3,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import type { ToolUse, ChatResult } from "./agent";
 
-// Lazy singleton clients — created on first use so optional API keys (OPENAI_API_KEY)
-// don't crash the server at startup when not configured.
+// Lazy singleton clients — created on first use so optional API keys don't crash the server at startup.
 let _anthropicClient: Anthropic | undefined;
 let _openaiClient: OpenAI | undefined;
+let _geminiClient: GoogleGenerativeAI | undefined;
+
 function getAnthropicClient(): Anthropic {
   if (!_anthropicClient) _anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   return _anthropicClient;
@@ -14,6 +15,12 @@ function getAnthropicClient(): Anthropic {
 function getOpenAIClient(): OpenAI {
   if (!_openaiClient) _openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   return _openaiClient;
+}
+// Gemini 2.5 models support implicit (automatic) prefix caching server-side — no explicit
+// cache management needed. Reusing a single client instance avoids per-call init overhead.
+function getGeminiClient(): GoogleGenerativeAI {
+  if (!_geminiClient) _geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  return _geminiClient;
 }
 
 export interface ModelConfig {
@@ -88,7 +95,7 @@ function toGeminiSchema(p: ToolParam): Record<string, unknown> {
 }
 
 async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment, noThinking?: boolean): Promise<ChatResult> {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  const genAI = getGeminiClient();
   const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
       name: t.name, description: t.description,
@@ -153,6 +160,12 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
     ? [...claudeTools, { type: "web_search_20250305", name: "web_search" }]
     : claudeTools;
 
+  // Prompt caching: mark system prompt and last tool as cacheable breakpoints
+  const systemBlocks: Anthropic.TextBlockParam[] = [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }];
+  const toolsWithCache = allClaudeTools.length
+    ? allClaudeTools.map((t, i) => i === allClaudeTools.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t)
+    : allClaudeTools;
+
   const firstUserContent: Anthropic.MessageParam["content"] = image
     ? [
         image.mimeType === "application/pdf"
@@ -169,7 +182,8 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
     { role: "user", content: firstUserContent },
   ];
 
-  const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
+  const betaHeaders = ["prompt-caching-2024-07-31", ...(nativeSearch ? ["web-search-2025-03-05"] : [])].join(",");
+  const reqOpts = { headers: { "anthropic-beta": betaHeaders } };
 
   let round = 0;
   let consecutiveErrors = 0;
@@ -178,8 +192,8 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
       msgs.push({ role: "user", content: FINAL_MSG });
     }
     const response = await client.messages.create({
-      model: modelId, max_tokens: 8192, system: systemPrompt,
-      tools: round < MAX_TOOL_ROUNDS && allClaudeTools.length ? (allClaudeTools as never) : undefined,
+      model: modelId, max_tokens: 8192, system: systemBlocks as never,
+      tools: round < MAX_TOOL_ROUNDS && toolsWithCache.length ? (toolsWithCache as never) : undefined,
       messages: msgs,
     }, reqOpts);
 
@@ -275,7 +289,7 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
 // ── Streaming implementations ────────────────────────────────────────────────
 
 async function chatGeminiStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean, image?: ImageAttachment): Promise<ToolUse[]> {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  const genAI = getGeminiClient();
   const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
       name: t.name, description: t.description,
@@ -342,6 +356,11 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
     ? [...claudeTools, { type: "web_search_20250305", name: "web_search" }]
     : claudeTools;
 
+  const systemBlocks: Anthropic.TextBlockParam[] = [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }];
+  const toolsWithCache = allClaudeTools.length
+    ? allClaudeTools.map((t, i) => i === allClaudeTools.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t)
+    : allClaudeTools;
+
   const firstUserContent: Anthropic.MessageParam["content"] = image
     ? [
         image.mimeType === "application/pdf"
@@ -356,15 +375,16 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
     { role: "user", content: firstUserContent },
   ];
 
-  const reqOpts = nativeSearch ? { headers: { "anthropic-beta": "web-search-2025-03-05" } } : undefined;
+  const betaHeaders = ["prompt-caching-2024-07-31", ...(nativeSearch ? ["web-search-2025-03-05"] : [])].join(",");
+  const reqOpts = { headers: { "anthropic-beta": betaHeaders } };
 
   let round = 0;
   let consecutiveErrors = 0;
   while (true) {
     if (round >= MAX_TOOL_ROUNDS) { msgs.push({ role: "user", content: FINAL_MSG }); }
     const stream = client.messages.stream({
-      model: modelId, max_tokens: 8192, system: systemPrompt,
-      tools: round < MAX_TOOL_ROUNDS && allClaudeTools.length ? (allClaudeTools as never) : undefined,
+      model: modelId, max_tokens: 8192, system: systemBlocks as never,
+      tools: round < MAX_TOOL_ROUNDS && toolsWithCache.length ? (toolsWithCache as never) : undefined,
       messages: msgs,
     }, reqOpts);
 

@@ -52,11 +52,11 @@ export async function readWebpage(url: string): Promise<string> {
   }
 }
 
-export async function httpRequest(url: string, method: string, body?: unknown): Promise<string> {
+export async function httpRequest(url: string, method: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<string> {
   try {
     const res = await fetch(url, {
       method,
-      headers: { "Content-Type": "application/json", "User-Agent": "boost-agent/1.0" },
+      headers: { "Content-Type": "application/json", "User-Agent": "boost-agent/1.0", ...extraHeaders },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(15_000),
     });

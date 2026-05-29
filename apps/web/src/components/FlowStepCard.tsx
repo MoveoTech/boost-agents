@@ -81,24 +81,41 @@ export default function FlowStepCard({ step, stepNumber, onChange, onRemove, con
       </div>
 
       {step.tool === "http_request" && (
-        <div className="flow-step-http-row">
-          <select
-            className="flow-http-method"
-            value={step.httpMethod ?? "POST"}
-            onChange={(e) => onChange({ ...step, httpMethod: e.target.value })}
-          >
-            <option>POST</option>
-            <option>GET</option>
-            <option>PUT</option>
-            <option>PATCH</option>
-          </select>
-          <input
-            className="flow-http-url"
-            placeholder="https://your-server.com/api/webhook"
-            value={step.httpUrl ?? ""}
-            onChange={(e) => onChange({ ...step, httpUrl: e.target.value })}
-          />
-        </div>
+        <>
+          <div className="flow-step-http-row">
+            <select
+              className="flow-http-method"
+              value={step.httpMethod ?? "POST"}
+              onChange={(e) => onChange({ ...step, httpMethod: e.target.value })}
+            >
+              <option>POST</option>
+              <option>GET</option>
+              <option>PUT</option>
+              <option>PATCH</option>
+            </select>
+            <input
+              className="flow-http-url"
+              placeholder="https://your-server.com/api/webhook"
+              value={step.httpUrl ?? ""}
+              onChange={(e) => onChange({ ...step, httpUrl: e.target.value })}
+            />
+          </div>
+          <div className="flow-step-http-auth-row">
+            <input
+              className="flow-http-auth-header"
+              placeholder="Auth header (e.g. Authorization)"
+              value={step.httpAuthHeader ?? ""}
+              onChange={(e) => onChange({ ...step, httpAuthHeader: e.target.value || undefined })}
+            />
+            <input
+              type="password"
+              className="flow-http-auth-value"
+              placeholder="Value (e.g. Bearer token123)"
+              value={step.httpAuthValue ?? ""}
+              onChange={(e) => onChange({ ...step, httpAuthValue: e.target.value || undefined })}
+            />
+          </div>
+        </>
       )}
 
       <textarea

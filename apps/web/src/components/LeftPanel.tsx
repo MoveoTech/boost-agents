@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { AgentConfig, Skill, UserSettings } from "../types";
 import {
   applyConfigLive, getApiKey, getProviders,
-  subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts,
+  subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts, validateApiKey,
   type WhatsAppConfig,
 } from "../api/client";
 
@@ -143,8 +143,12 @@ function ConnectorsPanel({
   const [contactImportStatus, setContactImportStatus] = useState<string | null>(null);
   const [apolloDraft, setApolloDraft] = useState("");
   const [apolloEditing, setApolloEditing] = useState(false);
+  const [apolloValidating, setApolloValidating] = useState(false);
+  const [apolloKeyError, setApolloKeyError] = useState<string | null>(null);
   const [mapsDraft, setMapsDraft] = useState("");
   const [mapsEditing, setMapsEditing] = useState(false);
+  const [mapsValidating, setMapsValidating] = useState(false);
+  const [mapsKeyError, setMapsKeyError] = useState<string | null>(null);
   const [waSettingsOpen, setWaSettingsOpen] = useState(false);
   const contactFileRef = useRef<HTMLInputElement>(null);
   const closeQRRef = useRef<(() => void) | null>(null);
@@ -323,27 +327,31 @@ function ConnectorsPanel({
           )}
         </div>
         {(!apolloConnected || apolloEditing) && (
-          <div className="lp-key-input-row">
+          <div className="lp-key-input-row" style={{ flexWrap: "wrap", gap: 4 }}>
             <input type="password" className="configure-input"
               placeholder={apolloEditing ? "New API key" : "Paste Apollo.io API key"}
-              value={apolloDraft} onChange={(e) => setApolloDraft(e.target.value)}
+              value={apolloDraft} onChange={(e) => { setApolloDraft(e.target.value); setApolloKeyError(null); }}
               style={{ flex: 1, fontSize: 12 }} autoFocus={apolloEditing}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && apolloDraft.trim()) {
-                  onUserSettingsChange({ ...userSettings, apolloApiKey: apolloDraft.trim() });
-                  setApolloDraft(""); setApolloEditing(false);
-                }
-                if (e.key === "Escape") { setApolloDraft(""); setApolloEditing(false); }
+                if (e.key === "Escape") { setApolloDraft(""); setApolloEditing(false); setApolloKeyError(null); }
               }}
             />
             {apolloEditing && (
-              <button className="automation-cancel-btn" style={{ fontSize: 12 }} onClick={() => { setApolloDraft(""); setApolloEditing(false); }}>Cancel</button>
+              <button className="automation-cancel-btn" style={{ fontSize: 12 }} onClick={() => { setApolloDraft(""); setApolloEditing(false); setApolloKeyError(null); }}>Cancel</button>
             )}
             <button className="lp-save-btn" style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap" }}
-              disabled={!apolloDraft.trim()}
-              onClick={() => { onUserSettingsChange({ ...userSettings, apolloApiKey: apolloDraft.trim() }); setApolloDraft(""); setApolloEditing(false); }}>
-              {apolloEditing ? "Save" : "Connect"}
+              disabled={!apolloDraft.trim() || apolloValidating}
+              onClick={async () => {
+                setApolloValidating(true); setApolloKeyError(null);
+                const result = await validateApiKey("apollo", apolloDraft.trim()).catch(() => ({ ok: false, error: "Network error" }));
+                setApolloValidating(false);
+                if (!result.ok) { setApolloKeyError(result.error ?? "Invalid key"); return; }
+                onUserSettingsChange({ ...userSettings, apolloApiKey: apolloDraft.trim() });
+                setApolloDraft(""); setApolloEditing(false);
+              }}>
+              {apolloValidating ? "Checking…" : apolloEditing ? "Save" : "Connect"}
             </button>
+            {apolloKeyError && <span style={{ width: "100%", fontSize: 11, color: "var(--error, #e53e3e)" }}>{apolloKeyError}</span>}
           </div>
         )}
 
@@ -371,27 +379,31 @@ function ConnectorsPanel({
           )}
         </div>
         {(mapsEditing || (!userSettings.googleMapsApiKey && !googleMapsConnected)) && (
-          <div className="lp-key-input-row">
+          <div className="lp-key-input-row" style={{ flexWrap: "wrap", gap: 4 }}>
             <input type="password" className="configure-input"
               placeholder={mapsEditing ? "New API key" : "Paste Google Maps API key"}
-              value={mapsDraft} onChange={(e) => setMapsDraft(e.target.value)}
+              value={mapsDraft} onChange={(e) => { setMapsDraft(e.target.value); setMapsKeyError(null); }}
               style={{ flex: 1, fontSize: 12 }} autoFocus={mapsEditing}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && mapsDraft.trim()) {
-                  onUserSettingsChange({ ...userSettings, googleMapsApiKey: mapsDraft.trim() });
-                  setMapsDraft(""); setMapsEditing(false);
-                }
-                if (e.key === "Escape") { setMapsDraft(""); setMapsEditing(false); }
+                if (e.key === "Escape") { setMapsDraft(""); setMapsEditing(false); setMapsKeyError(null); }
               }}
             />
             {mapsEditing && (
-              <button className="automation-cancel-btn" style={{ fontSize: 12 }} onClick={() => { setMapsDraft(""); setMapsEditing(false); }}>Cancel</button>
+              <button className="automation-cancel-btn" style={{ fontSize: 12 }} onClick={() => { setMapsDraft(""); setMapsEditing(false); setMapsKeyError(null); }}>Cancel</button>
             )}
             <button className="lp-save-btn" style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap" }}
-              disabled={!mapsDraft.trim()}
-              onClick={() => { onUserSettingsChange({ ...userSettings, googleMapsApiKey: mapsDraft.trim() }); setMapsDraft(""); setMapsEditing(false); }}>
-              {mapsEditing ? "Save" : "Connect"}
+              disabled={!mapsDraft.trim() || mapsValidating}
+              onClick={async () => {
+                setMapsValidating(true); setMapsKeyError(null);
+                const result = await validateApiKey("google_maps", mapsDraft.trim()).catch(() => ({ ok: false, error: "Network error" }));
+                setMapsValidating(false);
+                if (!result.ok) { setMapsKeyError(result.error ?? "Invalid key"); return; }
+                onUserSettingsChange({ ...userSettings, googleMapsApiKey: mapsDraft.trim() });
+                setMapsDraft(""); setMapsEditing(false);
+              }}>
+              {mapsValidating ? "Checking…" : mapsEditing ? "Save" : "Connect"}
             </button>
+            {mapsKeyError && <span style={{ width: "100%", fontSize: 11, color: "var(--error, #e53e3e)" }}>{mapsKeyError}</span>}
           </div>
         )}
         {!mapsEditing && !userSettings.googleMapsApiKey && googleMapsConnected && (

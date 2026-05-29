@@ -1,26 +1,31 @@
 {
-  "item_name": "Project Alpha Launch",
-  "column_values": {
-    "status": {
-      "index": 1,
-      "label": "Working on it"
-    },
-    "date": {
-      "date": "2026-06-15"
-    },
-    "person": {
-      "personsAndTeams": [
-        {
-          "id": 9876543,
-          "kind": "person"
-        }
-      ]
-    },
-    "numbers": 1500,
-    "timeline": {
-      "from": "2026-06-01",
-      "to": "2026-06-15"
-    },
-    "text": "High priority launch phase"
-  }
+  "id": "62b0e35f8e589f00010dc785",
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "name": "Jane Doe",
+  "title": "VP of Marketing",
+  "seniority": "vp",
+  "email": "[email protected]",
+  "email_status": "verified",
+  "contact_owner_id": null,
+  "linkedin_url": "https://linkedin.com",
+  "twitter_url": "https://twitter.com",
+  "github_url": null,
+  "facebook_url": null,
+  "headline": "Driving growth and scaling marketing teams | Tech Innovators Inc.",
+  "country": "United States",
+  "city": "San Francisco",
+  "state": "California",
+  "time_zone": "America/Los_Angeles",
+  "organization_id": "5e1a2b3c4d5e6f7g8h9i0j",
+  "organization_name": "Tech Innovators Inc.",
+  "organization_primary_domain": "techinnovators.com",
+  "organization_website_url": "https://techinnovators.com",
+  "organization_industry": "Information Technology & Services",
+  "organization_employee_range": "50-200",
+  "organization_num_employees": 142,
+  "organization_country": "United States",
+  "organization_city": "San Francisco",
+  "organization_state": "California",
+  "organization_linkedin_url": "https://linkedin.com"
 }

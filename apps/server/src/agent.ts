@@ -31,9 +31,10 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
     name: "http_request", description: "Make an HTTP request with a custom method and optional JSON body.",
     parameters: {
       properties: {
-        url:    { type: "string",  description: "Full URL" },
-        method: { type: "string",  description: "HTTP method: GET, POST, PUT, PATCH, DELETE" },
-        body:   { type: "object",  description: "JSON body (optional)" },
+        url:     { type: "string",  description: "Full URL" },
+        method:  { type: "string",  description: "HTTP method: GET, POST, PUT, PATCH, DELETE" },
+        body:    { type: "object",  description: "JSON body (optional)" },
+        headers: { type: "object",  description: "Custom HTTP headers (optional, e.g. Authorization)" },
       },
       required: ["url", "method"],
     },
@@ -714,7 +715,7 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       return searchImage(args.query as string);
 
     case "http_request":
-      return httpRequest(args.url as string, args.method as string, args.body);
+      return httpRequest(args.url as string, args.method as string, args.body, args.headers as Record<string, string> | undefined);
 
     case "gmail_send": {
       if (!gmailUser) return "User has not connected Gmail. Ask them to connect first.";

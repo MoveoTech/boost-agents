@@ -177,6 +177,9 @@ async function executeStepsSequentially(
     let instruction = step.instruction;
     if (step.tool === "http_request" && step.httpUrl) {
       instruction += ` Use HTTP ${step.httpMethod ?? "POST"} to ${step.httpUrl}.`;
+      if (step.httpAuthHeader && step.httpAuthValue) {
+        instruction += ` Include this header: "${step.httpAuthHeader}: ${step.httpAuthValue}".`;
+      }
     }
     const prompt = context
       ? `Context from previous steps:\n${context}\n\nCurrent task (${label}): ${instruction}`
@@ -1053,6 +1056,34 @@ app.put("/api/user-settings", async (req, res) => {
     });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.post("/api/connections/validate-key", async (req, res) => {
+  const { service, key } = req.body as { service: string; key: string };
+  if (!service || !key) { res.status(400).json({ ok: false, error: "service and key required" }); return; }
+  try {
+    if (service === "apollo") {
+      const r = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+        method: "POST",
+        headers: { "x-api-key": key, "Content-Type": "application/json", "Cache-Control": "no-cache" },
+        body: JSON.stringify({ per_page: 1 }),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (r.status === 401 || r.status === 403) { res.json({ ok: false, error: "Invalid API key" }); return; }
+      res.json({ ok: r.ok || r.status < 500 });
+    } else if (service === "google_maps") {
+      const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=London&key=${encodeURIComponent(key)}`, {
+        signal: AbortSignal.timeout(8_000),
+      });
+      const data = await r.json() as { status: string; error_message?: string };
+      if (data.status === "REQUEST_DENIED") { res.json({ ok: false, error: data.error_message ?? "Invalid API key" }); return; }
+      res.json({ ok: true });
+    } else {
+      res.status(400).json({ ok: false, error: "Unknown service" });
+    }
+  } catch (err) {
+    res.json({ ok: false, error: (err as Error).message });
+  }
 });
 
 // ── Chat history ─────────────────────────────────────────────────────────────

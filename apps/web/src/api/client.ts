@@ -134,6 +134,15 @@ export async function saveUserSettings(settings: Record<string, unknown>): Promi
   });
 }
 
+export async function validateApiKey(service: "apollo" | "google_maps", key: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/api/connections/validate-key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ service, key }),
+  });
+  return res.json();
+}
+
 export type WhatsAppStatus = "connected" | "disconnected" | "connecting" | "qr";
 
 export async function getConnections(): Promise<{ gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean; whatsapp: boolean; whatsappStatus: WhatsAppStatus; whatsappOwners: string[]; googleMaps: boolean }> {

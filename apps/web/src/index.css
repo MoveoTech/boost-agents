@@ -4364,6 +4364,37 @@ body {
 }
 .flow-http-url:focus, .flow-http-method:focus { border-color: var(--flows-accent); }
 
+.flow-step-http-auth-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.flow-http-auth-header {
+  width: 200px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.flow-http-auth-value {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.flow-http-auth-header:focus, .flow-http-auth-value:focus { border-color: var(--flows-accent); }
+.flow-http-auth-header::placeholder, .flow-http-auth-value::placeholder { color: var(--muted); opacity: 0.7; }
+
 /* Step instruction */
 .flow-step-instruction {
   width: 100%;
