@@ -5,16 +5,24 @@
 // session objects including private keys in plaintext, which is a security issue
 // when logs are shipped to GCP Cloud Logging.
 const _origConsoleLog = console.log.bind(console);
-console.log = (...args: unknown[]) => {
+const _origConsoleError = console.error.bind(console);
+const _suppressLibsignalOutput = (...args: unknown[]) => {
   const first = String(args[0] ?? "");
-  if (
+  return (
     first.startsWith("Closing session") ||
     first.startsWith("Closing open session") ||
     first.startsWith("Session error:") ||
     first.startsWith("No session for") ||
     first.startsWith("Failed to decrypt message")
-  ) return;
+  );
+};
+console.log = (...args: unknown[]) => {
+  if (_suppressLibsignalOutput(...args)) return;
   _origConsoleLog(...args);
+};
+console.error = (...args: unknown[]) => {
+  if (_suppressLibsignalOutput(...args)) return;
+  _origConsoleError(...args);
 };
 
 // Eagerly start loading Baileys when this module is first imported.
@@ -450,7 +458,7 @@ export async function connectSession(
     // messages; we should process them. The 5-minute absolute cap below still drops
     // truly ancient messages. On fresh QR (no savedCreds): use strict cutoff so old
     // messages from before the QR scan are never replayed.
-    const sessionCreatedAt = savedCreds ? Date.now() - 120_000 : Date.now();
+    const sessionCreatedAt = savedCreds ? Date.now() - 30_000 : Date.now();
 
     // Per-socket group metadata cache — groupMetadata() makes a network request and
     // WhatsApp rate-limits it. Cache for 5 minutes to avoid hitting that limit.
