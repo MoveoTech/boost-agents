@@ -1,0 +1,26 @@
+{
+  "item_name": "Project Alpha Launch",
+  "column_values": {
+    "status": {
+      "index": 1,
+      "label": "Working on it"
+    },
+    "date": {
+      "date": "2026-06-15"
+    },
+    "person": {
+      "personsAndTeams": [
+        {
+          "id": 9876543,
+          "kind": "person"
+        }
+      ]
+    },
+    "numbers": 1500,
+    "timeline": {
+      "from": "2026-06-01",
+      "to": "2026-06-15"
+    },
+    "text": "High priority launch phase"
+  }
+}

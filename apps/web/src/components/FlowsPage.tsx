@@ -9,18 +9,15 @@ function webhookUrl(webhookId: string) {
   return `${BASE || window.location.origin}/api/webhooks/${webhookId}`;
 }
 
-function flattenJsonKeys(obj: Record<string, unknown>, prefix = ""): string[] {
-  const keys: string[] = [];
-  for (const [k, v] of Object.entries(obj)) {
-    const path = prefix ? `${prefix}.${k}` : k;
-    keys.push(path);
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      keys.push(...flattenJsonKeys(v as Record<string, unknown>, path));
-    } else if (Array.isArray(v) && v.length > 0 && typeof v[0] === "object" && v[0] !== null) {
-      keys.push(...flattenJsonKeys(v[0] as Record<string, unknown>, `${path}[]`));
-    }
+function payloadToSchema(val: unknown): unknown {
+  if (val === null) return "null";
+  if (Array.isArray(val)) return val.length > 0 ? [payloadToSchema(val[0])] : ["unknown"];
+  if (typeof val === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val as Record<string, unknown>)) result[k] = payloadToSchema(v);
+    return result;
   }
-  return keys;
+  return typeof val;
 }
 
 function genSecret(): string {
@@ -267,7 +264,7 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
         if (data.type === "payload" && data.payload) {
           stopListen();
           setListenMode("received");
-          setEditing((prev) => prev ? { ...prev, webhookPayloadSchema: data.payload } : prev);
+          setEditing((prev) => prev ? { ...prev, webhookPayloadSchema: payloadToSchema(data.payload) as Record<string, unknown> } : prev);
         } else if (data.type === "timeout") {
           stopListen();
         }
@@ -282,8 +279,8 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const parsed = JSON.parse(ev.target?.result as string) as Record<string, unknown>;
-        setEditing((prev) => prev ? { ...prev, webhookPayloadSchema: parsed } : prev);
+        const parsed = JSON.parse(ev.target?.result as string);
+        setEditing((prev) => prev ? { ...prev, webhookPayloadSchema: payloadToSchema(parsed) as Record<string, unknown> } : prev);
       } catch {
         setError("Invalid JSON file");
       }
@@ -720,40 +717,32 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
                   📎 Upload .json
                   <input type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleSchemaUpload} />
                 </label>
-                <button
-                  className={`flows-webhook-listen-btn${listenMode === "listening" ? " listening" : listenMode === "received" ? " received" : ""}`}
-                  onClick={handleListen}
-                >
-                  {listenMode === "listening"
-                    ? `⏳ Waiting… ${listenCountdown}s (click to cancel)`
-                    : listenMode === "received"
-                    ? "✓ Payload captured"
-                    : "📡 Catch live payload"}
-                </button>
-                {editing.webhookPayloadSchema && (
+                {editing.webhookPayloadSchema && listenMode !== "listening" ? (
+                  <>
+                    <div className="flows-webhook-caught-chip">
+                      📦 Payload caught
+                      <div className="flows-webhook-schema-tooltip">
+                        <pre>{JSON.stringify(editing.webhookPayloadSchema, null, 2)}</pre>
+                      </div>
+                    </div>
+                    <button
+                      className="flows-webhook-clear-btn"
+                      onClick={() => { setEditing({ ...editing, webhookPayloadSchema: undefined }); setListenMode("idle"); }}
+                    >
+                      ✕ Clear
+                    </button>
+                  </>
+                ) : (
                   <button
-                    className="flows-webhook-clear-btn"
-                    onClick={() => setEditing({ ...editing, webhookPayloadSchema: undefined })}
+                    className={`flows-webhook-listen-btn${listenMode === "listening" ? " listening" : ""}`}
+                    onClick={handleListen}
                   >
-                    ✕ Clear
+                    {listenMode === "listening"
+                      ? `⏳ Waiting… ${listenCountdown}s (click to cancel)`
+                      : "📡 Catch live payload"}
                   </button>
                 )}
               </div>
-              {editing.webhookPayloadSchema && (
-                <div className="flows-webhook-fields">
-                  <span className="flows-webhook-fields-label">Available fields:</span>
-                  <div className="flows-webhook-field-pills">
-                    {flattenJsonKeys(editing.webhookPayloadSchema).slice(0, 24).map((key) => (
-                      <span key={key} className="flows-webhook-field-pill">{key}</span>
-                    ))}
-                    {flattenJsonKeys(editing.webhookPayloadSchema).length > 24 && (
-                      <span className="flows-webhook-field-pill flows-webhook-field-pill--more">
-                        +{flattenJsonKeys(editing.webhookPayloadSchema).length - 24} more
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         )}

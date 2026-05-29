@@ -402,6 +402,16 @@ app.post("/api/run-automation", async (req, res) => {
 // If an admin SSE listener is active (catch mode), payload is forwarded there instead of running the flow.
 app.post("/api/webhooks/:webhookId", async (req, res) => {
   const { webhookId } = req.params;
+  const payload = req.body as Record<string, unknown>;
+
+  // Check for active catch-mode listener first — admin already authed to open SSE,
+  // so accept payload even when flow is unsaved or disabled
+  const listener = webhookListeners.get(webhookId);
+  if (listener) {
+    res.json({ ok: true, received: true });
+    try { listener.write(`data: ${JSON.stringify({ type: "payload", payload })}\n\n`); } catch {}
+    return;
+  }
 
   let automation: Automation | undefined;
   try {
@@ -425,15 +435,6 @@ app.post("/api/webhooks/:webhookId", async (req, res) => {
 
   // Respond 200 immediately — third-party apps must not wait
   res.json({ ok: true, received: true });
-
-  const payload = req.body as Record<string, unknown>;
-
-  // Forward to active SSE listener if admin is in catch mode
-  const listener = webhookListeners.get(webhookId);
-  if (listener) {
-    try { listener.write(`data: ${JSON.stringify({ type: "payload", payload })}\n\n`); } catch {}
-    return;
-  }
 
   // Run the flow in background
   if (!automation.createdBy) return;
