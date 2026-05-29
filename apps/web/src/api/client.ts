@@ -236,6 +236,20 @@ export async function generateFlow(
   return res.json();
 }
 
+export async function suggestFlow(
+  webhookPayloadSchema: Record<string, unknown>,
+  connectedTools: string[],
+): Promise<string> {
+  const res = await fetch(`${BASE}/api/flows/suggest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ webhookPayloadSchema, connectedTools }),
+  });
+  if (!res.ok) throw new Error("Suggestion failed");
+  const { suggestion } = await res.json() as { suggestion?: string };
+  return suggestion ?? "";
+}
+
 export type FlowStepEvent =
   | { type: "start"; stepId: string; tool: string }
   | { type: "done"; id: string; tool: string; output: string; error?: string; durationMs: number; conditionFailed?: boolean }

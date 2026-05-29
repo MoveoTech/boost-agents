@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { listAutomations, saveAutomation, removeAutomation, runFlowDirect, generateFlow, runFlowSteps } from "../api/client";
+import { listAutomations, saveAutomation, removeAutomation, runFlowDirect, generateFlow, runFlowSteps, suggestFlow } from "../api/client";
 import type { Automation, AutomationStep, FlowStepResult } from "../types";
 import FlowStepCard, { FLOW_TOOLS, type Connections } from "./FlowStepCard";
 
@@ -181,12 +181,29 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
   const [listenCountdown, setListenCountdown] = useState(60);
   const [secretVisible, setSecretVisible] = useState(false);
   const [copied, setCopied] = useState<"url" | "secret" | null>(null);
+  const [schemaTooltipVisible, setSchemaTooltipVisible] = useState(false);
+  const [flowSuggestion, setFlowSuggestion] = useState<string | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     listAutomations().then(setFlows).catch(() => {}).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!editing?.webhookPayloadSchema) { setFlowSuggestion(null); return; }
+    setSuggesting(true);
+    setFlowSuggestion(null);
+    const connectedToolKeys = FLOW_TOOLS
+      .filter((t) => !t.requires || connections[t.requires as keyof Connections])
+      .map((t) => t.key);
+    suggestFlow(editing.webhookPayloadSchema!, connectedToolKeys as string[])
+      .then(setFlowSuggestion)
+      .catch(() => {})
+      .finally(() => setSuggesting(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.webhookPayloadSchema]);
 
   const openNew = () => {
     setEditing(newFlow());
@@ -289,15 +306,15 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
     e.target.value = "";
   };
 
-  const handleGenerate = async () => {
-    if (!describeText.trim() || !editing) return;
+  const generateSteps = async (text: string) => {
+    if (!editing) return;
     setGenerating(true);
     setError(null);
     try {
       const connectedToolKeys = FLOW_TOOLS
         .filter((t) => !t.requires || connections[t.requires as keyof Connections])
         .map((t) => t.key);
-      const result = await generateFlow(describeText, connectedToolKeys as string[], editing.webhookPayloadSchema);
+      const result = await generateFlow(text, connectedToolKeys as string[], editing.webhookPayloadSchema);
       const newSteps = result.steps.length ? result.steps : editing.steps;
       setEditing((prev) => prev ? {
         ...prev,
@@ -306,7 +323,6 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
         steps: [],
       } : prev);
       setCreateMode("manual");
-      // Reveal steps one by one so each card animates in sequentially
       newSteps.forEach((step, i) => {
         setTimeout(() => {
           setEditing((prev) => prev ? { ...prev, steps: [...prev.steps, step] } : prev);
@@ -317,6 +333,11 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const handleGenerate = async () => {
+    if (!describeText.trim()) { setError("Please describe the flow"); return; }
+    await generateSteps(describeText);
   };
 
   const handleSave = async () => {
@@ -719,15 +740,21 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
                 </label>
                 {editing.webhookPayloadSchema && listenMode !== "listening" ? (
                   <>
-                    <div className="flows-webhook-caught-chip">
+                    <div
+                      className="flows-webhook-caught-chip"
+                      onMouseEnter={() => setSchemaTooltipVisible(true)}
+                      onMouseLeave={() => setSchemaTooltipVisible(false)}
+                    >
                       📦 Payload caught
-                      <div className="flows-webhook-schema-tooltip">
-                        <pre>{JSON.stringify(editing.webhookPayloadSchema, null, 2)}</pre>
-                      </div>
+                      {schemaTooltipVisible && (
+                        <div className="flows-webhook-schema-tooltip">
+                          <pre>{JSON.stringify(editing.webhookPayloadSchema, null, 2)}</pre>
+                        </div>
+                      )}
                     </div>
                     <button
                       className="flows-webhook-clear-btn"
-                      onClick={() => { setEditing({ ...editing, webhookPayloadSchema: undefined }); setListenMode("idle"); }}
+                      onClick={() => { setEditing({ ...editing, webhookPayloadSchema: undefined }); setListenMode("idle"); setFlowSuggestion(null); }}
                     >
                       ✕ Clear
                     </button>
@@ -743,6 +770,27 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
                   </button>
                 )}
               </div>
+
+              {/* AI flow suggestion based on payload schema */}
+              {(suggesting || flowSuggestion) && (
+                <div className="flows-webhook-suggestion">
+                  {suggesting ? (
+                    <div className="flows-webhook-suggestion-loading">💡 Analyzing payload…</div>
+                  ) : flowSuggestion ? (
+                    <>
+                      <div className="flows-webhook-suggestion-label">💡 Suggested flow</div>
+                      <p className="flows-webhook-suggestion-text">{flowSuggestion}</p>
+                      <button
+                        className="flows-webhook-suggestion-btn"
+                        disabled={generating}
+                        onClick={() => generateSteps(flowSuggestion)}
+                      >
+                        {generating ? "Generating…" : "✨ Create this flow"}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -953,6 +953,31 @@ Tool selection rules:
   }
 });
 
+app.post("/api/flows/suggest", requireAdmin, async (req, res) => {
+  const { webhookPayloadSchema, connectedTools } = req.body as { webhookPayloadSchema: Record<string, unknown>; connectedTools: string[] };
+  if (!webhookPayloadSchema) { res.status(400).json({ error: "webhookPayloadSchema required" }); return; }
+
+  const toolList = (connectedTools ?? []).length
+    ? connectedTools.map((k) => FLOW_TOOL_LABELS[k] ?? k).join(", ")
+    : Object.values(FLOW_TOOL_LABELS).join(", ");
+
+  const systemPrompt = `You are a workflow automation expert. Given a webhook payload schema (field names with types, not real values) and a list of available integration tools, suggest ONE specific high-value automation flow.
+
+Available tools: ${toolList}
+
+Respond with 2-3 sentences only. Name actual fields from the schema and actual tools. Be concrete and actionable. No bullet points, no headers, no caveats.`;
+
+  try {
+    const result = await chat(
+      `Webhook payload schema:\n${JSON.stringify(webhookPayloadSchema, null, 2)}\n\nWhat flow should I build?`,
+      [], "no_tools", systemPrompt
+    );
+    res.json({ suggestion: result.reply });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // Returns a signed API token for the connected Google service user
 app.get("/api/google-token", async (req, res) => {
   const { email, service } = req.query as { email: string; service: string };
