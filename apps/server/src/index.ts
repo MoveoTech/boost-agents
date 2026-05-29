@@ -11,9 +11,9 @@ import { slackSendMessage, slackGetUserEmail } from "./slack";
 import { agentConfig } from "./config";
 import { commitConfig, commitConfigToRepo, readConfigFromRepo } from "./configure";
 import type { AgentConfig } from "./config";
-import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets, getAutomation } from "./automations";
-import type { Automation, AutomationStep } from "./automations";
-import { connectSession, disconnectSession, getStatus, initAllSessions, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
+import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets, getAutomation, patchAutomationBody } from "./automations";
+import type { Automation, AutomationStep, RunHistoryEntry } from "./automations";
+import { connectSession, disconnectSession, getStatus, initAllSessions, sendMessage as waSendMessage, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
 import { parseVCards, importContacts, listContacts } from "./contacts";
 import type { Content } from "@google/generative-ai";
 import QRCode from "qrcode";
@@ -119,6 +119,8 @@ app.post("/api/logout", (_req, res) => {
 });
 
 const FLOW_TOOL_LABELS: Record<string, string> = {
+  agent_prompt: "AI Model",
+  condition: "Condition",
   google_tasks: "Google Tasks",
   whatsapp: "WhatsApp",
   gmail: "Gmail",
@@ -128,7 +130,6 @@ const FLOW_TOOL_LABELS: Record<string, string> = {
   http_request: "HTTP Request",
   web_fetch: "Web Fetch",
   google_search: "Google Search",
-  agent_prompt: "AI Processing",
 };
 
 interface StepResult {
@@ -137,6 +138,7 @@ interface StepResult {
   output: string;
   error?: string;
   durationMs: number;
+  conditionFailed?: boolean;
 }
 
 async function executeStepsSequentially(
@@ -146,11 +148,23 @@ async function executeStepsSequentially(
   mondayToken: string | undefined,
   tasksUser: string | undefined,
   whatsappUser: string | undefined,
+  onStepStart?: (stepId: string, tool: string) => void,
+  onStepDone?: (result: StepResult) => void,
+  priorResults?: StepResult[],
 ): Promise<StepResult[]> {
   const results: StepResult[] = [];
   let context = "";
 
+  // Seed context from prior completed steps (retry-from-N support)
+  if (priorResults?.length) {
+    for (const pr of priorResults) {
+      const label = FLOW_TOOL_LABELS[pr.tool] ?? pr.tool;
+      if (pr.output) context += `\n[Prior Step — ${label}]:\n${pr.output}`;
+    }
+  }
+
   for (const step of steps) {
+    onStepStart?.(step.id, step.tool);
     const stepStart = Date.now();
     const label = FLOW_TOOL_LABELS[step.tool] ?? step.tool;
     let instruction = step.instruction;
@@ -161,16 +175,52 @@ async function executeStepsSequentially(
       ? `Context from previous steps:\n${context}\n\nCurrent task (${label}): ${instruction}`
       : instruction;
 
-    const systemPrompt = step.tool === "agent_prompt"
+    // Condition step: evaluate true/false and stop if not met
+    if (step.tool === "condition") {
+      const condPrompt = context
+        ? `Based on the following context, evaluate this condition. Reply ONLY with "true" or "false", nothing else.\n\nContext:\n${context}\n\nCondition: ${instruction}`
+        : `Evaluate this condition. Reply ONLY with "true" or "false", nothing else.\n\nCondition: ${instruction}`;
+      try {
+        const condResult = await chat(condPrompt, [], "no_tools");
+        const passed = condResult.reply.trim().toLowerCase().startsWith("true");
+        const stepResult: StepResult = {
+          id: step.id, tool: step.tool, durationMs: Date.now() - stepStart,
+          output: passed ? "Condition met — continuing" : "Condition not met — flow stopped",
+          conditionFailed: !passed,
+        };
+        results.push(stepResult);
+        onStepDone?.(stepResult);
+        console.log(JSON.stringify({ tag: "flow", msg: "condition", stepId: step.id, passed, ms: stepResult.durationMs }));
+        if (!passed) break;
+        context += `\n[Step ${results.length} — ${label}]: Condition passed`;
+      } catch (err) {
+        const stepResult: StepResult = { id: step.id, tool: step.tool, output: "", error: (err as Error).message, durationMs: Date.now() - stepStart };
+        results.push(stepResult);
+        onStepDone?.(stepResult);
+        console.log(JSON.stringify({ tag: "flow", msg: "step_error", stepId: step.id, tool: step.tool, error: stepResult.error }));
+        break;
+      }
+      continue;
+    }
+
+    const isLlmStep = step.tool === "agent_prompt";
+    const systemPrompt = isLlmStep
       ? "Process and transform the provided information. Return a concise, structured result. Do not call any tools."
       : undefined;
+    const mode = isLlmStep ? "no_tools" : "tools";
 
     try {
-      const result = await chat(prompt, [], "tools", systemPrompt, gmailUser, calendarUser, undefined, mondayToken, tasksUser, undefined, undefined, whatsappUser);
-      results.push({ id: step.id, tool: step.tool, output: result.reply, durationMs: Date.now() - stepStart });
+      const result = await chat(prompt, [], mode, systemPrompt, gmailUser, calendarUser, undefined, mondayToken, tasksUser, undefined, undefined, whatsappUser);
+      const stepResult: StepResult = { id: step.id, tool: step.tool, output: result.reply, durationMs: Date.now() - stepStart };
+      results.push(stepResult);
+      onStepDone?.(stepResult);
+      console.log(JSON.stringify({ tag: "flow", msg: "step_ok", stepId: step.id, tool: step.tool, ms: stepResult.durationMs }));
       context += `\n[Step ${results.length} — ${label}]:\n${result.reply}`;
     } catch (err) {
-      results.push({ id: step.id, tool: step.tool, output: "", error: (err as Error).message, durationMs: Date.now() - stepStart });
+      const stepResult: StepResult = { id: step.id, tool: step.tool, output: "", error: (err as Error).message, durationMs: Date.now() - stepStart };
+      results.push(stepResult);
+      onStepDone?.(stepResult);
+      console.log(JSON.stringify({ tag: "flow", msg: "step_error", stepId: step.id, tool: step.tool, error: stepResult.error, ms: stepResult.durationMs }));
       break;
     }
   }
@@ -207,6 +257,7 @@ app.post("/api/run-automation", async (req, res) => {
     }
     const mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
     const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+    const runStart = Date.now();
     const stepResults = await executeStepsSequentially(
       steps ?? [],
       user.gmail ? user.email : undefined,
@@ -216,6 +267,25 @@ app.post("/api/run-automation", async (req, res) => {
       whatsappUser,
     );
     res.json({ ok: true, stepResults });
+    // Async post-run: save history + notify on failure
+    const { notifyOnFailure } = req.body as { notifyOnFailure?: boolean };
+    const hasError = stepResults.some((r) => r.error);
+    const historyEntry: RunHistoryEntry = {
+      runAt: new Date().toISOString(),
+      status: hasError ? (stepResults.some((r) => !r.error && !r.conditionFailed) ? "partial" : "error") : "success",
+      durationMs: Date.now() - runStart,
+      steps: stepResults.map((r) => ({ id: r.id, tool: r.tool, output: r.output.slice(0, 400), error: r.error, durationMs: r.durationMs, conditionFailed: r.conditionFailed })),
+    };
+    if (id) {
+      patchAutomationBody(id, { runHistory: [historyEntry] }).catch(() => {});
+    }
+    if (notifyOnFailure && hasError && whatsappUser) {
+      const failed = stepResults.find((r) => r.error);
+      if (failed) {
+        const msg = `⚠️ Flow failed at step: ${FLOW_TOOL_LABELS[failed.tool] ?? failed.tool}\n\nError: ${failed.error}`;
+        waSendMessage(whatsappUser, whatsappUser, msg).catch(() => {});
+      }
+    }
     if (oneTime && id) {
       await deleteAutomation(id).catch(() => {});
     }
@@ -475,6 +545,7 @@ app.post("/api/flows/:id/run-direct", requireAdmin, async (req, res) => {
     if (!user) { res.status(404).json({ error: `User ${automation.createdBy} not found` }); return; }
     const mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
     const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+    const runStart = Date.now();
     const stepResults = await executeStepsSequentially(
       automation.steps,
       user.gmail ? user.email : undefined,
@@ -484,9 +555,94 @@ app.post("/api/flows/:id/run-direct", requireAdmin, async (req, res) => {
       whatsappUser,
     );
     res.json({ ok: true, stepResults });
+    const hasError = stepResults.some((r) => r.error);
+    const historyEntry: RunHistoryEntry = {
+      runAt: new Date().toISOString(),
+      status: hasError ? (stepResults.some((r) => !r.error && !r.conditionFailed) ? "partial" : "error") : "success",
+      durationMs: Date.now() - runStart,
+      steps: stepResults.map((r) => ({ id: r.id, tool: r.tool, output: r.output.slice(0, 400), error: r.error, durationMs: r.durationMs, conditionFailed: r.conditionFailed })),
+    };
+    patchAutomationBody(id, { runHistory: [historyEntry] }).catch(() => {});
+    if (automation.notifyOnFailure && hasError && whatsappUser) {
+      const failed = stepResults.find((r) => r.error);
+      if (failed) {
+        const msg = `⚠️ Flow "${automation.name}" failed at: ${FLOW_TOOL_LABELS[failed.tool] ?? failed.tool}\n\nError: ${failed.error}`;
+        waSendMessage(whatsappUser, whatsappUser, msg).catch(() => {});
+      }
+    }
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+// SSE endpoint — streams each step result as it completes; accepts steps inline (no saved ID needed)
+app.post("/api/flows/run-steps", requireAdmin, async (req, res) => {
+  const bearer = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null;
+  const tokenToVerify = bearer ?? (req as any).cookies[COOKIE_NAME];
+  let userEmail: string | undefined;
+  try {
+    const payload = jwt.verify(tokenToVerify, COOKIE_SECRET) as { email?: string };
+    userEmail = payload.email;
+  } catch { /* ignore — requireAdmin already verified */ }
+
+  const { steps, priorResults } = req.body as { steps: AutomationStep[]; priorResults?: StepResult[] };
+  if (!steps?.length) { res.status(400).json({ error: "steps required" }); return; }
+
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) {
+    res.status(500).json({ error: "Not configured" }); return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const send = (data: object | string) => {
+    try { res.write(`data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`); } catch { /* client disconnected */ }
+  };
+
+  try {
+    let gmailUser: string | undefined;
+    let calendarUser: string | undefined;
+    let mondayToken: string | undefined;
+    let tasksUser: string | undefined;
+    let whatsappUser: string | undefined;
+
+    if (userEmail) {
+      const usersRes = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
+        headers: { "x-api-key": oauthServiceKey },
+      });
+      const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
+      const user = users.find((u) => u.email === userEmail);
+      if (user) {
+        gmailUser = user.gmail ? user.email : undefined;
+        calendarUser = user.calendar ? user.email : undefined;
+        mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
+        tasksUser = user.tasks ? user.email : undefined;
+        whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+      }
+    }
+
+    await executeStepsSequentially(
+      steps,
+      gmailUser,
+      calendarUser,
+      mondayToken,
+      tasksUser,
+      whatsappUser,
+      (stepId, tool) => send({ type: "start", stepId, tool }),
+      (result) => send({ type: "done", ...result }),
+      priorResults,
+    );
+  } catch (err) {
+    send({ type: "error", error: (err as Error).message });
+  }
+
+  send("[DONE]");
+  res.end();
 });
 
 app.post("/api/flows/generate", requireAdmin, async (req, res) => {
@@ -513,14 +669,15 @@ Return ONLY valid JSON — no markdown, no explanation. Format:
 }
 
 Tool selection rules:
-- Use "agent_prompt" for any reasoning, filtering, summarizing, formatting, or data transformation — the AI processes context from prior steps internally. Do NOT use http_request for this.
-- Use "http_request" ONLY when calling a real known external API endpoint (e.g. a webhook or REST API the user explicitly mentioned). Add "httpUrl" and "httpMethod" fields.
+- Use "agent_prompt" for ANY reasoning, filtering, summarizing, formatting, classification, or data transformation. This calls the AI model internally — no external HTTP needed. This is the correct tool for "summarize", "generate", "format", "analyze", etc.
+- NEVER use "http_request" unless the user's description explicitly names a specific real external API with a URL (e.g. "call the FlightAware API at https://..."). NEVER invent or guess an httpUrl. NEVER use http_request for tasks our own server can handle (AI processing, tool integrations).
+- If you would need to invent an httpUrl, use "agent_prompt" instead.
 - Use service-specific tools (gmail, google_tasks, whatsapp, etc.) for interacting with those services.
 - Step instructions should reference prior steps naturally (e.g. "using the tasks from step 1")
 - suggestedSchedule must be a valid cron expression`;
 
   try {
-    const result = await chat(description, [], "tools", systemPrompt);
+    const result = await chat(description, [], "no_tools", systemPrompt);
     const jsonMatch = result.reply.match(/\{[\s\S]*\}/);
     if (!jsonMatch) { res.status(500).json({ error: "LLM did not return valid JSON" }); return; }
     const parsed = JSON.parse(jsonMatch[0]) as { suggestedName?: string; suggestedSchedule?: string; steps?: AutomationStep[] };

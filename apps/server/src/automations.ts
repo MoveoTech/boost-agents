@@ -10,6 +10,13 @@ export interface AutomationStep {
   httpMethod?: string;
 }
 
+export interface RunHistoryEntry {
+  runAt: string;
+  status: "success" | "partial" | "error";
+  durationMs: number;
+  steps: Array<{ id: string; tool: string; output: string; error?: string; durationMs: number; conditionFailed?: boolean }>;
+}
+
 export interface Automation {
   id: string;
   name: string;
@@ -18,6 +25,8 @@ export interface Automation {
   enabled: boolean;
   createdBy?: string;
   oneTime?: boolean;
+  runHistory?: RunHistoryEntry[];
+  notifyOnFailure?: boolean;
 }
 
 async function gcpToken(): Promise<string> {
@@ -38,7 +47,7 @@ function jobId(automationId: string) {
 function parseJob(job: Record<string, unknown>): Automation {
   const httpTarget = job.httpTarget as Record<string, string> | undefined;
   const bodyStr = httpTarget?.body ? Buffer.from(httpTarget.body, "base64").toString() : "{}";
-  const body = JSON.parse(bodyStr) as { name?: string; steps?: AutomationStep[]; createdBy?: string; oneTime?: boolean };
+  const body = JSON.parse(bodyStr) as { name?: string; steps?: AutomationStep[]; createdBy?: string; oneTime?: boolean; runHistory?: RunHistoryEntry[]; notifyOnFailure?: boolean };
   const name = job.name as string;
   return {
     id: name.split("/jobs/automation--")[1],
@@ -48,6 +57,8 @@ function parseJob(job: Record<string, unknown>): Automation {
     enabled: job.state !== "PAUSED" && job.state !== "DISABLED",
     createdBy: body.createdBy,
     oneTime: body.oneTime,
+    runHistory: body.runHistory,
+    notifyOnFailure: body.notifyOnFailure,
   };
 }
 
@@ -75,7 +86,7 @@ export async function upsertAutomation(automation: Automation, agentUrl: string)
     httpTarget: {
       uri: `${agentUrl}/api/run-automation`,
       httpMethod: "POST",
-      body: Buffer.from(JSON.stringify({ id: automation.id, name: automation.name, steps: automation.steps, createdBy: automation.createdBy, oneTime: automation.oneTime })).toString("base64"),
+      body: Buffer.from(JSON.stringify({ id: automation.id, name: automation.name, steps: automation.steps, createdBy: automation.createdBy, oneTime: automation.oneTime, runHistory: automation.runHistory, notifyOnFailure: automation.notifyOnFailure })).toString("base64"),
       headers: {
         "Content-Type": "application/json",
         "x-automation-secret": AUTOMATION_SECRET,
@@ -138,6 +149,28 @@ export async function deleteAutomation(automationId: string): Promise<void> {
 // On every deploy the AUTOMATION_SECRET may differ from what was baked into
 // existing scheduler jobs. Patch all jobs to use the current secret so they
 // don't fail with 401. Derives the agent URL from the existing jobs themselves.
+// Patches only the body field of an existing job — lighter than full upsert (no enable/pause calls)
+export async function patchAutomationBody(automationId: string, patch: Partial<Record<string, unknown>>): Promise<void> {
+  const token = await gcpToken();
+  const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automationId)}`;
+  const getRes = await fetch(`https://cloudscheduler.googleapis.com/v1/${fullName}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!getRes.ok) return;
+  const job = await getRes.json() as Record<string, unknown>;
+  const httpTarget = job.httpTarget as Record<string, string>;
+  const bodyStr = httpTarget.body ? Buffer.from(httpTarget.body, "base64").toString() : "{}";
+  const merged = { ...JSON.parse(bodyStr), ...patch };
+  await fetch(`https://cloudscheduler.googleapis.com/v1/${fullName}?updateMask=httpTarget`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: fullName,
+      httpTarget: { ...httpTarget, body: Buffer.from(JSON.stringify(merged)).toString("base64") },
+    }),
+  });
+}
+
 export async function resyncAutomationSecrets(): Promise<void> {
   if (!PROJECT || !AUTOMATION_SECRET) return;
   try {

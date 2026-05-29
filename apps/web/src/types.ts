@@ -40,6 +40,13 @@ export interface AutomationStep {
   httpMethod?: string;
 }
 
+export interface RunHistoryEntry {
+  runAt: string;
+  status: "success" | "partial" | "error";
+  durationMs: number;
+  steps: Array<{ id: string; tool: string; output: string; error?: string; durationMs: number; conditionFailed?: boolean }>;
+}
+
 export interface Automation {
   id: string;
   name: string;
@@ -48,6 +55,8 @@ export interface Automation {
   enabled: boolean;
   createdBy?: string;
   oneTime?: boolean;
+  runHistory?: RunHistoryEntry[];
+  notifyOnFailure?: boolean;
 }
 
 export interface ChatSession {
@@ -96,6 +105,7 @@ export interface FlowStepResult {
   output: string;
   error?: string;
   durationMs: number;
+  conditionFailed?: boolean;
 }
 
 export interface AnalyticsDayStat {

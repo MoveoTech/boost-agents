@@ -745,7 +745,7 @@ export interface ChatResult {
 async function runChat(
   message: string,
   history: Content[],
-  mode: "search" | "tools",
+  mode: "search" | "tools" | "no_tools",
   systemPrompt?: string,
   gmailUser?: string,
   calendarUser?: string,
@@ -774,6 +774,10 @@ async function runChat(
     return { reply: result.response.text(), toolUses: [] };
   }
 
+  if (mode === "no_tools") {
+    return chatWithModel(model, builtPrompt, history, message, [], async () => "Tool not available", false, image);
+  }
+
   const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser);
   const nativeSearch = agentConfig.tools.googleSearch;
 
@@ -795,7 +799,7 @@ async function runChat(
 export async function chat(
   message: string,
   history: Content[],
-  mode: "search" | "tools" = "tools",
+  mode: "search" | "tools" | "no_tools" = "tools",
   systemPrompt?: string,
   gmailUser?: string,
   calendarUser?: string,
@@ -812,7 +816,7 @@ export async function chat(
 export async function chatStream(
   message: string,
   history: Content[],
-  mode: "search" | "tools" = "tools",
+  mode: "search" | "tools" | "no_tools" = "tools",
   systemPrompt?: string,
   gmailUser?: string,
   calendarUser?: string,

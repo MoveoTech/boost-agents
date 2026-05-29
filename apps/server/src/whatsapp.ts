@@ -1195,7 +1195,18 @@ export async function sendMessage(email: string, to: string, text: string): Prom
     waLog("warn", email, "sendMessage called but session not connected", { status: session?.status ?? "no session" });
     throw new Error("WhatsApp not connected for this user");
   }
-  const jid = to.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
+  const digits = to.replace(/[^0-9]/g, "");
+  const candidateJid = digits + "@s.whatsapp.net";
+  // Resolve canonical JID — prevents channel_not_found on unregistered formats
+  let jid = candidateJid;
+  try {
+    const [result] = await session.socket.onWhatsApp(digits);
+    if (!result?.exists) throw new Error(`${to} is not on WhatsApp`);
+    jid = result.jid;
+  } catch (lookupErr) {
+    // onWhatsApp itself failed — fall back to candidate and let sendMessage throw
+    waLog("warn", email, "onWhatsApp lookup failed, falling back", { candidateJid });
+  }
   waLog("info", email, "sending outbound message", { to: jid });
   await session.socket.sendMessage(jid, { text });
 }

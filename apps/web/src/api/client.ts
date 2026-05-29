@@ -235,6 +235,40 @@ export async function generateFlow(
   return res.json();
 }
 
+export type FlowStepEvent =
+  | { type: "start"; stepId: string; tool: string }
+  | { type: "done"; id: string; tool: string; output: string; error?: string; durationMs: number; conditionFailed?: boolean }
+  | { type: "error"; error: string };
+
+export async function* runFlowSteps(steps: AutomationStep[], priorResults?: FlowStepResult[]): AsyncGenerator<FlowStepEvent> {
+  const res = await fetch(`${BASE}/api/flows/run-steps`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ steps, priorResults }),
+  });
+  if (!res.ok || !res.body) {
+    const err = await res.json().catch(() => ({ error: "Run failed" }));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith("data: ")) continue;
+      const raw = line.slice(6).trim();
+      if (raw === "[DONE]") return;
+      try { yield JSON.parse(raw) as FlowStepEvent; } catch { /* skip malformed */ }
+    }
+  }
+}
+
 export async function removeAutomation(id: string): Promise<void> {
   await fetch(`${BASE}/api/automations/${id}`, { method: "DELETE" });
 }

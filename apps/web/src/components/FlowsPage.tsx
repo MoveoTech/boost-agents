@@ -1,7 +1,96 @@
 import { useState, useEffect } from "react";
-import { listAutomations, saveAutomation, removeAutomation, runFlowDirect, generateFlow } from "../api/client";
+import { listAutomations, saveAutomation, removeAutomation, runFlowDirect, generateFlow, runFlowSteps } from "../api/client";
 import type { Automation, AutomationStep, FlowStepResult } from "../types";
 import FlowStepCard, { FLOW_TOOLS, type Connections } from "./FlowStepCard";
+
+type StepTestStatus = "idle" | "running" | "success" | "error" | "stopped";
+interface StepTestState {
+  status: StepTestStatus;
+  output?: string;
+  error?: string;
+  durationMs?: number;
+  conditionFailed?: boolean;
+}
+
+// ── Templates ────────────────────────────────────────────────────────────────
+interface FlowTemplate {
+  id: string;
+  icon: string;
+  name: string;
+  description: string;
+  schedule: string;
+  steps: Array<{ tool: string; instruction: string }>;
+  requires: Array<keyof Connections>;
+}
+
+const FLOW_TEMPLATES: FlowTemplate[] = [
+  {
+    id: "tpl-tasks-whatsapp",
+    icon: "📋",
+    name: "Daily Task Summary",
+    description: "Fetch tasks → AI summary → WhatsApp",
+    schedule: "0 8 * * *",
+    steps: [
+      { tool: "google_tasks", instruction: "List all tasks due today and this week across all task lists" },
+      { tool: "agent_prompt", instruction: "Summarize the tasks from step 1. Group by priority. Add 3 suggested actions for the day." },
+      { tool: "whatsapp", instruction: "Send me a WhatsApp with the task summary from step 2" },
+    ],
+    requires: ["tasks", "whatsapp"],
+  },
+  {
+    id: "tpl-gmail-digest",
+    icon: "📧",
+    name: "Email Digest",
+    description: "Unread emails → AI summary",
+    schedule: "0 8 * * 1-5",
+    steps: [
+      { tool: "gmail", instruction: "List all unread emails from the last 24 hours" },
+      { tool: "agent_prompt", instruction: "Summarize the emails from step 1. Highlight urgent items and list action items." },
+      { tool: "whatsapp", instruction: "Send me a WhatsApp digest of the email summary from step 2" },
+    ],
+    requires: ["gmail", "whatsapp"],
+  },
+  {
+    id: "tpl-calendar-brief",
+    icon: "📅",
+    name: "Morning Briefing",
+    description: "Today's calendar → WhatsApp briefing",
+    schedule: "0 7 * * 1-5",
+    steps: [
+      { tool: "google_calendar", instruction: "List all events for today" },
+      { tool: "agent_prompt", instruction: "Create a morning briefing from today's events. Note back-to-back meetings and preparation tips." },
+      { tool: "whatsapp", instruction: "Send me the morning briefing from step 2 via WhatsApp" },
+    ],
+    requires: ["calendar", "whatsapp"],
+  },
+  {
+    id: "tpl-monday-review",
+    icon: "📊",
+    name: "Weekly Project Review",
+    description: "Monday.com items → AI review → Slack",
+    schedule: "0 9 * * 1",
+    steps: [
+      { tool: "monday", instruction: "Get all items that are in progress or overdue across my boards" },
+      { tool: "agent_prompt", instruction: "Analyze the project items from step 1. Identify blockers, overdue items, and next week priorities." },
+      { tool: "slack", instruction: "Post the weekly project review summary from step 2 to the team Slack channel" },
+    ],
+    requires: ["monday", "slack"],
+  },
+  {
+    id: "tpl-conditional-tasks",
+    icon: "🔀",
+    name: "Tasks (with condition)",
+    description: "Only notify if tasks are due today",
+    schedule: "0 9 * * *",
+    steps: [
+      { tool: "google_tasks", instruction: "List all tasks due today across all task lists" },
+      { tool: "condition", instruction: "There is at least 1 task due today" },
+      { tool: "agent_prompt", instruction: "Summarize today's tasks from step 1 and create a prioritized to-do list" },
+      { tool: "whatsapp", instruction: "Send me a WhatsApp with today's task summary from step 3" },
+    ],
+    requires: ["tasks", "whatsapp"],
+  },
+];
 
 const SCHEDULE_OPTIONS = [
   { label: "Every hour",         cron: "0 * * * *" },
@@ -14,6 +103,16 @@ const SCHEDULE_OPTIONS = [
 
 function scheduleLabel(cron: string) {
   return SCHEDULE_OPTIONS.find((o) => o.cron === cron)?.label ?? cron;
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 function newStep(): AutomationStep {
@@ -40,7 +139,7 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"list" | "builder">("list");
   const [editing, setEditing] = useState<Automation | null>(null);
-  const [createMode, setCreateMode] = useState<"manual" | "describe">("manual");
+  const [createMode, setCreateMode] = useState<"template" | "manual" | "describe">("template");
   const [describeText, setDescribeText] = useState("");
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -48,7 +147,10 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [runResults, setRunResults] = useState<Record<string, FlowStepResult[]>>({});
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
+  const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [testRunStates, setTestRunStates] = useState<Record<string, StepTestState>>({});
+  const [testRunning, setTestRunning] = useState(false);
 
   useEffect(() => {
     listAutomations().then(setFlows).catch(() => {}).finally(() => setLoading(false));
@@ -56,10 +158,11 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
 
   const openNew = () => {
     setEditing(newFlow());
-    setCreateMode("manual");
+    setCreateMode("template");
     setDescribeText("");
     setCustomCron(false);
     setError(null);
+    setTestRunStates({});
     setView("builder");
   };
 
@@ -68,7 +171,19 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
     setCreateMode("manual");
     setCustomCron(!SCHEDULE_OPTIONS.some((o) => o.cron === flow.schedule && o.cron !== "custom"));
     setError(null);
+    setTestRunStates({});
     setView("builder");
+  };
+
+  const applyTemplate = (tpl: FlowTemplate) => {
+    if (!editing) return;
+    setEditing((prev) => prev ? {
+      ...prev,
+      name: prev.name || tpl.name,
+      schedule: tpl.schedule,
+      steps: tpl.steps.map((s) => ({ ...s, id: crypto.randomUUID() })),
+    } : prev);
+    setCreateMode("manual");
   };
 
   const handleGenerate = async () => {
@@ -139,10 +254,73 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
     }
   };
 
+  const runStepsFrom = async (fromIndex: number) => {
+    if (!editing?.steps.length) return;
+    const prior = editing.steps
+      .slice(0, fromIndex)
+      .map((s) => {
+        const st = testRunStates[s.id];
+        if (!st || st.status === "idle") return null;
+        return { id: s.id, tool: s.tool, output: st.output ?? "", error: st.error, durationMs: st.durationMs ?? 0, conditionFailed: st.conditionFailed } as FlowStepResult;
+      })
+      .filter(Boolean) as FlowStepResult[];
+
+    const stepsToRun = editing.steps.slice(fromIndex);
+
+    // Reset states for steps being (re)run
+    setTestRunStates((prev) => {
+      const next = { ...prev };
+      stepsToRun.forEach((s) => { next[s.id] = { status: "idle" }; });
+      return next;
+    });
+    setTestRunning(true);
+    setError(null);
+    try {
+      for await (const event of runFlowSteps(stepsToRun, prior.length ? prior : undefined)) {
+        if (event.type === "start") {
+          setTestRunStates((prev) => ({ ...prev, [event.stepId]: { status: "running" } }));
+        } else if (event.type === "done") {
+          setTestRunStates((prev) => ({
+            ...prev,
+            [event.id]: {
+              status: event.conditionFailed ? "stopped" : event.error ? "error" : "success",
+              output: event.output,
+              error: event.error,
+              durationMs: event.durationMs,
+              conditionFailed: event.conditionFailed,
+            },
+          }));
+        } else if (event.type === "error") {
+          setError(event.error);
+        }
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTestRunning(false);
+    }
+  };
+
+  const handleTestRun = () => {
+    if (!editing?.steps.length) return;
+    const initial: Record<string, StepTestState> = {};
+    editing.steps.forEach((s) => { initial[s.id] = { status: "idle" }; });
+    setTestRunStates(initial);
+    runStepsFrom(0);
+  };
+
   const toggleStep = (stepId: string) => {
     setExpandedSteps((prev) => {
       const next = new Set(prev);
       if (next.has(stepId)) next.delete(stepId); else next.add(stepId);
+      return next;
+    });
+  };
+
+  const toggleHistory = (flowId: string) => {
+    setExpandedHistory((prev) => {
+      const next = new Set(prev);
+      if (next.has(flowId)) next.delete(flowId); else next.add(flowId);
       return next;
     });
   };
@@ -193,64 +371,100 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
           </div>
         ) : (
           <div className="flows-grid">
-            {flows.map((flow) => (
-              <div key={flow.id} className="flow-card">
-                <div className="flow-card-top">
-                  <div className="flow-card-info" onClick={() => isAdmin && openEdit(flow)}>
-                    <span className="flow-card-name">{flow.name || "Unnamed"}</span>
-                    <span className="flow-card-schedule">{scheduleLabel(flow.schedule)}</span>
-                    <span className="flow-card-steps">{flow.steps.length} step{flow.steps.length !== 1 ? "s" : ""}</span>
-                    <div className="flow-card-tools">
-                      {flow.steps.slice(0, 4).map((s) => {
-                        const t = FLOW_TOOLS.find((ft) => ft.key === s.tool);
-                        return t ? <span key={s.id} className="flow-tool-pill">{t.icon} {t.label}</span> : null;
-                      })}
-                      {flow.steps.length > 4 && (
-                        <span className="flow-tool-pill flow-tool-pill--more">+{flow.steps.length - 4}</span>
-                      )}
+            {flows.map((flow) => {
+              const lastRun = flow.runHistory?.[0];
+              const histExpanded = expandedHistory.has(flow.id);
+              return (
+                <div key={flow.id} className="flow-card">
+                  <div className="flow-card-top">
+                    <div className="flow-card-info" onClick={() => isAdmin && openEdit(flow)}>
+                      <span className="flow-card-name">{flow.name || "Unnamed"}</span>
+                      <span className="flow-card-schedule">{scheduleLabel(flow.schedule)}</span>
+                      <span className="flow-card-steps">{flow.steps.length} step{flow.steps.length !== 1 ? "s" : ""}</span>
+                      <div className="flow-card-tools">
+                        {flow.steps.slice(0, 4).map((s) => {
+                          const t = FLOW_TOOLS.find((ft) => ft.key === s.tool);
+                          return t ? <span key={s.id} className="flow-tool-pill">{t.icon} {t.label}</span> : null;
+                        })}
+                        {flow.steps.length > 4 && (
+                          <span className="flow-tool-pill flow-tool-pill--more">+{flow.steps.length - 4}</span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="flow-card-actions">
-                  <label className="flow-card-toggle" title={flow.enabled ? "Enabled" : "Paused"}>
-                    <input type="checkbox" checked={flow.enabled} onChange={() => isAdmin && handleToggle(flow)} disabled={!isAdmin} />
-                    <span className="flow-toggle-track" />
-                  </label>
-                  {isAdmin && (
-                    <>
-                      <button
-                        className="flow-card-run"
-                        onClick={() => handleRun(flow.id)}
-                        disabled={runningId === flow.id}
-                        title="Run now"
-                      >
-                        {runningId === flow.id ? <span className="flows-spinner flows-spinner--sm" /> : "▶"}
-                      </button>
-                      <button className="flow-card-delete" onClick={() => handleDelete(flow.id)} title="Delete">✕</button>
-                    </>
+
+                  {/* Run history row */}
+                  {lastRun && (
+                    <div className="flow-history-bar" onClick={() => toggleHistory(flow.id)}>
+                      <span className={`flow-history-dot flow-history-dot--${lastRun.status}`} />
+                      <span className="flow-history-label">
+                        Last run {timeAgo(lastRun.runAt)} · {lastRun.status === "success" ? "All steps passed" : lastRun.status === "partial" ? "Partial success" : "Failed"}
+                      </span>
+                      <span className="flow-history-toggle">{histExpanded ? "▲" : "▼"}</span>
+                    </div>
+                  )}
+
+                  {histExpanded && lastRun && (
+                    <div className="flow-history-detail">
+                      {lastRun.steps.map((s, i) => {
+                        const t = FLOW_TOOLS.find((ft) => ft.key === s.tool);
+                        return (
+                          <div key={s.id} className={`flow-history-step${s.error ? " flow-history-step--error" : s.conditionFailed ? " flow-history-step--stopped" : ""}`}>
+                            <span className="flow-history-step-icon">
+                              {s.conditionFailed ? "⏹" : s.error ? "✗" : "✓"}
+                            </span>
+                            <span className="flow-history-step-name">{t?.icon} Step {i + 1} · {t?.label ?? s.tool}</span>
+                            <span className="flow-history-step-ms">{s.durationMs}ms</span>
+                            {(s.error || s.conditionFailed) && (
+                              <div className="flow-history-step-output">{s.error ?? s.output}</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="flow-card-actions">
+                    <label className="flow-card-toggle" title={flow.enabled ? "Enabled" : "Paused"}>
+                      <input type="checkbox" checked={flow.enabled} onChange={() => isAdmin && handleToggle(flow)} disabled={!isAdmin} />
+                      <span className="flow-toggle-track" />
+                    </label>
+                    {isAdmin && (
+                      <>
+                        <button
+                          className="flow-card-run"
+                          onClick={() => handleRun(flow.id)}
+                          disabled={runningId === flow.id}
+                          title="Run now"
+                        >
+                          {runningId === flow.id ? <span className="flows-spinner flows-spinner--sm" /> : "▶"}
+                        </button>
+                        <button className="flow-card-delete" onClick={() => handleDelete(flow.id)} title="Delete">✕</button>
+                      </>
+                    )}
+                  </div>
+                  {runResults[flow.id] && (
+                    <div className="flow-run-results">
+                      <span className="flow-run-results-label">Last run</span>
+                      {runResults[flow.id].map((r, i) => {
+                        const t = FLOW_TOOLS.find((ft) => ft.key === r.tool);
+                        const expanded = expandedSteps.has(r.id);
+                        return (
+                          <div key={r.id} className={`flow-run-step${r.error ? " flow-run-step--error" : ""}`} onClick={() => toggleStep(r.id)}>
+                            <span className="flow-run-step-status">{r.conditionFailed ? "⏹" : r.error ? "✕" : "✓"}</span>
+                            <span className="flow-run-step-name">{t?.icon} Step {i + 1} · {t?.label ?? r.tool}</span>
+                            <span className="flow-run-step-ms">{r.durationMs}ms</span>
+                            <div className={`flow-run-step-output${expanded ? " flow-run-step-output--expanded" : ""}`}>
+                              {r.error ?? r.output}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
-                {runResults[flow.id] && (
-                  <div className="flow-run-results">
-                    <span className="flow-run-results-label">Last run</span>
-                    {runResults[flow.id].map((r, i) => {
-                      const t = FLOW_TOOLS.find((ft) => ft.key === r.tool);
-                      const expanded = expandedSteps.has(r.id);
-                      return (
-                        <div key={r.id} className={`flow-run-step${r.error ? " flow-run-step--error" : ""}`} onClick={() => toggleStep(r.id)}>
-                          <span className="flow-run-step-status">{r.error ? "✕" : "✓"}</span>
-                          <span className="flow-run-step-name">{t?.icon} Step {i + 1} · {t?.label ?? r.tool}</span>
-                          <span className="flow-run-step-ms">{r.durationMs}ms</span>
-                          <div className={`flow-run-step-output${expanded ? " flow-run-step-output--expanded" : ""}`}>
-                            {r.error ?? r.output}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -258,6 +472,12 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
   }
 
   // ── Builder view ─────────────────────────────────────────────────────────────
+
+  const testDone = Object.keys(testRunStates).length > 0 && !testRunning;
+  const testAllPassed = testDone && editing?.steps.every((s) => {
+    const st = testRunStates[s.id];
+    return st?.status === "success" || st?.status === "stopped";
+  });
 
   return (
     <div className="flows-page flows-page--builder">
@@ -271,7 +491,7 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
       </div>
 
       <div className="flows-builder">
-        {/* Name + schedule */}
+        {/* Name + schedule + notify */}
         <div className="flows-builder-meta">
           <div className="flows-field">
             <label className="flows-label">Flow name</label>
@@ -304,10 +524,26 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
               />
             )}
           </div>
+          <div className="flows-field flows-field--notify">
+            <label className="flows-notify-label">
+              <input
+                type="checkbox"
+                checked={editing?.notifyOnFailure ?? false}
+                onChange={(e) => editing && setEditing({ ...editing, notifyOnFailure: e.target.checked })}
+              />
+              Notify me on failure (WhatsApp)
+            </label>
+          </div>
         </div>
 
         {/* Mode toggle */}
         <div className="flows-mode-toggle">
+          <button
+            className={`flows-mode-btn${createMode === "template" ? " active" : ""}`}
+            onClick={() => setCreateMode("template")}
+          >
+            ⚡ Templates
+          </button>
           <button
             className={`flows-mode-btn${createMode === "manual" ? " active" : ""}`}
             onClick={() => setCreateMode("manual")}
@@ -318,9 +554,34 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
             className={`flows-mode-btn${createMode === "describe" ? " active" : ""}`}
             onClick={() => setCreateMode("describe")}
           >
-            ✨ Describe your flow
+            ✨ Describe
           </button>
         </div>
+
+        {/* Template picker */}
+        {createMode === "template" && (
+          <div className="flows-templates">
+            <p className="flows-templates-hint">Pick a template to start, then customize each step.</p>
+            <div className="flows-templates-grid">
+              {FLOW_TEMPLATES.map((tpl) => {
+                const available = tpl.requires.every((r) => connections[r]);
+                return (
+                  <button
+                    key={tpl.id}
+                    className={`flows-tpl-card${!available ? " flows-tpl-card--locked" : ""}`}
+                    onClick={() => available && applyTemplate(tpl)}
+                    title={!available ? `Requires: ${tpl.requires.join(", ")}` : undefined}
+                  >
+                    <span className="flows-tpl-icon">{tpl.icon}</span>
+                    <span className="flows-tpl-name">{tpl.name}</span>
+                    <span className="flows-tpl-desc">{tpl.description}</span>
+                    {!available && <span className="flows-tpl-lock">🔒 Connect services first</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Describe mode */}
         {createMode === "describe" && (
@@ -377,9 +638,63 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
 
         {error && <div className="flows-error">{error}</div>}
 
+        {/* Test run panel */}
+        {Object.keys(testRunStates).length > 0 && editing && (
+          <div className="flow-test-panel">
+            <div className="flow-test-panel-header">
+              <span className="flow-test-panel-title">Test Run</span>
+              {testDone && (
+                <span className={`flow-test-panel-summary ${testAllPassed ? "flow-test-panel-summary--ok" : "flow-test-panel-summary--fail"}`}>
+                  {testAllPassed ? "✓ All steps passed" : "✗ Some steps failed"}
+                </span>
+              )}
+            </div>
+            {editing.steps.map((step, i) => {
+              const state = testRunStates[step.id] ?? { status: "idle" };
+              const t = FLOW_TOOLS.find((ft) => ft.key === step.tool);
+              const canRetry = state.status === "error" || (i > 0 && !testRunning);
+              return (
+                <div key={step.id} className={`flow-test-step flow-test-step--${state.status}`}>
+                  <span className="flow-test-step-icon">
+                    {state.status === "idle" && <span className="flow-test-dot" />}
+                    {state.status === "running" && <span className="flow-test-spinner" />}
+                    {state.status === "success" && "✓"}
+                    {state.status === "stopped" && "⏹"}
+                    {state.status === "error" && "✗"}
+                  </span>
+                  <span className="flow-test-step-name">{t?.icon} Step {i + 1} · {t?.label ?? step.tool}</span>
+                  <span className="flow-test-step-right">
+                    {state.durationMs !== undefined && (
+                      <span className="flow-test-step-ms">{state.durationMs}ms</span>
+                    )}
+                    {canRetry && testDone && (
+                      <button className="flow-test-retry-btn" onClick={() => runStepsFrom(i)} title="Retry from this step">
+                        ↻ Retry from here
+                      </button>
+                    )}
+                  </span>
+                  {(state.status === "success" || state.status === "error" || state.status === "stopped") && (
+                    <div className={`flow-test-step-output${state.error ? " flow-test-step-output--error" : state.conditionFailed ? " flow-test-step-output--stopped" : ""}`}>
+                      {state.error ?? state.output}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <div className="flows-builder-footer">
           <button className="flows-cancel-btn" onClick={() => { setView("list"); setEditing(null); }}>
             Cancel
+          </button>
+          <button
+            className="flows-test-btn"
+            onClick={handleTestRun}
+            disabled={testRunning || !editing?.steps.length}
+            title="Test run — executes all steps now"
+          >
+            {testRunning ? <><span className="flows-spinner flows-spinner--sm" /> Running…</> : "▶ Test Run"}
           </button>
           <button
             className="flows-save-btn"
