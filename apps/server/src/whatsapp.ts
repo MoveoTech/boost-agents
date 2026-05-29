@@ -471,12 +471,11 @@ export async function connectSession(
     // messages gives Baileys enough material to re-establish sessions without using disk.
     const socketMsgStore = new Map<string, any>();
     const SOCKET_MSG_STORE_MAX = 300;
-    // Use the current time as the session boundary with no lookback. Any message with an
-    // original timestamp before this point is pre-session and will be filtered below.
-    // We no longer need a lookback window because persisted processedMsgIds (seeded above)
-    // handles the retry-receipt case: WhatsApp re-delivers old messages with fresh timestamps
-    // after Bad MAC retries, but their IDs are already in the persisted set → deduped.
-    const sessionCreatedAt = Date.now();
+    // 90s lookback: covers crypto-retry delay (~20s) + deploy startup (~26s) + buffer, so
+    // messages sent while the bot was reconnecting are not silently dropped.
+    // Re-deliveries with fresh timestamps (Bad MAC retry receipts) are deduped by the
+    // persisted processedMsgIds set, so the lookback no longer risks answering old messages.
+    const sessionCreatedAt = Date.now() - 90_000;
 
     // Per-socket group metadata cache — groupMetadata() makes a network request and
     // WhatsApp rate-limits it. Cache for 5 minutes to avoid hitting that limit.
