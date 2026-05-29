@@ -118,6 +118,9 @@ app.post("/api/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
+// In-memory SSE listeners for webhook "catch" mode (admin listens for next incoming payload)
+const webhookListeners = new Map<string, import("express").Response>();
+
 const FLOW_TOOL_LABELS: Record<string, string> = {
   agent_prompt: "AI Model",
   condition: "Condition",
@@ -390,6 +393,141 @@ app.post("/api/run-automation", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+// ── Webhook-triggered flows ───────────────────────────────────────────────────
+
+// Public endpoint — third-party apps POST here to trigger a flow.
+// Auth: X-Webhook-Secret header must match the stored secret.
+// If an admin SSE listener is active (catch mode), payload is forwarded there instead of running the flow.
+app.post("/api/webhooks/:webhookId", async (req, res) => {
+  const { webhookId } = req.params;
+
+  let automation: Automation | undefined;
+  try {
+    const all = await listAutomations();
+    automation = all.find((a) => a.webhookId === webhookId);
+  } catch {
+    res.status(503).json({ error: "Service unavailable" });
+    return;
+  }
+
+  if (!automation || !automation.enabled) {
+    res.status(404).json({ error: "Webhook not found" });
+    return;
+  }
+
+  const incomingSecret = req.headers["x-webhook-secret"] as string | undefined;
+  if (automation.webhookSecret && incomingSecret !== automation.webhookSecret) {
+    res.status(401).json({ error: "Invalid webhook secret" });
+    return;
+  }
+
+  // Respond 200 immediately — third-party apps must not wait
+  res.json({ ok: true, received: true });
+
+  const payload = req.body as Record<string, unknown>;
+
+  // Forward to active SSE listener if admin is in catch mode
+  const listener = webhookListeners.get(webhookId);
+  if (listener) {
+    try { listener.write(`data: ${JSON.stringify({ type: "payload", payload })}\n\n`); } catch {}
+    return;
+  }
+
+  // Run the flow in background
+  if (!automation.createdBy) return;
+
+  const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
+  const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
+  const agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!oauthServiceUrl || !oauthServiceKey || !agentId) return;
+
+  const snap = automation; // capture for async closure
+  (async () => {
+    try {
+      const usersRes = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey } });
+      const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
+      const user = users.find((u) => u.email === snap.createdBy);
+      if (!user) return;
+
+      const mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
+      const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+      let apolloApiKey: string | undefined;
+      let googleMapsApiKey: string | undefined;
+      try {
+        const settingsRes = await fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(user.email)}`, { headers: { "x-api-key": oauthServiceKey } });
+        if (settingsRes.ok) {
+          const s = await settingsRes.json() as { apolloApiKey?: string; googleMapsApiKey?: string };
+          apolloApiKey = s.apolloApiKey;
+          googleMapsApiKey = s.googleMapsApiKey;
+        }
+      } catch { /* non-fatal */ }
+
+      // Inject webhook payload as first context step
+      const contextStep: AutomationStep = {
+        id: "_webhook_ctx",
+        tool: "agent_prompt",
+        instruction: `A webhook was triggered with the following payload:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\nRemember this data and use it in subsequent steps as instructed.`,
+      };
+
+      const runStart = Date.now();
+      const stepResults = await executeStepsSequentially(
+        [contextStep, ...snap.steps],
+        user.gmail ? user.email : undefined,
+        user.calendar ? user.email : undefined,
+        mondayToken,
+        user.tasks ? user.email : undefined,
+        whatsappUser,
+        undefined, undefined, undefined,
+        apolloApiKey, googleMapsApiKey,
+      );
+
+      const hasError = stepResults.some((r) => r.error);
+      const historyEntry: RunHistoryEntry = {
+        runAt: new Date().toISOString(),
+        status: hasError ? (stepResults.some((r) => !r.error && !r.conditionFailed) ? "partial" : "error") : "success",
+        durationMs: Date.now() - runStart,
+        steps: stepResults.map((r) => ({ id: r.id, tool: r.tool, output: r.output.slice(0, 400), error: r.error, durationMs: r.durationMs, conditionFailed: r.conditionFailed })),
+      };
+      patchAutomationBody(snap.id, { runHistory: [historyEntry] }).catch(() => {});
+
+      if (snap.notifyOnFailure && hasError && whatsappUser) {
+        const failed = stepResults.find((r) => r.error);
+        if (failed) {
+          waSendMessage(whatsappUser, whatsappUser, `⚠️ Flow "${snap.name}" webhook run failed at: ${FLOW_TOOL_LABELS[failed.tool] ?? failed.tool}\n\nError: ${failed.error}`).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error("[webhook] flow execution error:", (err as Error).message);
+    }
+  })();
+});
+
+// Admin SSE endpoint — admin opens this to catch the next incoming webhook payload.
+// When a POST arrives at /api/webhooks/:webhookId while this listener is open, the payload
+// is forwarded here and the flow is NOT run (catch-only mode, 60s timeout).
+app.get("/api/webhooks/:webhookId/listen", requireAdmin, (req, res) => {
+  const { webhookId } = req.params;
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  webhookListeners.set(webhookId, res);
+  res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+
+  const timeout = setTimeout(() => {
+    webhookListeners.delete(webhookId);
+    res.write(`data: ${JSON.stringify({ type: "timeout" })}\n\n`);
+    res.end();
+  }, 60000);
+
+  req.on("close", () => {
+    clearTimeout(timeout);
+    webhookListeners.delete(webhookId);
+  });
 });
 
 // Slack Events API — receives mentions and responds via the agent
@@ -765,17 +903,21 @@ app.post("/api/flows/run-steps", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/flows/generate", requireAdmin, async (req, res) => {
-  const { description, connectedTools } = req.body as { description: string; connectedTools: string[] };
+  const { description, connectedTools, webhookPayloadSchema } = req.body as { description: string; connectedTools: string[]; webhookPayloadSchema?: Record<string, unknown> };
   if (!description?.trim()) { res.status(400).json({ error: "description required" }); return; }
 
   const toolList = connectedTools.length
     ? connectedTools.map((k) => FLOW_TOOL_LABELS[k] ?? k).join(", ")
     : Object.values(FLOW_TOOL_LABELS).join(", ");
 
+  const schemaSection = webhookPayloadSchema
+    ? `\n\nWebhook payload schema (the trigger provides this data — reference fields in step instructions using the field paths below):\n${JSON.stringify(webhookPayloadSchema, null, 2)}\n\nThe first step will automatically receive this webhook data as context. Reference fields directly in step instructions (e.g. "use payload.item.name").`
+    : "";
+
   const systemPrompt = `You are an automation flow designer. Given a description of what a user wants to automate, generate a structured list of steps.
 
 Available tool keys: ${connectedTools.length ? connectedTools.join(", ") : Object.keys(FLOW_TOOL_LABELS).join(", ")}, agent_prompt
-Available tool labels: ${toolList}, AI Processing
+Available tool labels: ${toolList}, AI Processing${schemaSection}
 
 Return ONLY valid JSON — no markdown, no explanation. Format:
 {

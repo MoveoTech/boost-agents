@@ -569,6 +569,71 @@ Column can be specified by its ID or title (case-insensitive).`,
       required: [],
     },
   },
+  apollo_contacts_search: {
+    name: "apollo_contacts_search",
+    description: "Search contacts already in your Apollo.io CRM (people you've saved/imported). Different from people_search which searches the full database. Returns contact name, email, title, company, stage.",
+    parameters: {
+      properties: {
+        q_keywords:          { type: "string",  description: "Keyword search across contact name, email, company" },
+        contact_stage_ids:   { type: "array",   items: { type: "string" }, description: "Filter by contact stage IDs" },
+        per_page:            { type: "number",  description: "Results per page (default 10, max 25)" },
+        page:                { type: "number",  description: "Page number (default 1)" },
+      },
+      required: [],
+    },
+  },
+  apollo_create_contact: {
+    name: "apollo_create_contact",
+    description: "Create a new contact in your Apollo.io CRM. Use after finding a prospect via apollo_people_search or apollo_person_enrich.",
+    parameters: {
+      properties: {
+        first_name:        { type: "string", description: "First name" },
+        last_name:         { type: "string", description: "Last name" },
+        title:             { type: "string", description: "Job title" },
+        organization_name: { type: "string", description: "Company name" },
+        email:             { type: "string", description: "Email address" },
+        phone_number:      { type: "string", description: "Phone number" },
+        website_url:       { type: "string", description: "Company website URL" },
+        linkedin_url:      { type: "string", description: "LinkedIn profile URL" },
+      },
+      required: [],
+    },
+  },
+  apollo_get_sequences: {
+    name: "apollo_get_sequences",
+    description: "List email sequences (outreach campaigns) in your Apollo.io account. Returns sequence names, IDs, status, and stats. Use to find which sequence to enroll contacts in.",
+    parameters: {
+      properties: {
+        q_keywords: { type: "string", description: "Search by sequence name keyword" },
+        per_page:   { type: "number", description: "Results per page (default 10)" },
+      },
+      required: [],
+    },
+  },
+  apollo_add_to_sequence: {
+    name: "apollo_add_to_sequence",
+    description: "Add a contact to an Apollo.io email sequence (outreach campaign). The contact must already exist in your CRM. Use apollo_get_sequences to find sequence IDs.",
+    parameters: {
+      properties: {
+        sequence_id:    { type: "string", description: "The ID of the sequence to enroll the contact in (from apollo_get_sequences)" },
+        contact_id:     { type: "string", description: "Apollo contact ID (from apollo_create_contact or apollo_contacts_search)" },
+        email_account_id: { type: "string", description: "Email account ID to send from (optional — Apollo will use default if not specified)" },
+      },
+      required: ["sequence_id", "contact_id"],
+    },
+  },
+  apollo_get_news: {
+    name: "apollo_get_news",
+    description: "Get recent news articles about a company or topic from Apollo.io. Useful for account research before outreach.",
+    parameters: {
+      properties: {
+        q_keywords:           { type: "string", description: "Keywords to search news for (e.g. 'product launch', 'funding')" },
+        organization_domains: { type: "array",  items: { type: "string" }, description: "Company domains to get news for (e.g. ['stripe.com', 'openai.com'])" },
+        per_page:             { type: "number", description: "Results per page (default 10)" },
+      },
+      required: [],
+    },
+  },
 };
 
 function buildSystemPrompt(override?: string, addition?: string): string {
@@ -624,7 +689,13 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
   if ((agentConfig.tools.memory ?? true) && memoryUser) tools.push(ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete);
   if (memoryUser) tools.push(ALL_TOOLS.contacts_lookup, ALL_TOOLS.contacts_list);
-  if (apolloApiKey) tools.push(ALL_TOOLS.apollo_people_search, ALL_TOOLS.apollo_org_search, ALL_TOOLS.apollo_person_enrich, ALL_TOOLS.apollo_org_enrich);
+  if (apolloApiKey) tools.push(
+    ALL_TOOLS.apollo_people_search, ALL_TOOLS.apollo_org_search,
+    ALL_TOOLS.apollo_person_enrich, ALL_TOOLS.apollo_org_enrich,
+    ALL_TOOLS.apollo_contacts_search, ALL_TOOLS.apollo_create_contact,
+    ALL_TOOLS.apollo_get_sequences, ALL_TOOLS.apollo_add_to_sequence,
+    ALL_TOOLS.apollo_get_news,
+  );
   return tools;
 }
 
@@ -785,13 +856,19 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
     case "apollo_people_search":
     case "apollo_org_search":
     case "apollo_person_enrich":
-    case "apollo_org_enrich": {
-      if (!apolloApiKey) return "Apollo.io is not connected. Ask the user to add their Apollo API key in My Connections.";
-      const headers = { "x-api-key": apolloApiKey, "Content-Type": "application/json", "Cache-Control": "no-cache" };
+    case "apollo_org_enrich":
+    case "apollo_contacts_search":
+    case "apollo_create_contact":
+    case "apollo_get_sequences":
+    case "apollo_add_to_sequence":
+    case "apollo_get_news": {
+      if (!apolloApiKey) return "Apollo.io is not connected. Ask the user to add their Apollo API key in the Connectors panel.";
+      const ah = { "x-api-key": apolloApiKey, "Content-Type": "application/json", "Cache-Control": "no-cache" };
+      const AB = "https://api.apollo.io/api/v1";
       try {
         if (name === "apollo_people_search") {
           const { per_page = 10, page = 1, ...rest } = args as Record<string, unknown>;
-          const r = await fetch("https://api.apollo.io/api/v1/mixed_people/search", { method: "POST", headers, body: JSON.stringify({ page, per_page, ...rest }) });
+          const r = await fetch(`${AB}/mixed_people/search`, { method: "POST", headers: ah, body: JSON.stringify({ page, per_page, ...rest }) });
           const data = await r.json() as { people?: Record<string, unknown>[]; error?: string };
           if (data.error) return `Apollo error: ${data.error}`;
           const people = (data.people ?? []).slice(0, 25).map((p: Record<string, unknown>) => ({
@@ -803,7 +880,7 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
         }
         if (name === "apollo_org_search") {
           const { per_page = 10, page = 1, ...rest } = args as Record<string, unknown>;
-          const r = await fetch("https://api.apollo.io/api/v1/mixed_companies/search", { method: "POST", headers, body: JSON.stringify({ page, per_page, ...rest }) });
+          const r = await fetch(`${AB}/mixed_companies/search`, { method: "POST", headers: ah, body: JSON.stringify({ page, per_page, ...rest }) });
           const data = await r.json() as { organizations?: Record<string, unknown>[]; error?: string };
           if (data.error) return `Apollo error: ${data.error}`;
           const orgs = (data.organizations ?? []).slice(0, 25).map((o: Record<string, unknown>) => ({
@@ -814,16 +891,61 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
           return `Found ${orgs.length} organizations:\n${JSON.stringify(orgs, null, 2)}`;
         }
         if (name === "apollo_person_enrich") {
-          const r = await fetch("https://api.apollo.io/api/v1/people/match", { method: "POST", headers, body: JSON.stringify({ reveal_personal_emails: true, ...args }) });
+          const r = await fetch(`${AB}/people/match`, { method: "POST", headers: ah, body: JSON.stringify({ reveal_personal_emails: true, ...args }) });
           const data = await r.json() as { person?: Record<string, unknown>; error?: string };
           if (data.error) return `Apollo error: ${data.error}`;
           return JSON.stringify(data.person ?? data, null, 2);
         }
-        // apollo_org_enrich
-        const r = await fetch("https://api.apollo.io/api/v1/organizations/enrich", { method: "POST", headers, body: JSON.stringify(args) });
-        const data = await r.json() as { organization?: Record<string, unknown>; error?: string };
+        if (name === "apollo_org_enrich") {
+          const r = await fetch(`${AB}/organizations/enrich`, { method: "POST", headers: ah, body: JSON.stringify(args) });
+          const data = await r.json() as { organization?: Record<string, unknown>; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          return JSON.stringify(data.organization ?? data, null, 2);
+        }
+        if (name === "apollo_contacts_search") {
+          const { per_page = 10, page = 1, ...rest } = args as Record<string, unknown>;
+          const r = await fetch(`${AB}/contacts/search`, { method: "POST", headers: ah, body: JSON.stringify({ page, per_page, ...rest }) });
+          const data = await r.json() as { contacts?: Record<string, unknown>[]; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          const contacts = (data.contacts ?? []).slice(0, 25).map((c: Record<string, unknown>) => ({
+            id: c.id, name: c.name, title: c.title, company: c.organization_name,
+            email: c.email, stage: c.contact_stage_id, linkedin: c.linkedin_url,
+          }));
+          return `Found ${contacts.length} CRM contacts:\n${JSON.stringify(contacts, null, 2)}`;
+        }
+        if (name === "apollo_create_contact") {
+          const r = await fetch(`${AB}/contacts`, { method: "POST", headers: ah, body: JSON.stringify(args) });
+          const data = await r.json() as { contact?: Record<string, unknown>; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          const c = data.contact ?? {};
+          return `Contact created. ID: ${c.id}, Name: ${c.name}, Email: ${c.email}`;
+        }
+        if (name === "apollo_get_sequences") {
+          const { per_page = 10, ...rest } = args as Record<string, unknown>;
+          const params = new URLSearchParams({ per_page: String(per_page), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])) });
+          const r = await fetch(`${AB}/emailer_campaigns?${params}`, { headers: ah });
+          const data = await r.json() as { emailer_campaigns?: Record<string, unknown>[]; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          const seqs = (data.emailer_campaigns ?? []).map((s: Record<string, unknown>) => ({ id: s.id, name: s.name, status: s.status, contacts: s.num_steps }));
+          return `Found ${seqs.length} sequences:\n${JSON.stringify(seqs, null, 2)}`;
+        }
+        if (name === "apollo_add_to_sequence") {
+          const { sequence_id, contact_id, email_account_id } = args as { sequence_id: string; contact_id: string; email_account_id?: string };
+          const body: Record<string, unknown> = { contact_ids: [contact_id] };
+          if (email_account_id) body.emailer_campaign_email_list_id = email_account_id;
+          const r = await fetch(`${AB}/emailer_campaigns/${sequence_id}/add_contact_ids`, { method: "POST", headers: ah, body: JSON.stringify(body) });
+          const data = await r.json() as { contacts?: unknown[]; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          return `Contact added to sequence. ${data.contacts?.length ?? 0} contact(s) enrolled.`;
+        }
+        // apollo_get_news
+        const { per_page = 10, ...rest } = args as Record<string, unknown>;
+        const params = new URLSearchParams({ per_page: String(per_page), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined).map(([k, v]) => [k, Array.isArray(v) ? (v as string[]).join(",") : String(v)])) });
+        const r = await fetch(`${AB}/news?${params}`, { headers: ah });
+        const data = await r.json() as { news?: Record<string, unknown>[]; error?: string };
         if (data.error) return `Apollo error: ${data.error}`;
-        return JSON.stringify(data.organization ?? data, null, 2);
+        const articles = (data.news ?? []).slice(0, 10).map((n: Record<string, unknown>) => ({ title: n.title, date: n.published_at, source: n.source, url: n.url, summary: n.summary }));
+        return `Found ${articles.length} news articles:\n${JSON.stringify(articles, null, 2)}`;
       } catch (err) {
         return `Apollo request failed: ${(err as Error).message}`;
       }

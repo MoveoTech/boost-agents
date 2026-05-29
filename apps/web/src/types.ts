@@ -57,6 +57,10 @@ export interface Automation {
   oneTime?: boolean;
   runHistory?: RunHistoryEntry[];
   notifyOnFailure?: boolean;
+  triggerType?: "schedule" | "webhook" | "both";
+  webhookId?: string;
+  webhookSecret?: string;
+  webhookPayloadSchema?: Record<string, unknown>;
 }
 
 export interface ChatSession {

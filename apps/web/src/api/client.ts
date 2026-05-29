@@ -222,11 +222,12 @@ export async function runFlowDirect(id: string): Promise<{ stepResults: FlowStep
 export async function generateFlow(
   description: string,
   connectedTools: string[],
+  webhookPayloadSchema?: Record<string, unknown>,
 ): Promise<{ suggestedName: string; suggestedSchedule: string; steps: AutomationStep[] }> {
   const res = await fetch(`${BASE}/api/flows/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ description, connectedTools }),
+    body: JSON.stringify({ description, connectedTools, webhookPayloadSchema }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "Generation failed" }));

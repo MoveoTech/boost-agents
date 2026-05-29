@@ -145,6 +145,7 @@ function ConnectorsPanel({
   const [apolloEditing, setApolloEditing] = useState(false);
   const [mapsDraft, setMapsDraft] = useState("");
   const [mapsEditing, setMapsEditing] = useState(false);
+  const [waSettingsOpen, setWaSettingsOpen] = useState(false);
   const contactFileRef = useRef<HTMLInputElement>(null);
   const closeQRRef = useRef<(() => void) | null>(null);
   const otherOwner = whatsappOwners?.find((o) => o !== userEmail) ?? null;
@@ -208,15 +209,13 @@ function ConnectorsPanel({
               <span className="lp-conn-icon">{icon}</span>
               <div className="lp-conn-body">
                 <span className="lp-conn-name">{label}</span>
-                <span className="lp-conn-status">
-                  {connected
-                    ? <><span className="lp-dot">●</span>{userEmail?.split("@")[0] ?? "connected"}</>
-                    : userEmail
-                      ? <a className="lp-conn-link" href={href}>Connect</a>
-                      : <span style={{ opacity: 0.4 }}>Sign in first</span>}
-                </span>
+                {connected && <span className="lp-conn-status"><span className="lp-dot">●</span>{userEmail?.split("@")[0] ?? "connected"}</span>}
               </div>
-              {connected && <button className="lp-disc-btn" onClick={onDisconnect}>Disconnect</button>}
+              {connected
+                ? <button className="lp-disc-btn" onClick={onDisconnect}>Disconnect</button>
+                : userEmail
+                  ? <a className="lp-connect-btn" href={href}>Connect</a>
+                  : <span style={{ fontSize: 11, opacity: 0.4 }}>Sign in first</span>}
             </div>
           );
         })}
@@ -232,15 +231,22 @@ function ConnectorsPanel({
                 : whatsappStatus === "connecting" || whatsappStatus === "qr"
                   ? <span style={{ opacity: 0.7 }}>⟳ connecting…</span>
                   : otherOwner
-                    ? <span style={{ opacity: 0.5, fontStyle: "italic" }}>Connected to {otherOwner}</span>
-                    : <button className="lp-conn-link lp-conn-link-btn" onClick={handleWhatsappConnect}>Connect</button>}
+                    ? <span style={{ opacity: 0.5, fontStyle: "italic" }}>in use by {otherOwner.split("@")[0]}</span>
+                    : <button className="lp-connect-btn" onClick={handleWhatsappConnect}>Connect</button>}
             </span>
           </div>
+          {whatsappConnected && (
+            <button className="lp-conn-expand" onClick={() => setWaSettingsOpen((o) => !o)} title="Settings">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transition: "transform 0.2s", transform: waSettingsOpen ? "rotate(180deg)" : "none" }}>
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+          )}
           {whatsappConnected && <button className="lp-disc-btn" onClick={onWhatsappDisconnect}>Disconnect</button>}
         </div>
 
-        {whatsappConnected && (
-          <div className="wa-config" style={{ marginLeft: 36, marginTop: 2 }}>
+        {whatsappConnected && waSettingsOpen && (
+          <div className="lp-conn-sub">
             <div className="wa-config-row">
               <label className="wa-config-label">Reply when</label>
               <select className="configure-input" value={waConfig.replyTrigger}
@@ -317,7 +323,7 @@ function ConnectorsPanel({
           )}
         </div>
         {(!apolloConnected || apolloEditing) && (
-          <div style={{ display: "flex", gap: 6, marginLeft: 36, marginTop: 4 }}>
+          <div className="lp-key-input-row">
             <input type="password" className="configure-input"
               placeholder={apolloEditing ? "New API key" : "Paste Apollo.io API key"}
               value={apolloDraft} onChange={(e) => setApolloDraft(e.target.value)}
@@ -365,7 +371,7 @@ function ConnectorsPanel({
           )}
         </div>
         {(mapsEditing || (!userSettings.googleMapsApiKey && !googleMapsConnected)) && (
-          <div style={{ display: "flex", gap: 6, marginLeft: 36, marginTop: 4 }}>
+          <div className="lp-key-input-row">
             <input type="password" className="configure-input"
               placeholder={mapsEditing ? "New API key" : "Paste Google Maps API key"}
               value={mapsDraft} onChange={(e) => setMapsDraft(e.target.value)}
@@ -389,8 +395,8 @@ function ConnectorsPanel({
           </div>
         )}
         {!mapsEditing && !userSettings.googleMapsApiKey && googleMapsConnected && (
-          <div style={{ marginLeft: 36, marginTop: 2 }}>
-            <span style={{ fontSize: 11, color: "var(--muted)" }}>Configured on server. Add your own key to override.</span>
+          <div style={{ fontSize: 11, color: "var(--muted)", padding: "3px 0 6px" }}>
+            Server key configured.
             <button className="lp-ghost-btn" style={{ fontSize: 11, marginLeft: 8, padding: "2px 8px" }} onClick={() => setMapsEditing(true)}>Override</button>
           </div>
         )}

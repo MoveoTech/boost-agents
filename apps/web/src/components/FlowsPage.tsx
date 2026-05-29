@@ -1,7 +1,33 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { listAutomations, saveAutomation, removeAutomation, runFlowDirect, generateFlow, runFlowSteps } from "../api/client";
 import type { Automation, AutomationStep, FlowStepResult } from "../types";
 import FlowStepCard, { FLOW_TOOLS, type Connections } from "./FlowStepCard";
+
+const BASE = import.meta.env.VITE_API_URL ?? "";
+
+function webhookUrl(webhookId: string) {
+  return `${BASE || window.location.origin}/api/webhooks/${webhookId}`;
+}
+
+function flattenJsonKeys(obj: Record<string, unknown>, prefix = ""): string[] {
+  const keys: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    keys.push(path);
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      keys.push(...flattenJsonKeys(v as Record<string, unknown>, path));
+    } else if (Array.isArray(v) && v.length > 0 && typeof v[0] === "object" && v[0] !== null) {
+      keys.push(...flattenJsonKeys(v[0] as Record<string, unknown>, `${path}[]`));
+    }
+  }
+  return keys;
+}
+
+function genSecret(): string {
+  const arr = new Uint8Array(24);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 type StepTestStatus = "idle" | "running" | "success" | "error" | "stopped";
 interface StepTestState {
@@ -126,6 +152,9 @@ function newFlow(): Automation {
     schedule: "0 9 * * *",
     steps: [newStep()],
     enabled: true,
+    triggerType: "schedule",
+    webhookId: crypto.randomUUID(),
+    webhookSecret: genSecret(),
   };
 }
 
@@ -151,6 +180,12 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [testRunStates, setTestRunStates] = useState<Record<string, StepTestState>>({});
   const [testRunning, setTestRunning] = useState(false);
+  const [listenMode, setListenMode] = useState<"idle" | "listening" | "received">("idle");
+  const [listenCountdown, setListenCountdown] = useState(60);
+  const [secretVisible, setSecretVisible] = useState(false);
+  const [copied, setCopied] = useState<"url" | "secret" | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     listAutomations().then(setFlows).catch(() => {}).finally(() => setLoading(false));
@@ -167,11 +202,20 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
   };
 
   const openEdit = (flow: Automation) => {
-    setEditing({ ...flow });
+    // Backfill webhookId/secret for older flows that predate the webhook feature
+    const patched: Automation = {
+      ...flow,
+      webhookId: flow.webhookId ?? crypto.randomUUID(),
+      webhookSecret: flow.webhookSecret ?? genSecret(),
+      triggerType: flow.triggerType ?? "schedule",
+    };
+    setEditing(patched);
     setCreateMode("manual");
     setCustomCron(!SCHEDULE_OPTIONS.some((o) => o.cron === flow.schedule && o.cron !== "custom"));
     setError(null);
     setTestRunStates({});
+    setListenMode("idle");
+    setSecretVisible(false);
     setView("builder");
   };
 
@@ -186,6 +230,68 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
     setCreateMode("manual");
   };
 
+  const handleCopy = useCallback((text: string, kind: "url" | "secret") => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 2000);
+    });
+  }, []);
+
+  const stopListen = useCallback(() => {
+    esRef.current?.close();
+    esRef.current = null;
+    if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; }
+    setListenMode("idle");
+    setListenCountdown(60);
+  }, []);
+
+  const handleListen = useCallback(() => {
+    if (!editing?.webhookId) return;
+    if (listenMode === "listening") { stopListen(); return; }
+
+    const es = new EventSource(`${BASE}/api/webhooks/${editing.webhookId}/listen`);
+    esRef.current = es;
+    setListenMode("listening");
+    setListenCountdown(60);
+
+    let remaining = 60;
+    countdownRef.current = setInterval(() => {
+      remaining -= 1;
+      setListenCountdown(remaining);
+      if (remaining <= 0) stopListen();
+    }, 1000);
+
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data) as { type: string; payload?: Record<string, unknown> };
+        if (data.type === "payload" && data.payload) {
+          stopListen();
+          setListenMode("received");
+          setEditing((prev) => prev ? { ...prev, webhookPayloadSchema: data.payload } : prev);
+        } else if (data.type === "timeout") {
+          stopListen();
+        }
+      } catch {}
+    };
+    es.onerror = () => stopListen();
+  }, [editing?.webhookId, listenMode, stopListen]);
+
+  const handleSchemaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target?.result as string) as Record<string, unknown>;
+        setEditing((prev) => prev ? { ...prev, webhookPayloadSchema: parsed } : prev);
+      } catch {
+        setError("Invalid JSON file");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
   const handleGenerate = async () => {
     if (!describeText.trim() || !editing) return;
     setGenerating(true);
@@ -194,7 +300,7 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
       const connectedToolKeys = FLOW_TOOLS
         .filter((t) => !t.requires || connections[t.requires as keyof Connections])
         .map((t) => t.key);
-      const result = await generateFlow(describeText, connectedToolKeys as string[]);
+      const result = await generateFlow(describeText, connectedToolKeys as string[], editing.webhookPayloadSchema);
       const newSteps = result.steps.length ? result.steps : editing.steps;
       setEditing((prev) => prev ? {
         ...prev,
@@ -386,7 +492,9 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
                   <div className="flow-card-top">
                     <div className="flow-card-info" onClick={() => isAdmin && openEdit(flow)}>
                       <span className="flow-card-name">{flow.name || "Unnamed"}</span>
-                      <span className="flow-card-schedule">{scheduleLabel(flow.schedule)}</span>
+                      <span className="flow-card-schedule">
+                        {flow.triggerType === "webhook" ? "🔗 Webhook" : flow.triggerType === "both" ? `⚡ ${scheduleLabel(flow.schedule)} + Webhook` : scheduleLabel(flow.schedule)}
+                      </span>
                       <span className="flow-card-steps">{flow.steps.length} step{flow.steps.length !== 1 ? "s" : ""}</span>
                       <div className="flow-card-tools">
                         {flow.steps.slice(0, 4).map((s) => {
@@ -498,7 +606,7 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
       </div>
 
       <div className="flows-builder">
-        {/* Name + schedule + notify */}
+        {/* Name + trigger + schedule + notify */}
         <div className="flows-builder-meta">
           <div className="flows-field">
             <label className="flows-label">Flow name</label>
@@ -510,27 +618,51 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
             />
           </div>
           <div className="flows-field">
-            <label className="flows-label">Schedule</label>
-            <select
-              className="flows-input"
-              value={customCron ? "custom" : (editing?.schedule ?? "0 9 * * *")}
-              onChange={(e) => {
-                if (!editing) return;
-                if (e.target.value === "custom") { setCustomCron(true); }
-                else { setCustomCron(false); setEditing({ ...editing, schedule: e.target.value }); }
-              }}
-            >
-              {SCHEDULE_OPTIONS.map((o) => <option key={o.cron} value={o.cron}>{o.label}</option>)}
-            </select>
-            {customCron && (
-              <input
-                className="flows-input flows-input--cron"
-                placeholder="0 9 * * 1-5"
-                value={editing?.schedule ?? ""}
-                onChange={(e) => editing && setEditing({ ...editing, schedule: e.target.value })}
-              />
-            )}
+            <label className="flows-label">Trigger</label>
+            <div className="flows-trigger-tabs">
+              {(["schedule", "webhook", "both"] as const).map((t) => (
+                <button
+                  key={t}
+                  className={`flows-trigger-tab${(editing?.triggerType ?? "schedule") === t ? " active" : ""}`}
+                  onClick={() => {
+                    if (!editing) return;
+                    setEditing({
+                      ...editing,
+                      triggerType: t,
+                      webhookId: editing.webhookId ?? crypto.randomUUID(),
+                      webhookSecret: editing.webhookSecret ?? genSecret(),
+                    });
+                  }}
+                >
+                  {t === "schedule" ? "📅 Schedule" : t === "webhook" ? "🔗 Webhook" : "⚡ Both"}
+                </button>
+              ))}
+            </div>
           </div>
+          {(editing?.triggerType === "schedule" || editing?.triggerType === "both" || !editing?.triggerType) && (
+            <div className="flows-field">
+              <label className="flows-label">Schedule</label>
+              <select
+                className="flows-input"
+                value={customCron ? "custom" : (editing?.schedule ?? "0 9 * * *")}
+                onChange={(e) => {
+                  if (!editing) return;
+                  if (e.target.value === "custom") { setCustomCron(true); }
+                  else { setCustomCron(false); setEditing({ ...editing, schedule: e.target.value }); }
+                }}
+              >
+                {SCHEDULE_OPTIONS.map((o) => <option key={o.cron} value={o.cron}>{o.label}</option>)}
+              </select>
+              {customCron && (
+                <input
+                  className="flows-input flows-input--cron"
+                  placeholder="0 9 * * 1-5"
+                  value={editing?.schedule ?? ""}
+                  onChange={(e) => editing && setEditing({ ...editing, schedule: e.target.value })}
+                />
+              )}
+            </div>
+          )}
           <div className="flows-field flows-field--notify">
             <label className="flows-notify-label">
               <input
@@ -542,6 +674,89 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
             </label>
           </div>
         </div>
+
+        {/* Webhook config */}
+        {editing && (editing.triggerType === "webhook" || editing.triggerType === "both") && (
+          <div className="flows-webhook-config">
+            <div className="flows-webhook-row">
+              <label className="flows-webhook-label">Webhook URL</label>
+              <div className="flows-webhook-copy-row">
+                <input className="flows-webhook-url-input" readOnly value={webhookUrl(editing.webhookId!)} />
+                <button
+                  className={`flows-webhook-copy-btn${copied === "url" ? " copied" : ""}`}
+                  onClick={() => handleCopy(webhookUrl(editing.webhookId!), "url")}
+                >
+                  {copied === "url" ? "✓ Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+            <div className="flows-webhook-row">
+              <label className="flows-webhook-label">Secret header <span className="flows-webhook-hint">(X-Webhook-Secret)</span></label>
+              <div className="flows-webhook-copy-row">
+                <input
+                  className="flows-webhook-url-input flows-webhook-secret-input"
+                  readOnly
+                  type={secretVisible ? "text" : "password"}
+                  value={editing.webhookSecret ?? ""}
+                />
+                <button className="flows-webhook-copy-btn" onClick={() => setSecretVisible((v) => !v)}>
+                  {secretVisible ? "Hide" : "Show"}
+                </button>
+                <button
+                  className={`flows-webhook-copy-btn${copied === "secret" ? " copied" : ""}`}
+                  onClick={() => handleCopy(editing.webhookSecret ?? "", "secret")}
+                >
+                  {copied === "secret" ? "✓ Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+            <div className="flows-webhook-row">
+              <label className="flows-webhook-label">
+                Payload schema
+                <span className="flows-webhook-hint"> — upload a sample .json or catch a live request to teach the AI your data structure</span>
+              </label>
+              <div className="flows-webhook-schema-actions">
+                <label className="flows-webhook-upload-btn">
+                  📎 Upload .json
+                  <input type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleSchemaUpload} />
+                </label>
+                <button
+                  className={`flows-webhook-listen-btn${listenMode === "listening" ? " listening" : listenMode === "received" ? " received" : ""}`}
+                  onClick={handleListen}
+                >
+                  {listenMode === "listening"
+                    ? `⏳ Waiting… ${listenCountdown}s (click to cancel)`
+                    : listenMode === "received"
+                    ? "✓ Payload captured"
+                    : "📡 Catch live payload"}
+                </button>
+                {editing.webhookPayloadSchema && (
+                  <button
+                    className="flows-webhook-clear-btn"
+                    onClick={() => setEditing({ ...editing, webhookPayloadSchema: undefined })}
+                  >
+                    ✕ Clear
+                  </button>
+                )}
+              </div>
+              {editing.webhookPayloadSchema && (
+                <div className="flows-webhook-fields">
+                  <span className="flows-webhook-fields-label">Available fields:</span>
+                  <div className="flows-webhook-field-pills">
+                    {flattenJsonKeys(editing.webhookPayloadSchema).slice(0, 24).map((key) => (
+                      <span key={key} className="flows-webhook-field-pill">{key}</span>
+                    ))}
+                    {flattenJsonKeys(editing.webhookPayloadSchema).length > 24 && (
+                      <span className="flows-webhook-field-pill flows-webhook-field-pill--more">
+                        +{flattenJsonKeys(editing.webhookPayloadSchema).length - 24} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Mode toggle */}
         <div className="flows-mode-toggle">
@@ -619,7 +834,12 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
               <span className="flows-trigger-icon">⚡</span>
               <div>
                 <span className="flows-trigger-label">Trigger</span>
-                <span className="flows-trigger-schedule">{scheduleLabel(editing.schedule)}</span>
+                {(editing.triggerType === "schedule" || editing.triggerType === "both" || !editing.triggerType) && (
+                  <span className="flows-trigger-schedule">{scheduleLabel(editing.schedule)}</span>
+                )}
+                {(editing.triggerType === "webhook" || editing.triggerType === "both") && (
+                  <span className="flows-trigger-schedule">🔗 Webhook</span>
+                )}
               </div>
             </div>
 

@@ -27,6 +27,10 @@ export interface Automation {
   oneTime?: boolean;
   runHistory?: RunHistoryEntry[];
   notifyOnFailure?: boolean;
+  triggerType?: "schedule" | "webhook" | "both";
+  webhookId?: string;
+  webhookSecret?: string;
+  webhookPayloadSchema?: Record<string, unknown>;
 }
 
 async function gcpToken(): Promise<string> {
@@ -47,7 +51,7 @@ function jobId(automationId: string) {
 function parseJob(job: Record<string, unknown>): Automation {
   const httpTarget = job.httpTarget as Record<string, string> | undefined;
   const bodyStr = httpTarget?.body ? Buffer.from(httpTarget.body, "base64").toString() : "{}";
-  const body = JSON.parse(bodyStr) as { name?: string; steps?: AutomationStep[]; createdBy?: string; oneTime?: boolean; runHistory?: RunHistoryEntry[]; notifyOnFailure?: boolean };
+  const body = JSON.parse(bodyStr) as { name?: string; steps?: AutomationStep[]; createdBy?: string; oneTime?: boolean; runHistory?: RunHistoryEntry[]; notifyOnFailure?: boolean; triggerType?: "schedule" | "webhook" | "both"; webhookId?: string; webhookSecret?: string; webhookPayloadSchema?: Record<string, unknown> };
   const name = job.name as string;
   return {
     id: name.split("/jobs/automation--")[1],
@@ -59,6 +63,10 @@ function parseJob(job: Record<string, unknown>): Automation {
     oneTime: body.oneTime,
     runHistory: body.runHistory,
     notifyOnFailure: body.notifyOnFailure,
+    triggerType: body.triggerType,
+    webhookId: body.webhookId,
+    webhookSecret: body.webhookSecret,
+    webhookPayloadSchema: body.webhookPayloadSchema,
   };
 }
 
@@ -78,15 +86,18 @@ export async function upsertAutomation(automation: Automation, agentUrl: string)
   const token = await gcpToken();
   const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automation.id)}`;
 
+  // Webhook-only flows use a never-firing schedule — they're triggered by HTTP, not cron
+  const effectiveSchedule = automation.triggerType === "webhook" ? "0 0 1 1 *" : automation.schedule;
+
   const job = {
     name: fullName,
     description: automation.name,
-    schedule: automation.schedule,
+    schedule: effectiveSchedule,
     timeZone: "UTC",
     httpTarget: {
       uri: `${agentUrl}/api/run-automation`,
       httpMethod: "POST",
-      body: Buffer.from(JSON.stringify({ id: automation.id, name: automation.name, steps: automation.steps, createdBy: automation.createdBy, oneTime: automation.oneTime, runHistory: automation.runHistory, notifyOnFailure: automation.notifyOnFailure })).toString("base64"),
+      body: Buffer.from(JSON.stringify({ id: automation.id, name: automation.name, steps: automation.steps, createdBy: automation.createdBy, oneTime: automation.oneTime, runHistory: automation.runHistory, notifyOnFailure: automation.notifyOnFailure, triggerType: automation.triggerType, webhookId: automation.webhookId, webhookSecret: automation.webhookSecret, webhookPayloadSchema: automation.webhookPayloadSchema })).toString("base64"),
       headers: {
         "Content-Type": "application/json",
         "x-automation-secret": AUTOMATION_SECRET,
