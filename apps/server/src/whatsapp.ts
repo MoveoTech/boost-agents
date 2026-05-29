@@ -325,9 +325,10 @@ export interface WhatsAppConfig {
 }
 
 export const DEFAULT_WA_CONFIG: WhatsAppConfig = {
-  replyTrigger: "mention",
+  replyTrigger: "keyword",
   replyInGroups: true,
   replyInDMs: true,
+  ownerOnly: true,
 };
 
 // Recent message buffer — keeps last 30 messages per JID for conversation context

@@ -1698,6 +1698,15 @@ const waConfigCache = new Map<string, { config: WhatsAppConfig; ts: number }>();
 // Cache users data per agentId — changes infrequently, 5 min TTL
 
 
+// When config can't be loaded and no cache exists, block everything rather than
+// fall back to permissive defaults — prevents replying to strangers on config fetch errors.
+const WA_FAILSAFE_CONFIG: WhatsAppConfig = {
+  replyTrigger: "keyword",
+  keyword: undefined,
+  replyInGroups: false,
+  replyInDMs: false,
+};
+
 async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: string, oauthServiceKey: string): Promise<WhatsAppConfig> {
   const cached = waConfigCache.get(email);
   if (cached && Date.now() - cached.ts < 5 * 60_000) return cached.config;
@@ -1709,13 +1718,17 @@ async function loadWAConfig(email: string, agentId: string, oauthServiceUrl: str
       signal: ctrl.signal,
     });
     clearTimeout(t);
-    if (!res.ok) return cached?.config ?? DEFAULT_WA_CONFIG;
+    if (!res.ok) {
+      console.warn(JSON.stringify({ msg: "loadWAConfig fetch failed", status: res.status, email, usingStale: !!cached }));
+      return cached?.config ?? WA_FAILSAFE_CONFIG;
+    }
     const data = await res.json() as { config?: string } | null;
     const config = data?.config ? { ...DEFAULT_WA_CONFIG, ...JSON.parse(data.config) } : DEFAULT_WA_CONFIG;
     waConfigCache.set(email, { config, ts: Date.now() });
     return config;
-  } catch {
-    return cached?.config ?? DEFAULT_WA_CONFIG;
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: "loadWAConfig threw", error: (err as Error).message, email, usingStale: !!cached }));
+    return cached?.config ?? WA_FAILSAFE_CONFIG;
   }
 }
 
