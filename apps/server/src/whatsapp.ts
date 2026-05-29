@@ -50,7 +50,7 @@ interface Session {
 // email → session
 const sessions = new Map<string, Session>();
 // email → auth state (for external purge access)
-const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; flushAndFreeze: () => Promise<void> }>();
+const authRegistry = new Map<string, { purgeContactKeys: (frag: string) => number; deleteAllCreds: () => Promise<void>; flushAndFreeze: () => Promise<void>; addProcessedId: (id: string) => void }>();
 // persistent reconnect attempt counter — survives session object recreation so backoff grows correctly
 const reconnectAttempts = new Map<string, number>();
 // consecutive crypto error counter — reset on successful connect
@@ -147,7 +147,7 @@ async function deserialize(str: string): Promise<any> {
   });
 }
 
-async function loadCreds(agentId: string, email: string, oauthUrl: string, oauthKey: string): Promise<{ creds: string; keys: string } | null> {
+async function loadCreds(agentId: string, email: string, oauthUrl: string, oauthKey: string): Promise<{ creds: string; keys: string; processedIds?: string } | null> {
   // Retry transient failures up to 3 times. 404 means creds genuinely don't exist (return null).
   // Network errors / 5xx are transient — throw so the caller doesn't overwrite real credentials
   // with a fresh set on a momentary blip.
@@ -173,7 +173,7 @@ async function loadCreds(agentId: string, email: string, oauthUrl: string, oauth
   throw lastErr ?? new Error("loadCreds failed");
 }
 
-async function saveCredsToFirestore(agentId: string, email: string, oauthUrl: string, oauthKey: string, data: { creds: string; keys: string }): Promise<void> {
+async function saveCredsToFirestore(agentId: string, email: string, oauthUrl: string, oauthKey: string, data: { creds: string; keys: string; processedIds?: string }): Promise<void> {
   try {
     const res = await fetch(`${oauthUrl}/api/whatsapp/${agentId}/${encodeURIComponent(email)}`, {
       method: "PUT",
@@ -212,17 +212,26 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
   // Use Baileys' BufferJSON for correct round-tripping of Curve25519 keys
   const creds: any = saved?.creds ? await deserialize(saved.creds) : initAuthCreds();
   const keyMap: Record<string, any> = saved?.keys ? await deserialize(saved.keys) : {};
+  // Persisted processed message IDs — survives deploys so WhatsApp retry re-deliveries
+  // (which arrive with a fresh timestamp) don't cause double-replies after a redeploy.
+  // Keep last 1000 IDs (each ~20 chars → ~20KB max). Pruned on every save.
+  const persistedMsgIds = new Set<string>(
+    saved?.processedIds ? (JSON.parse(saved.processedIds) as string[]) : []
+  );
 
   let credsSaveEnabled = true;
   let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const doSave = async () => {
     if (!credsSaveEnabled) return;
+    // Prune to last 1000 IDs before saving
+    const idsToSave = [...persistedMsgIds].slice(-1000);
     await saveCredsToFirestore(agentId, email, oauthUrl, oauthKey, {
       creds: await serialize(creds),
       keys: await serialize(keyMap),
+      processedIds: JSON.stringify(idsToSave),
     });
-    waLog("info", email, "credentials persisted to Firestore", { keyCount: Object.keys(keyMap).length });
+    waLog("info", email, "credentials persisted to Firestore", { keyCount: Object.keys(keyMap).length, processedIdCount: idsToSave.length });
   };
 
   // Immediate save — used for account credential changes (creds.update).
@@ -312,10 +321,19 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
         // Only wipe session state — the actual stale Signal ratchet state per contact.
         if (!k.startsWith("app-state-sync-") && !k.startsWith("pre-key") && !k.startsWith("signed-pre-key")) delete keyMap[k];
       }
+      const idsToSave = [...persistedMsgIds].slice(-1000);
       await saveCredsToFirestore(agentId, email, oauthUrl, oauthKey, {
         creds: await serialize(creds),
         keys: await serialize(keyMap),
+        processedIds: JSON.stringify(idsToSave),
       });
+    },
+    // Expose persisted IDs set so connectSession can seed the in-memory dedup Set
+    persistedMsgIds,
+    // Add a message ID to the persisted set and debounce-save to Firestore
+    addProcessedId: (id: string) => {
+      persistedMsgIds.add(id);
+      persist();
     },
   };
 }
@@ -445,7 +463,7 @@ export async function connectSession(
     }
 
     const auth = await makeAuthState(agentId, email, oauthUrl, oauthKey);
-    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, flushAndFreeze: auth.flushAndFreeze });
+    authRegistry.set(email, { purgeContactKeys: auth.purgeContactKeys, deleteAllCreds: auth.deleteAllCreds, flushAndFreeze: auth.flushAndFreeze, addProcessedId: auth.addProcessedId });
 
     // Per-socket message store — Baileys calls getMessage when it needs to retry-decrypt
     // a failed message (Signal retries are very common). Returning undefined makes every
@@ -453,12 +471,12 @@ export async function connectSession(
     // messages gives Baileys enough material to re-establish sessions without using disk.
     const socketMsgStore = new Map<string, any>();
     const SOCKET_MSG_STORE_MAX = 300;
-    // On reconnect (existing credentials): allow messages sent up to 2 minutes before
-    // this session was created — the bot was briefly offline and WhatsApp queued those
-    // messages; we should process them. The 5-minute absolute cap below still drops
-    // truly ancient messages. On fresh QR (no savedCreds): use strict cutoff so old
-    // messages from before the QR scan are never replayed.
-    const sessionCreatedAt = savedCreds ? Date.now() - 30_000 : Date.now();
+    // Use the current time as the session boundary with no lookback. Any message with an
+    // original timestamp before this point is pre-session and will be filtered below.
+    // We no longer need a lookback window because persisted processedMsgIds (seeded above)
+    // handles the retry-receipt case: WhatsApp re-delivers old messages with fresh timestamps
+    // after Bad MAC retries, but their IDs are already in the persisted set → deduped.
+    const sessionCreatedAt = Date.now();
 
     // Per-socket group metadata cache — groupMetadata() makes a network request and
     // WhatsApp rate-limits it. Cache for 5 minutes to avoid hitting that limit.
@@ -774,8 +792,11 @@ export async function connectSession(
     // Track processed message IDs to prevent duplicate processing. Module-level map
     // so dedup survives reconnects — WhatsApp re-delivers unACK'd messages on reconnect,
     // and a fresh per-session Set would allow reprocessing → double reply.
+    // Also seeded from Firestore-persisted IDs so a fresh deploy doesn't reprocess
+    // messages that WhatsApp re-delivers with a fresh timestamp after a retry receipt.
     if (!processedMsgIdsByEmail.has(email)) processedMsgIdsByEmail.set(email, new Set<string>());
     const processedMsgIds = processedMsgIdsByEmail.get(email)!;
+    for (const id of auth.persistedMsgIds) processedMsgIds.add(id);
 
     // All known participant key fragments that belong to the account owner.
     // Seeded from sock.user (phone + LID) at connect time, then updated whenever
@@ -979,9 +1000,11 @@ export async function connectSession(
         if (senderFrag) contactDecryptFailures.delete(`${email}::${senderFrag}`);
 
         // Text confirmed — mark processed now to prevent duplicate handling.
+        // Also persist to Firestore so a redeploy doesn't reprocess retry-redelivered messages.
         // Cap at 5000 entries and evict oldest 1000 to prevent unbounded growth.
         if (msgId) {
           processedMsgIds.add(msgId);
+          auth.addProcessedId(msgId);
           if (processedMsgIds.size > 5000) {
             const evict = [...processedMsgIds].slice(0, 1000);
             evict.forEach((id) => processedMsgIds.delete(id));
