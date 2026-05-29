@@ -127,6 +127,8 @@ const FLOW_TOOL_LABELS: Record<string, string> = {
   google_calendar: "Google Calendar",
   slack: "Slack",
   monday: "Monday.com",
+  google_maps: "Google Maps",
+  apollo: "Apollo.io",
   http_request: "HTTP Request",
   web_fetch: "Web Fetch",
   google_search: "Google Search",
@@ -151,6 +153,7 @@ async function executeStepsSequentially(
   onStepStart?: (stepId: string, tool: string) => void,
   onStepDone?: (result: StepResult) => void,
   priorResults?: StepResult[],
+  apolloApiKey?: string,
 ): Promise<StepResult[]> {
   const results: StepResult[] = [];
   let context = "";
@@ -198,6 +201,89 @@ async function executeStepsSequentially(
         results.push(stepResult);
         onStepDone?.(stepResult);
         console.log(JSON.stringify({ tag: "flow", msg: "step_error", stepId: step.id, tool: step.tool, error: stepResult.error }));
+        break;
+      }
+      continue;
+    }
+
+    // Google Maps: direct API calls (geocode / places search / directions)
+    if (step.tool === "google_maps") {
+      const mapsKey = process.env.GOOGLE_MAPS_API_KEY;
+      if (!mapsKey) {
+        const stepResult: StepResult = { id: step.id, tool: step.tool, output: "", error: "GOOGLE_MAPS_API_KEY not configured", durationMs: Date.now() - stepStart };
+        results.push(stepResult); onStepDone?.(stepResult); break;
+      }
+      try {
+        const parsePrompt = `Parse this Google Maps request. Reply ONLY with JSON: {"type":"geocode"|"places"|"directions","query":"...","origin":"...","destination":"..."}\nFor geocode: address lookup. For places: business/POI search. For directions: include origin and destination.\nInstruction: ${instruction}`;
+        const parsed = await chat(parsePrompt, [], "no_tools");
+        const q = JSON.parse(parsed.reply.match(/\{[\s\S]*?\}/)?.[0] ?? "{}") as { type?: string; query?: string; origin?: string; destination?: string };
+        let mapsData: string;
+        if (q.type === "directions" && q.origin && q.destination) {
+          const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(q.origin)}&destination=${encodeURIComponent(q.destination)}&key=${mapsKey}`;
+          const r = await fetch(url); const data = await r.json() as { routes?: Array<{ legs?: Array<{ start_address?: string; end_address?: string; distance?: { text: string }; duration?: { text: string }; steps?: Array<{ html_instructions?: string; distance?: { text: string } }> }> }> };
+          const leg = data.routes?.[0]?.legs?.[0];
+          mapsData = leg ? `From: ${leg.start_address}\nTo: ${leg.end_address}\nDistance: ${leg.distance?.text}\nDuration: ${leg.duration?.text}\nSteps:\n${leg.steps?.slice(0, 8).map((s) => `  - ${s.html_instructions?.replace(/<[^>]+>/g, "")} (${s.distance?.text})`).join("\n")}` : "No route found";
+        } else if (q.type === "geocode" && q.query) {
+          const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q.query)}&key=${mapsKey}`;
+          const r = await fetch(url); const data = await r.json() as { results?: Array<{ formatted_address?: string; geometry?: { location?: { lat: number; lng: number } } }> };
+          mapsData = data.results?.slice(0, 3).map((p) => `${p.formatted_address} (${p.geometry?.location?.lat}, ${p.geometry?.location?.lng})`).join("\n") ?? "No results";
+        } else {
+          const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(q.query ?? instruction)}&key=${mapsKey}`;
+          const r = await fetch(url); const data = await r.json() as { results?: Array<{ name?: string; formatted_address?: string; rating?: number; user_ratings_total?: number; opening_hours?: { open_now?: boolean } }> };
+          mapsData = data.results?.slice(0, 6).map((p) => `${p.name}: ${p.formatted_address}${p.rating ? ` ★${p.rating} (${p.user_ratings_total})` : ""}${p.opening_hours ? ` — ${p.opening_hours.open_now ? "Open" : "Closed"}` : ""}`).join("\n") ?? "No places found";
+        }
+        const sumPrompt = context ? `Context:\n${context}\n\nGoogle Maps result for "${instruction}":\n${mapsData}\n\nPresent this clearly.` : `Google Maps result for "${instruction}":\n${mapsData}\n\nPresent this clearly.`;
+        const summary = await chat(sumPrompt, [], "no_tools");
+        const stepResult: StepResult = { id: step.id, tool: step.tool, output: summary.reply, durationMs: Date.now() - stepStart };
+        results.push(stepResult); onStepDone?.(stepResult);
+        console.log(JSON.stringify({ tag: "flow", msg: "step_ok", stepId: step.id, tool: step.tool, ms: stepResult.durationMs }));
+        context += `\n[Step ${results.length} — Google Maps]:\n${summary.reply}`;
+      } catch (err) {
+        const stepResult: StepResult = { id: step.id, tool: step.tool, output: "", error: (err as Error).message, durationMs: Date.now() - stepStart };
+        results.push(stepResult); onStepDone?.(stepResult);
+        console.log(JSON.stringify({ tag: "flow", msg: "step_error", stepId: step.id, tool: step.tool, error: stepResult.error, ms: stepResult.durationMs }));
+        break;
+      }
+      continue;
+    }
+
+    // Apollo.io: people/org search and enrichment via REST API
+    if (step.tool === "apollo") {
+      if (!apolloApiKey) {
+        const stepResult: StepResult = { id: step.id, tool: step.tool, output: "", error: "Apollo.io API key not configured — add it in My Connections", durationMs: Date.now() - stepStart };
+        results.push(stepResult); onStepDone?.(stepResult); break;
+      }
+      try {
+        const parsePrompt = `Parse this Apollo.io request. Reply ONLY with JSON: {"type":"people_search"|"org_search"|"person_enrich"|"org_enrich","params":{...}}\npeople_search params: person_titles[], q_organization_name, person_seniorities[], num_employees_ranges[]\norg_search params: q_organization_name, organization_industry_tag_ids[], num_employees_ranges[]\nperson_enrich params: email OR (first_name, last_name, domain)\norg_enrich params: domain OR name\nInstruction: ${instruction}`;
+        const parsed = await chat(parsePrompt, [], "no_tools");
+        const q = JSON.parse(parsed.reply.match(/\{[\s\S]*?\}/)?.[0] ?? "{}") as { type?: string; params?: Record<string, unknown> };
+        const headers = { "x-api-key": apolloApiKey, "Content-Type": "application/json", "Cache-Control": "no-cache" };
+        let apolloResult: unknown;
+        if (q.type === "people_search") {
+          const r = await fetch("https://api.apollo.io/api/v1/mixed_people/search", { method: "POST", headers, body: JSON.stringify({ page: 1, per_page: 10, ...q.params }) });
+          const data = await r.json() as { people?: Array<{ name?: string; title?: string; organization_name?: string; email?: string; linkedin_url?: string; city?: string; state?: string; country?: string }> };
+          apolloResult = (data.people ?? []).slice(0, 10).map((p) => ({ name: p.name, title: p.title, company: p.organization_name, email: p.email, linkedin: p.linkedin_url, location: [p.city, p.state, p.country].filter(Boolean).join(", ") }));
+        } else if (q.type === "org_search") {
+          const r = await fetch("https://api.apollo.io/api/v1/mixed_companies/search", { method: "POST", headers, body: JSON.stringify({ page: 1, per_page: 10, ...q.params }) });
+          const data = await r.json() as { organizations?: Array<{ name?: string; website_url?: string; industry?: string; estimated_num_employees?: number; city?: string; country?: string }> };
+          apolloResult = (data.organizations ?? []).slice(0, 10).map((o) => ({ name: o.name, website: o.website_url, industry: o.industry, employees: o.estimated_num_employees, location: [o.city, o.country].filter(Boolean).join(", ") }));
+        } else if (q.type === "person_enrich") {
+          const r = await fetch("https://api.apollo.io/api/v1/people/match", { method: "POST", headers, body: JSON.stringify({ reveal_personal_emails: true, ...q.params }) });
+          apolloResult = await r.json();
+        } else {
+          const r = await fetch("https://api.apollo.io/api/v1/organizations/enrich", { method: "POST", headers, body: JSON.stringify(q.params) });
+          apolloResult = await r.json();
+        }
+        const sumPrompt = context ? `Context:\n${context}\n\nApollo.io data for "${instruction}":\n${JSON.stringify(apolloResult, null, 2)}\n\nPresent this clearly and concisely.` : `Apollo.io data for "${instruction}":\n${JSON.stringify(apolloResult, null, 2)}\n\nPresent this clearly and concisely.`;
+        const summary = await chat(sumPrompt, [], "no_tools");
+        const stepResult: StepResult = { id: step.id, tool: step.tool, output: summary.reply, durationMs: Date.now() - stepStart };
+        results.push(stepResult); onStepDone?.(stepResult);
+        console.log(JSON.stringify({ tag: "flow", msg: "step_ok", stepId: step.id, tool: step.tool, ms: stepResult.durationMs }));
+        context += `\n[Step ${results.length} — Apollo.io]:\n${summary.reply}`;
+      } catch (err) {
+        const stepResult: StepResult = { id: step.id, tool: step.tool, output: "", error: (err as Error).message, durationMs: Date.now() - stepStart };
+        results.push(stepResult); onStepDone?.(stepResult);
+        console.log(JSON.stringify({ tag: "flow", msg: "step_error", stepId: step.id, tool: step.tool, error: stepResult.error, ms: stepResult.durationMs }));
         break;
       }
       continue;
@@ -545,6 +631,11 @@ app.post("/api/flows/:id/run-direct", requireAdmin, async (req, res) => {
     if (!user) { res.status(404).json({ error: `User ${automation.createdBy} not found` }); return; }
     const mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
     const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+    let apolloApiKeyDirect: string | undefined;
+    try {
+      const settingsRes = await fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(user.email)}`, { headers: { "x-api-key": oauthServiceKey } });
+      if (settingsRes.ok) { const s = await settingsRes.json() as { apolloApiKey?: string }; apolloApiKeyDirect = s.apolloApiKey; }
+    } catch { /* non-fatal */ }
     const runStart = Date.now();
     const stepResults = await executeStepsSequentially(
       automation.steps,
@@ -553,6 +644,10 @@ app.post("/api/flows/:id/run-direct", requireAdmin, async (req, res) => {
       mondayToken,
       user.tasks ? user.email : undefined,
       whatsappUser,
+      undefined,
+      undefined,
+      undefined,
+      apolloApiKeyDirect,
     );
     res.json({ ok: true, stepResults });
     const hasError = stepResults.some((r) => r.error);
@@ -610,11 +705,13 @@ app.post("/api/flows/run-steps", requireAdmin, async (req, res) => {
     let mondayToken: string | undefined;
     let tasksUser: string | undefined;
     let whatsappUser: string | undefined;
+    let apolloApiKey: string | undefined;
 
     if (userEmail) {
-      const usersRes = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
-        headers: { "x-api-key": oauthServiceKey },
-      });
+      const [usersRes, settingsRes] = await Promise.all([
+        fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey } }),
+        fetch(`${oauthServiceUrl}/api/user-settings/${agentId}/${encodeURIComponent(userEmail)}`, { headers: { "x-api-key": oauthServiceKey } }),
+      ]);
       const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
       const user = users.find((u) => u.email === userEmail);
       if (user) {
@@ -623,6 +720,10 @@ app.post("/api/flows/run-steps", requireAdmin, async (req, res) => {
         mondayToken = user.monday ? (await getUserAccessToken("monday", user.email).catch(() => null)) ?? undefined : undefined;
         tasksUser = user.tasks ? user.email : undefined;
         whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
+      }
+      if (settingsRes.ok) {
+        const settings = await settingsRes.json() as { apolloApiKey?: string };
+        apolloApiKey = settings.apolloApiKey;
       }
     }
 
@@ -636,6 +737,7 @@ app.post("/api/flows/run-steps", requireAdmin, async (req, res) => {
       (stepId, tool) => send({ type: "start", stepId, tool }),
       (result) => send({ type: "done", ...result }),
       priorResults,
+      apolloApiKey,
     );
   } catch (err) {
     send({ type: "error", error: (err as Error).message });
@@ -860,7 +962,7 @@ app.get("/api/connections", async (req, res) => {
         whatsappOwners = data.users ?? [];
       }
     } catch { /* non-fatal — UI just won't show the lockout message */ }
-    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks, whatsapp: waStatus === "connected", whatsappStatus: waStatus, whatsappOwners });
+    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks, whatsapp: waStatus === "connected", whatsappStatus: waStatus, whatsappOwners, googleMaps: !!process.env.GOOGLE_MAPS_API_KEY });
   } catch { res.json({ gmail: false, calendar: false }); }
 });
 

@@ -195,13 +195,20 @@ export default function FlowsPage({ connections, isAdmin }: FlowsPageProps) {
         .filter((t) => !t.requires || connections[t.requires as keyof Connections])
         .map((t) => t.key);
       const result = await generateFlow(describeText, connectedToolKeys as string[]);
+      const newSteps = result.steps.length ? result.steps : editing.steps;
       setEditing((prev) => prev ? {
         ...prev,
         name: prev.name || result.suggestedName,
         schedule: result.suggestedSchedule || prev.schedule,
-        steps: result.steps.length ? result.steps : prev.steps,
+        steps: [],
       } : prev);
       setCreateMode("manual");
+      // Reveal steps one by one so each card animates in sequentially
+      newSteps.forEach((step, i) => {
+        setTimeout(() => {
+          setEditing((prev) => prev ? { ...prev, steps: [...prev.steps, step] } : prev);
+        }, (i + 1) * 160);
+      });
     } catch (err) {
       setError((err as Error).message);
     } finally {

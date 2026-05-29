@@ -56,6 +56,64 @@ function avatarColor(name: string) {
   return colors[h];
 }
 
+function ApolloConnection({ userSettings, onUserSettingsChange }: { userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void }) {
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const connected = !!userSettings.apolloApiKey;
+
+  const handleSave = async () => {
+    if (!draft.trim()) return;
+    setSaving(true);
+    onUserSettingsChange({ ...userSettings, apolloApiKey: draft.trim() });
+    setSaving(false);
+    setDraft("");
+  };
+
+  const handleDisconnect = () => {
+    const { apolloApiKey: _, ...rest } = userSettings;
+    onUserSettingsChange(rest as UserSettings);
+  };
+
+  return (
+    <div className="sidebar-tool-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 0 }}>
+      <div className="sidebar-tool-info">
+        <span className="sidebar-tool-icon">🚀</span>
+        <div className="sidebar-tool-text">
+          <span className="sidebar-tool-name">Apollo.io</span>
+          <span className="sidebar-tool-connection">
+            {connected ? (
+              <><span className="sidebar-tool-connected">●</span> connected</>
+            ) : (
+              <span style={{ opacity: 0.6 }}>API key required</span>
+            )}
+            {connected && <button className="sidebar-tool-disconnect" onClick={handleDisconnect}>Disconnect</button>}
+          </span>
+        </div>
+      </div>
+      {!connected && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6, marginLeft: 32 }}>
+          <input
+            type="password"
+            className="configure-input"
+            placeholder="Paste Apollo.io API key"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            style={{ flex: 1, fontSize: 12 }}
+          />
+          <button
+            className="sidebar-save-btn"
+            onClick={handleSave}
+            disabled={saving || !draft.trim()}
+            style={{ fontSize: 12, padding: "4px 10px", whiteSpace: "nowrap" }}
+          >
+            Connect
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   isAdmin: boolean;
   userEmail: string | null;
@@ -522,6 +580,9 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                   </div>
                 )}
               </div>
+
+              {/* Apollo.io — API key */}
+              <ApolloConnection userSettings={userSettings} onUserSettingsChange={onUserSettingsChange} />
             </>)}
           </SidebarSection>
 

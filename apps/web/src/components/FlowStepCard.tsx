@@ -9,6 +9,8 @@ export const FLOW_TOOLS = [
   { key: "google_calendar", label: "Google Calendar", icon: "📅", requires: "calendar" as const },
   { key: "slack",           label: "Slack",           icon: "💬", requires: "slack" as const },
   { key: "monday",          label: "Monday.com",      icon: "📊", requires: "monday" as const },
+  { key: "google_maps",     label: "Google Maps",     icon: "🗺️",  requires: "googleMaps" as const },
+  { key: "apollo",          label: "Apollo.io",       icon: "🚀", requires: "apollo" as const },
   { key: "http_request",    label: "HTTP Request",    icon: "🔗", requires: null },
   { key: "web_fetch",       label: "Web Fetch",       icon: "🌐", requires: null },
   { key: "google_search",   label: "Google Search",   icon: "🔍", requires: null },
@@ -23,6 +25,8 @@ const TOOL_PLACEHOLDERS: Record<string, string> = {
   google_calendar: "e.g. List all events for today and highlight any conflicts",
   slack: "e.g. Post a summary to the #updates Slack channel",
   monday: "e.g. Create a new item in the 'Backlog' board with the details from above",
+  google_maps: "e.g. Find coffee shops near Tel Aviv city center, or get directions from Jerusalem to Tel Aviv",
+  apollo: "e.g. Find VPs of Sales at B2B SaaS companies with 50-200 employees in the US",
   http_request: "e.g. Send the collected data as JSON to this endpoint",
   web_fetch: "e.g. Fetch the content from this URL and extract key information",
   google_search: "e.g. Search for the latest news about this topic and summarise it",
@@ -35,6 +39,8 @@ export type Connections = {
   tasks: boolean;
   whatsapp: boolean;
   slack?: boolean;
+  googleMaps?: boolean;
+  apollo?: boolean;
 };
 
 interface FlowStepCardProps {

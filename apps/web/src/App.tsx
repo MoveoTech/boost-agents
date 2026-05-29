@@ -39,12 +39,13 @@ export default function App() {
   const [whatsappConnected, setWhatsappConnected] = useState(false);
   const [whatsappStatus, setWhatsappStatus] = useState<"connected" | "disconnected" | "connecting" | "qr">("disconnected");
   const [whatsappOwners, setWhatsappOwners] = useState<string[]>([]);
+  const [googleMapsConnected, setGoogleMapsConnected] = useState(false);
 
   // Poll status while in transient states so the UI updates without manual refresh.
   useEffect(() => {
     if (whatsappStatus !== "connecting" && whatsappStatus !== "qr") return;
     const id = setInterval(() => {
-      getConnections().then(({ whatsapp, whatsappStatus: s }) => { setWhatsappConnected(whatsapp); setWhatsappStatus(s); }).catch(() => {});
+      getConnections().then(({ whatsapp, whatsappStatus: s, googleMaps }) => { setWhatsappConnected(whatsapp); setWhatsappStatus(s); setGoogleMapsConnected(googleMaps); }).catch(() => {});
     }, 2000);
     return () => clearInterval(id);
   }, [whatsappStatus]);
@@ -78,7 +79,7 @@ export default function App() {
         if (email) setUserEmail(email);
         getConfig().then(setAgentConfig).catch(() => {});
         getConnections()
-          .then(({ gmail, calendar, monday, tasks, whatsapp, whatsappStatus, whatsappOwners }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); setWhatsappStatus(whatsappStatus); setWhatsappOwners(whatsappOwners); })
+          .then(({ gmail, calendar, monday, tasks, whatsapp, whatsappStatus, whatsappOwners, googleMaps }) => { setGmailConnected(gmail); setCalendarConnected(calendar); setMondayConnected(monday); setTasksConnected(tasks); setWhatsappConnected(whatsapp); setWhatsappStatus(whatsappStatus); setWhatsappOwners(whatsappOwners); setGoogleMapsConnected(googleMaps); })
           .catch(() => {})
           .finally(() => setConnectionsLoading(false));
         getUserSettings().then((s) => setUserSettings(s as UserSettings)).catch(() => {});
@@ -341,6 +342,8 @@ export default function App() {
             monday: mondayConnected,
             tasks: tasksConnected,
             whatsapp: whatsappConnected,
+            googleMaps: googleMapsConnected,
+            apollo: !!(userSettings as any).apolloApiKey,
           }}
           isAdmin={isAdmin}
         />
