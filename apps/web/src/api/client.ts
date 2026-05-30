@@ -186,6 +186,7 @@ export async function saveWhatsAppConfig(config: WhatsAppConfig): Promise<void> 
   });
 }
 
+
 export function subscribeWhatsAppQR(
   onQR: (dataUrl: string) => void,
   onConnected: () => void,

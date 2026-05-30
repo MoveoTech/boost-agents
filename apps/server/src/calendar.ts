@@ -8,6 +8,7 @@ async function calendarFetch(accessToken: string, path: string, options?: Reques
     },
   });
   if (!res.ok) throw new Error(`Calendar API error ${res.status}: ${await res.text()}`);
+  if (res.status === 204) return {};
   return res.json();
 }
 
@@ -88,6 +89,30 @@ export async function calendarRsvp(accessToken: string, eventId: string, respons
     }),
   });
   return `RSVP updated: you have ${responseStatus} the event.`;
+}
+
+export async function calendarUpdateEvent(
+  accessToken: string,
+  eventId: string,
+  updates: { title?: string; startDateTime?: string; endDateTime?: string; description?: string; location?: string; attendees?: string[] }
+): Promise<string> {
+  const body: Record<string, unknown> = {};
+  if (updates.title !== undefined)         body.summary     = updates.title;
+  if (updates.description !== undefined)   body.description = updates.description;
+  if (updates.location !== undefined)      body.location    = updates.location;
+  if (updates.startDateTime !== undefined) body.start       = { dateTime: updates.startDateTime, timeZone: "UTC" };
+  if (updates.endDateTime !== undefined)   body.end         = { dateTime: updates.endDateTime,   timeZone: "UTC" };
+  if (updates.attendees !== undefined)     body.attendees   = updates.attendees.map((email) => ({ email }));
+  const updated = await calendarFetch(accessToken, `/calendars/primary/events/${eventId}?sendUpdates=all`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  }) as { summary: string; htmlLink: string };
+  return `Event updated: "${updated.summary}"\nLink: ${updated.htmlLink}`;
+}
+
+export async function calendarDeleteEvent(accessToken: string, eventId: string): Promise<string> {
+  await calendarFetch(accessToken, `/calendars/primary/events/${eventId}?sendUpdates=all`, { method: "DELETE" });
+  return "Event deleted successfully.";
 }
 
 export async function calendarGetEvent(accessToken: string, eventId: string): Promise<string> {

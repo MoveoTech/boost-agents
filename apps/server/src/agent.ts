@@ -14,7 +14,7 @@ import {
   mondaySearchItems, mondayGetMyItems,
 } from "./monday";
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
-import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability, calendarRsvp } from "./calendar";
+import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability, calendarRsvp, calendarUpdateEvent, calendarDeleteEvent } from "./calendar";
 import { memorySave, memoryRecall, memoryDelete } from "./memory";
 import { lookupContact, listContacts as listContactsFn } from "./contacts";
 import { sendMessage as waSendMessage, getStatus as waGetStatus } from "./whatsapp";
@@ -92,6 +92,30 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
         responseStatus: { type: "string", description: "One of: accepted, declined, tentative" },
       },
       required: ["eventId", "responseStatus"],
+    },
+  },
+  calendar_update_event: {
+    name: "calendar_update_event", description: "Update an existing calendar event. Can change title, time, location, description, or attendee list. All fields optional — only provided fields are updated.",
+    parameters: {
+      properties: {
+        eventId:       { type: "string", description: "Calendar event ID (get from calendar_list_events or calendar_get_event)" },
+        title:         { type: "string", description: "New event title" },
+        startDateTime: { type: "string", description: "New start time in ISO 8601 (e.g. 2026-05-15T10:00:00Z)" },
+        endDateTime:   { type: "string", description: "New end time in ISO 8601" },
+        description:   { type: "string", description: "New description" },
+        location:      { type: "string", description: "New location" },
+        attendees:     { type: "array",  description: "Full attendee list (replaces existing). Include all attendees, not just new ones.", items: { type: "string" } },
+      },
+      required: ["eventId"],
+    },
+  },
+  calendar_delete_event: {
+    name: "calendar_delete_event", description: "Delete (cancel) a calendar event. Sends cancellation emails to all attendees.",
+    parameters: {
+      properties: {
+        eventId: { type: "string", description: "Calendar event ID (get from calendar_list_events or calendar_get_event)" },
+      },
+      required: ["eventId"],
     },
   },
   whatsapp_send_message: {
@@ -708,7 +732,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
   if (agentConfig.tools.jinaReader ?? true) tools.push(ALL_TOOLS.read_webpage, ALL_TOOLS.search_image);
   if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
-  if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability, ALL_TOOLS.calendar_rsvp);
+  if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability, ALL_TOOLS.calendar_rsvp, ALL_TOOLS.calendar_update_event, ALL_TOOLS.calendar_delete_event);
   if (whatsappUser && waGetStatus(whatsappUser) === "connected") tools.push(ALL_TOOLS.whatsapp_send_message);
   if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
   if (mondayToken)  tools.push(
@@ -766,7 +790,9 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
     case "calendar_create_event":
     case "calendar_get_event":
     case "calendar_rsvp":
-    case "calendar_check_availability": {
+    case "calendar_check_availability":
+    case "calendar_update_event":
+    case "calendar_delete_event": {
       if (!calendarUser) return "User has not connected Google Calendar. Ask them to connect first.";
       const token = await getUserAccessToken("calendar", calendarUser);
       if (!token) return "Could not retrieve Calendar access token. The user may need to reconnect.";
@@ -774,6 +800,8 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       if (name === "calendar_create_event")       return calendarCreateEvent(token, args.title as string, args.startDateTime as string, args.endDateTime as string, args.description as string | undefined, args.location as string | undefined, args.attendees as string[] | undefined);
       if (name === "calendar_check_availability") return calendarCheckAvailability(token, args.emails as string[], args.timeMin as string, args.timeMax as string);
       if (name === "calendar_rsvp")               return calendarRsvp(token, args.eventId as string, args.responseStatus as "accepted" | "declined" | "tentative");
+      if (name === "calendar_update_event")       return calendarUpdateEvent(token, args.eventId as string, { title: args.title as string | undefined, startDateTime: args.startDateTime as string | undefined, endDateTime: args.endDateTime as string | undefined, description: args.description as string | undefined, location: args.location as string | undefined, attendees: args.attendees as string[] | undefined });
+      if (name === "calendar_delete_event")       return calendarDeleteEvent(token, args.eventId as string);
       return calendarGetEvent(token, args.eventId as string);
     }
 
