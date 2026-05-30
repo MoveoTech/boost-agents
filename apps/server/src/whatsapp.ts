@@ -971,13 +971,39 @@ export async function connectSession(
           // Message sent from user's phone (same account, different device) — process it
         }
 
-        const text =
+        let text =
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
           msg.message?.imageMessage?.caption ||
           msg.message?.documentMessage?.caption ||
           msg.message?.documentWithCaptionMessage?.message?.documentMessage?.caption ||
           "";
+
+        // Transcribe voice notes via Gemini so keyword/mention filters can match spoken words.
+        if (!text && msg.message?.audioMessage?.ptt) {
+          try {
+            const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
+            const silentLogger = { level: "silent", trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) } as any;
+            const audioBuffer = await Promise.race([
+              downloadMediaMessage(msg, "buffer", {}, { logger: silentLogger, reuploadRequest: sock.updateMediaMessage }) as Promise<Buffer>,
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error("voice download timed out")), 30_000)),
+            ]);
+            const { GoogleGenerativeAI } = await import("@google/generative-ai");
+            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+            const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            const result = await geminiModel.generateContent([
+              { inlineData: { mimeType: "audio/ogg; codecs=opus", data: audioBuffer.toString("base64") } },
+              { text: "Transcribe this voice message exactly. Return only the transcript, no commentary." },
+            ]);
+            const transcript = result.response.text().trim();
+            if (transcript) {
+              text = `[Voice note]: ${transcript}`;
+              waLog("info", email, "voice note transcribed", { chars: transcript.length });
+            }
+          } catch (err) {
+            waLog("warn", email, "voice note transcription failed", { error: (err as Error).message });
+          }
+        }
 
         // Defensive: if a fromMe message starts with our bot prefix, it's the bot's own
         // reply echoing back. sentByBot tracks msgIds but msgIds sometimes differ between
