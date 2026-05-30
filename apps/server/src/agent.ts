@@ -297,7 +297,10 @@ OPERATOR RULES:
   monday_create_item: {
     name: "monday_create_item",
     description: `Create a new item on a Monday.com board.
-IMPORTANT: You MUST call monday_get_board first to get the real column IDs — never guess them. Column IDs look like "date4", "numbers7", "status", etc.
+REQUIRED SEQUENCE — never skip:
+1. Call monday_list_boards to verify the board exists and get its real ID. NEVER guess or invent a boardId.
+2. Call monday_get_board to get real column IDs — never guess them. Column IDs look like "date4", "numbers7", "status", etc.
+3. Create the item. The response includes the real URL — always use it verbatim, never construct URLs manually.
 Column value formats by type:
 - date: {"date":"2025-05-24"}
 - numbers/hour: 4  (plain number)
@@ -308,8 +311,7 @@ Column value formats by type:
 - timeline: {"from":"2025-05-24","to":"2025-05-30"}
 - person: {"personsAndTeams":[{"id":12345678,"kind":"person"}]}  ← id MUST be the numeric user ID, never an email. Call monday_get_users first to resolve a name/email to an id.
 - board_relation (connected board): {"item_ids":[123456789]}  ← id MUST be the connected item's numeric ID. Call monday_resolve_connected_item first to resolve a name to an id.
-Only include columns that have actual values — omit the rest.
-ALWAYS include the item ID from the result in your reply (e.g. "Created item ID 123456789") so it can be referenced in follow-up requests.`,
+Only include columns that have actual values — omit the rest.`,
     parameters: {
       properties: {
         boardId:      { type: "string", description: "Board ID" },
@@ -663,7 +665,7 @@ Column can be specified by its ID or title (case-insensitive).`,
   },
 };
 
-function buildSystemPrompt(override?: string, addition?: string): string {
+function buildSystemPrompt(override?: string, addition?: string, hasMondayToken?: boolean): string {
   const base = override ?? agentConfig.systemPrompt;
   const enabledSkills = agentConfig.skills?.filter((s) => s.enabled) ?? [];
   const skillsBlock = enabledSkills.length
@@ -688,7 +690,16 @@ function buildSystemPrompt(override?: string, addition?: string): string {
     ? `\n\n---\n\nYou have access to the following capabilities:\n${caps.join("\n")}`
     : "";
 
-  return `${base}${skillsBlock}${additionBlock}${capsBlock}`;
+  const mondayBlock = hasMondayToken ? `\n\n---\n\n## Monday.com — grounding rules (MANDATORY)
+- NEVER guess, invent, or recall board IDs, group IDs, item IDs, or account URLs. All IDs must come from tool responses.
+- NEVER construct Monday URLs manually. Item/board URLs are returned directly by the tools — always use the \`url\` field verbatim.
+- NEVER report success for a mutation unless the tool returned a result with no error. If the tool returns "Tool error: …", tell the user exactly what failed — do not say the operation succeeded.
+- Before ANY mutation (create, update, delete, move): call monday_get_me first to confirm which account you're operating in. Tell the user: "I'll do this in your [account name] Monday account." If the user specifies a different account than the one returned by monday_get_me, stop and tell them you're connected to a different account — do not proceed.
+- Before creating or modifying items: call monday_list_boards to verify the target board exists and get its real ID.
+- Before reading or writing column values: call monday_get_board to get real column IDs.
+- If a requested board or item is not found in tool results, tell the user it does not exist — do not proceed.` : "";
+
+  return `${base}${skillsBlock}${additionBlock}${capsBlock}${mondayBlock}`;
 }
 
 function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string, apolloApiKey?: string): ToolDecl[] {
@@ -1019,7 +1030,7 @@ async function runChat(
   apolloApiKey?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
-  const builtPrompt = buildSystemPrompt(systemPrompt);
+  const builtPrompt = buildSystemPrompt(systemPrompt, undefined, !!mondayToken);
 
   if (mode === "search" && agentConfig.tools.googleSearch) {
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
@@ -1045,9 +1056,15 @@ async function runChat(
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
     const t0 = Date.now();
     console.log(JSON.stringify({ tag: "agent", msg: "tool call", name, argsKeys: Object.keys(args) }));
-    const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey);
-    console.log(JSON.stringify({ tag: "agent", msg: "tool done", name, ms: Date.now() - t0 }));
-    return result ?? "Tool not implemented";
+    try {
+      const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey);
+      console.log(JSON.stringify({ tag: "agent", msg: "tool done", name, ms: Date.now() - t0 }));
+      return result ?? "Tool not implemented";
+    } catch (err) {
+      const errMsg = (err as Error).message ?? String(err);
+      console.error(JSON.stringify({ tag: "agent", msg: "tool error", name, ms: Date.now() - t0, error: errMsg }));
+      return `Tool error: ${errMsg}`;
+    }
   };
 
   if (streamCallbacks) {

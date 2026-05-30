@@ -25,6 +25,14 @@ console.error = (...args: unknown[]) => {
   _origConsoleError(...args);
 };
 
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// Singleton Gemini client for voice note transcription. Reuse across calls to avoid
+// creating a new HTTP agent per voice note (which can cause "fetch failed" errors).
+const _voiceGenAI = process.env.GEMINI_API_KEY
+  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+  : null;
+
 // Eagerly start loading Baileys when this module is first imported.
 // The ESM dynamic import of @whiskeysockets/baileys (a large native module) blocks
 // the Node.js event loop for 3-5 minutes on a cold Cloud Run instance. Starting it
@@ -221,6 +229,7 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
 
   let credsSaveEnabled = true;
   let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let idsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const doSave = async () => {
     if (!credsSaveEnabled) return;
@@ -296,11 +305,9 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
     // first flush so the new session starts with up-to-date Signal keys, then freeze so
     // the old socket's in-flight saves can't race-corrupt the new session's creds.
     flushAndFreeze: async () => {
-      if (saveDebounceTimer) {
-        clearTimeout(saveDebounceTimer);
-        saveDebounceTimer = null;
-        if (credsSaveEnabled) await doSave().catch(() => {});
-      }
+      if (idsSaveTimer) { clearTimeout(idsSaveTimer); idsSaveTimer = null; }
+      if (saveDebounceTimer) { clearTimeout(saveDebounceTimer); saveDebounceTimer = null; }
+      if (credsSaveEnabled) await doSave().catch(() => {});
       credsSaveEnabled = false;
     },
     // Wipe all credentials from Firestore and prevent further saves — called when the noise
@@ -330,10 +337,17 @@ async function makeAuthState(agentId: string, email: string, oauthUrl: string, o
     },
     // Expose persisted IDs set so connectSession can seed the in-memory dedup Set
     persistedMsgIds,
-    // Add a message ID to the persisted set and debounce-save to Firestore
+    // Add a message ID to the persisted set. Uses a short 5s debounce separate from
+    // the 30s Signal-key debounce so processedIds reach Firestore quickly and survive
+    // a Cloud Run rolling deploy (SIGTERM arrives ~10s after new revision starts).
     addProcessedId: (id: string) => {
       persistedMsgIds.add(id);
-      persist();
+      if (!credsSaveEnabled) return;
+      if (idsSaveTimer) clearTimeout(idsSaveTimer);
+      idsSaveTimer = setTimeout(() => {
+        idsSaveTimer = null;
+        doSave().catch(() => {});
+      }, 5_000);
     },
   };
 }
@@ -991,33 +1005,45 @@ export async function connectSession(
         });
         if (isVoiceNote) {
           waLog("info", email, "voice-note: detected — starting transcription");
-          try {
-            const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
-            const silentLogger = { level: "silent", trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) } as any;
-            waLog("info", email, "voice-note: downloading audio buffer");
-            const audioBuffer = await Promise.race([
-              downloadMediaMessage(msg, "buffer", {}, { logger: silentLogger, reuploadRequest: sock.updateMediaMessage }) as Promise<Buffer>,
-              new Promise<never>((_, reject) => setTimeout(() => reject(new Error("voice download timed out")), 30_000)),
-            ]);
-            waLog("info", email, "voice-note: download complete", { bytes: (audioBuffer as Buffer).length });
-            const { GoogleGenerativeAI } = await import("@google/generative-ai");
-            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-            const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-            waLog("info", email, "voice-note: sending to Gemini for transcription");
-            const result = await geminiModel.generateContent([
-              { inlineData: { mimeType: "audio/ogg; codecs=opus", data: (audioBuffer as Buffer).toString("base64") } },
-              { text: "Transcribe this voice message exactly. Return only the transcript, no commentary." },
-            ]);
-            const transcript = result.response.text().trim();
-            waLog("info", email, "voice-note: Gemini response", { transcriptLength: transcript.length, transcriptPreview: transcript.slice(0, 100) });
-            if (transcript) {
-              text = `[Voice note]: ${transcript}`;
-              waLog("info", email, "voice-note: transcription success — text set", { chars: transcript.length, text });
-            } else {
-              waLog("warn", email, "voice-note: Gemini returned empty transcript — message will be skipped");
+          if (!_voiceGenAI) {
+            waLog("warn", email, "voice-note: GEMINI_API_KEY not set — skipping transcription");
+          } else {
+            try {
+              const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
+              const silentLogger = { level: "silent", trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) } as any;
+              waLog("info", email, "voice-note: downloading audio buffer");
+              const audioBuffer = await Promise.race([
+                downloadMediaMessage(msg, "buffer", {}, { logger: silentLogger, reuploadRequest: sock.updateMediaMessage }) as Promise<Buffer>,
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error("voice download timed out")), 30_000)),
+              ]);
+              waLog("info", email, "voice-note: download complete", { bytes: (audioBuffer as Buffer).length });
+              const geminiModel = _voiceGenAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+              waLog("info", email, "voice-note: sending to Gemini for transcription");
+              let result: Awaited<ReturnType<typeof geminiModel.generateContent>> | undefined;
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  result = await geminiModel.generateContent([
+                    { inlineData: { mimeType: "audio/ogg; codecs=opus", data: (audioBuffer as Buffer).toString("base64") } },
+                    { text: "Transcribe this voice message exactly. Return only the transcript, no commentary." },
+                  ]);
+                  break;
+                } catch (fetchErr) {
+                  waLog("warn", email, `voice-note: Gemini attempt ${attempt} failed`, { error: (fetchErr as Error).message });
+                  if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2_000));
+                  else throw fetchErr;
+                }
+              }
+              const transcript = result!.response.text().trim();
+              waLog("info", email, "voice-note: Gemini response", { transcriptLength: transcript.length, transcriptPreview: transcript.slice(0, 100) });
+              if (transcript) {
+                text = `[Voice note]: ${transcript}`;
+                waLog("info", email, "voice-note: transcription success — text set", { chars: transcript.length, text });
+              } else {
+                waLog("warn", email, "voice-note: Gemini returned empty transcript — message will be skipped");
+              }
+            } catch (err) {
+              waLog("warn", email, "voice-note: transcription failed", { error: (err as Error).message, stack: (err as Error).stack?.split("\n")[1] });
             }
-          } catch (err) {
-            waLog("warn", email, "voice-note: transcription failed", { error: (err as Error).message, stack: (err as Error).stack?.split("\n")[1] });
           }
         }
 
@@ -1335,3 +1361,21 @@ export async function initAllSessions(
   }
   console.warn(JSON.stringify({ tag: "whatsapp", msg: "initAllSessions gave up after 5 attempts" }));
 }
+
+// Call on SIGTERM — flushes processedMsgIds and pending key saves to Firestore before exit.
+// Cloud Run gives 10s between SIGTERM and SIGKILL; we cap at 8s to be safe.
+export async function flushAllSessions(): Promise<void> {
+  const flushes = [...authRegistry.entries()].map(async ([email, auth]) => {
+    try {
+      await auth.flushAndFreeze();
+      console.log(JSON.stringify({ tag: "whatsapp", msg: "flushed session on shutdown", email }));
+    } catch (err) {
+      console.warn(JSON.stringify({ tag: "whatsapp", msg: "flush failed on shutdown", email, error: (err as Error).message }));
+    }
+  });
+  await Promise.race([
+    Promise.allSettled(flushes),
+    new Promise<void>((r) => setTimeout(r, 8_000)),
+  ]);
+}
+

@@ -13,7 +13,7 @@ import { commitConfig, commitConfigToRepo, readConfigFromRepo } from "./configur
 import type { AgentConfig } from "./config";
 import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets, getAutomation, patchAutomationBody } from "./automations";
 import type { Automation, AutomationStep, RunHistoryEntry } from "./automations";
-import { connectSession, disconnectSession, getStatus, initAllSessions, sendMessage as waSendMessage, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
+import { connectSession, disconnectSession, getStatus, initAllSessions, sendMessage as waSendMessage, flushAllSessions, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
 import { parseVCards, importContacts, listContacts } from "./contacts";
 import type { Content } from "@google/generative-ai";
 import QRCode from "qrcode";
@@ -2236,6 +2236,15 @@ app.listen(PORT, () => {
   initAllSessions(agentId, oauthServiceUrl, oauthServiceKey, buildMentionHandler(agentId, oauthServiceUrl, oauthServiceKey),
     (email) => prewarmWASession(email, agentId, oauthServiceUrl, oauthServiceKey),
     (email) => prewarmWASession(email, agentId, oauthServiceUrl, oauthServiceKey));
+});
+
+// Flush processedMsgIds and pending Signal key saves to Firestore before Cloud Run kills us.
+// Cloud Run sends SIGTERM then waits up to 10s before SIGKILL — flushAllSessions caps at 8s.
+process.on("SIGTERM", async () => {
+  console.log(JSON.stringify({ tag: "process", msg: "SIGTERM received — flushing WhatsApp sessions" }));
+  await flushAllSessions();
+  console.log(JSON.stringify({ tag: "process", msg: "flush complete — exiting" }));
+  process.exit(0);
 });
 
 // Baileys fires unhandled rejections from internal retry machinery (e.g. sendRetryRequest

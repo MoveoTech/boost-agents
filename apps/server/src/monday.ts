@@ -81,7 +81,7 @@ export async function mondayCreateBoard(token: string, boardName: string, boardK
       }
     }`, { boardName, boardKind, workspaceId, description });
   const b = data.create_board;
-  return `Created board "${b.name}" (id: ${b.id})`;
+  return json({ id: b.id, name: b.name, boardKind: b.board_kind, workspace: b.workspace });
 }
 
 // ── Items ─────────────────────────────────────────────────────────────────────
@@ -196,7 +196,7 @@ export async function mondayCreateSubitem(token: string, parentItemId: string, i
       }
     }`, { parentItemId, itemName, columnValues: columnValues ? JSON.stringify(columnValues) : undefined });
   const item = data.create_subitem;
-  return `Created subitem "${item.name}" (id: ${item.id}) under parent item ${item.parent_item.id}`;
+  return json({ id: item.id, name: item.name, url: item.url, parentItemId: item.parent_item.id });
 }
 
 export async function mondayCreateItem(token: string, boardId: string, itemName: string, columnValues?: Record<string, unknown>, groupId?: string): Promise<string> {
@@ -205,7 +205,7 @@ export async function mondayCreateItem(token: string, boardId: string, itemName:
   // surfaces real errors instead of silently succeeding with empty columns.
   const data = await gql(token, `
     mutation($boardId: ID!, $itemName: String!, $groupId: String) {
-      create_item(board_id: $boardId, item_name: $itemName, group_id: $groupId) { id name }
+      create_item(board_id: $boardId, item_name: $itemName, group_id: $groupId) { id name url }
     }`, { boardId, itemName, groupId });
   const item = data.create_item;
   if (columnValues && Object.keys(columnValues).length > 0) {
@@ -214,7 +214,7 @@ export async function mondayCreateItem(token: string, boardId: string, itemName:
         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $columnValues) { id }
       }`, { boardId, itemId: item.id, columnValues: JSON.stringify(columnValues) });
   }
-  return `Created item "${item.name}" (id: ${item.id})`;
+  return json({ id: item.id, name: item.name, url: item.url });
 }
 
 export async function mondayUpdateItem(token: string, boardId: string, itemId: string, columnValues: Record<string, unknown>): Promise<string> {
@@ -473,7 +473,7 @@ export async function mondayGetMyItems(
 
 export async function mondayGetMe(token: string): Promise<string> {
   const data = await gql(token, `
-    { me { id name email title time_zone_identifier account { id name } } }`);
+    { me { id name email title time_zone_identifier account { id name slug } } }`);
   return json(data.me);
 }
 
