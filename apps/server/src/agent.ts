@@ -569,12 +569,12 @@ Column can be specified by its ID or title (case-insensitive).`,
     description: "Search for people (prospects, leads) using Apollo.io. Filter by job title, company, industry, location, seniority, and more. Returns name, title, company, email, LinkedIn URL, and location.",
     parameters: {
       properties: {
-        job_titles:                         { type: "array",  items: { type: "string" }, description: "Job titles to filter by (e.g. ['VP of Sales', 'Head of Marketing'])" },
+        person_titles:                      { type: "array",  items: { type: "string" }, description: "Job titles to filter by (e.g. ['VP of Sales', 'Head of Marketing'])" },
         person_locations:                   { type: "array",  items: { type: "string" }, description: "Person locations (e.g. ['United States', 'New York, NY'])" },
         organization_locations:             { type: "array",  items: { type: "string" }, description: "Company HQ locations (e.g. ['Israel', 'San Francisco, CA'])" },
         organization_num_employees_ranges:  { type: "array",  items: { type: "string" }, description: "Employee count ranges (e.g. ['1,10', '11,50', '51,200', '201,500', '501,1000', '1001,5000', '5001,10000', '10001,'])" },
         q_organization_keyword_tags:        { type: "array",  items: { type: "string" }, description: "Industry/keyword tags for the company (e.g. ['saas', 'b2b', 'fintech'])" },
-        seniority:                          { type: "array",  items: { type: "string" }, description: "Seniority levels (e.g. ['vp', 'director', 'manager', 'c_suite', 'founder'])" },
+        person_seniorities:                 { type: "array",  items: { type: "string" }, description: "Seniority levels (e.g. ['vp', 'director', 'manager', 'c_suite', 'founder'])" },
         per_page:                           { type: "number", description: "Results per page (default 10, max 25)" },
         page:                               { type: "number", description: "Page number (default 1)" },
       },
@@ -687,6 +687,46 @@ Column can be specified by its ID or title (case-insensitive).`,
       required: [],
     },
   },
+  apollo_update_contact: {
+    name: "apollo_update_contact",
+    description: "Update an existing contact in your Apollo.io CRM. Use to change stage, title, phone, labels, or any other field. Requires the contact ID (from apollo_contacts_search or apollo_create_contact).",
+    parameters: {
+      properties: {
+        contact_id:        { type: "string", description: "Apollo contact ID to update" },
+        first_name:        { type: "string", description: "First name" },
+        last_name:         { type: "string", description: "Last name" },
+        title:             { type: "string", description: "Job title" },
+        organization_name: { type: "string", description: "Company name" },
+        email:             { type: "string", description: "Email address" },
+        direct_phone:      { type: "string", description: "Direct phone number" },
+        mobile_phone:      { type: "string", description: "Mobile phone number" },
+        contact_stage_id:  { type: "string", description: "CRM stage ID to move contact to" },
+        label_names:       { type: "array", items: { type: "string" }, description: "Labels/tags to assign (e.g. ['hot lead', 'follow up'])" },
+        present_raw_address: { type: "string", description: "Full address" },
+      },
+      required: ["contact_id"],
+    },
+  },
+  apollo_org_job_postings: {
+    name: "apollo_org_job_postings",
+    description: "Get active job postings for a company on Apollo.io. Strong prospecting signal — companies hiring in relevant roles are growing and more likely to buy. Requires the Apollo organization ID (from apollo_org_search or apollo_org_enrich).",
+    parameters: {
+      properties: {
+        organization_id: { type: "string", description: "Apollo organization ID (from apollo_org_search or apollo_org_enrich)" },
+        page:            { type: "number", description: "Page number (default 1)" },
+        per_page:        { type: "number", description: "Results per page (default 10)" },
+      },
+      required: ["organization_id"],
+    },
+  },
+  apollo_get_email_accounts: {
+    name: "apollo_get_email_accounts",
+    description: "List the email accounts (inboxes) connected to your Apollo.io account. Use to find the email_account_id needed when adding a contact to a sequence with a specific sender inbox.",
+    parameters: {
+      properties: {},
+      required: [],
+    },
+  },
 };
 
 function buildSystemPrompt(override?: string, addition?: string, hasMondayToken?: boolean): string {
@@ -755,9 +795,9 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
   if (apolloApiKey) tools.push(
     ALL_TOOLS.apollo_people_search, ALL_TOOLS.apollo_org_search,
     ALL_TOOLS.apollo_person_enrich, ALL_TOOLS.apollo_org_enrich,
-    ALL_TOOLS.apollo_contacts_search, ALL_TOOLS.apollo_create_contact,
-    ALL_TOOLS.apollo_get_sequences, ALL_TOOLS.apollo_add_to_sequence,
-    ALL_TOOLS.apollo_get_news,
+    ALL_TOOLS.apollo_contacts_search, ALL_TOOLS.apollo_create_contact, ALL_TOOLS.apollo_update_contact,
+    ALL_TOOLS.apollo_get_sequences, ALL_TOOLS.apollo_add_to_sequence, ALL_TOOLS.apollo_get_email_accounts,
+    ALL_TOOLS.apollo_get_news, ALL_TOOLS.apollo_org_job_postings,
   );
   return tools;
 }
@@ -930,8 +970,11 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
     case "apollo_org_enrich":
     case "apollo_contacts_search":
     case "apollo_create_contact":
+    case "apollo_update_contact":
     case "apollo_get_sequences":
     case "apollo_add_to_sequence":
+    case "apollo_org_job_postings":
+    case "apollo_get_email_accounts":
     case "apollo_get_news": {
       if (!apolloApiKey) return "Apollo.io is not connected. Ask the user to add their Apollo API key in the Connectors panel.";
       const ah = { "x-api-key": apolloApiKey, "Content-Type": "application/json", "Cache-Control": "no-cache" };
@@ -939,7 +982,7 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       try {
         if (name === "apollo_people_search") {
           const { per_page = 10, page = 1, ...rest } = args as Record<string, unknown>;
-          const r = await fetch(`${AB}/mixed_people/search`, { method: "POST", headers: ah, body: JSON.stringify({ page, per_page, ...rest }) });
+          const r = await fetch(`${AB}/mixed_people/api_search`, { method: "POST", headers: ah, body: JSON.stringify({ page, per_page, ...rest }) });
           const data = await r.json() as { people?: Record<string, unknown>[]; error?: string };
           if (data.error) return `Apollo error: ${data.error}`;
           const people = (data.people ?? []).slice(0, 25).map((p: Record<string, unknown>) => ({
@@ -1009,14 +1052,41 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
           if (data.error) return `Apollo error: ${data.error}`;
           return `Contact added to sequence. ${data.contacts?.length ?? 0} contact(s) enrolled.`;
         }
-        // apollo_get_news
-        const { per_page = 10, ...rest } = args as Record<string, unknown>;
-        const params = new URLSearchParams({ per_page: String(per_page), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined).map(([k, v]) => [k, Array.isArray(v) ? (v as string[]).join(",") : String(v)])) });
-        const r = await fetch(`${AB}/news?${params}`, { headers: ah });
-        const data = await r.json() as { news?: Record<string, unknown>[]; error?: string };
+        if (name === "apollo_get_news") {
+          const { per_page = 10, ...rest } = args as Record<string, unknown>;
+          const params = new URLSearchParams({ per_page: String(per_page), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined).map(([k, v]) => [k, Array.isArray(v) ? (v as string[]).join(",") : String(v)])) });
+          const r = await fetch(`${AB}/news?${params}`, { headers: ah });
+          const data = await r.json() as { news?: Record<string, unknown>[]; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          const articles = (data.news ?? []).slice(0, 10).map((n: Record<string, unknown>) => ({ title: n.title, date: n.published_at, source: n.source, url: n.url, summary: n.summary }));
+          return `Found ${articles.length} news articles:\n${JSON.stringify(articles, null, 2)}`;
+        }
+        if (name === "apollo_update_contact") {
+          const { contact_id, ...fields } = args as Record<string, unknown>;
+          const r = await fetch(`${AB}/contacts/${contact_id}`, { method: "PATCH", headers: ah, body: JSON.stringify(fields) });
+          const data = await r.json() as { contact?: Record<string, unknown>; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          const c = data.contact ?? {};
+          return `Contact updated. ID: ${c.id}, Name: ${c.name}, Stage: ${c.contact_stage_id ?? "unchanged"}`;
+        }
+        if (name === "apollo_org_job_postings") {
+          const { organization_id, page = 1, per_page = 10 } = args as { organization_id: string; page?: number; per_page?: number };
+          const params = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+          const r = await fetch(`${AB}/organizations/${organization_id}/job_postings?${params}`, { headers: ah });
+          const data = await r.json() as { job_postings?: Record<string, unknown>[]; error?: string };
+          if (data.error) return `Apollo error: ${data.error}`;
+          const jobs = (data.job_postings ?? []).slice(0, 20).map((j: Record<string, unknown>) => ({
+            title: j.title, department: j.department, location: j.location,
+            posted_at: j.posted_at, url: j.url,
+          }));
+          return `Found ${jobs.length} job postings:\n${JSON.stringify(jobs, null, 2)}`;
+        }
+        // apollo_get_email_accounts
+        const r = await fetch(`${AB}/email_accounts`, { headers: ah });
+        const data = await r.json() as { email_accounts?: Record<string, unknown>[]; error?: string };
         if (data.error) return `Apollo error: ${data.error}`;
-        const articles = (data.news ?? []).slice(0, 10).map((n: Record<string, unknown>) => ({ title: n.title, date: n.published_at, source: n.source, url: n.url, summary: n.summary }));
-        return `Found ${articles.length} news articles:\n${JSON.stringify(articles, null, 2)}`;
+        const accounts = (data.email_accounts ?? []).map((a: Record<string, unknown>) => ({ id: a.id, email: a.email, name: a.name, active: a.active }));
+        return `Found ${accounts.length} email accounts:\n${JSON.stringify(accounts, null, 2)}`;
       } catch (err) {
         return `Apollo request failed: ${(err as Error).message}`;
       }
