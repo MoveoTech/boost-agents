@@ -1881,11 +1881,11 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           return null;
         }
       } else if (config.replyTrigger === "keyword") {
-        const kw = (config.keyword ?? "").trim();
-        const kwLower = kw.toLowerCase();
-        const found = kw && (text.toLowerCase().includes(kwLower) || text.includes(kw));
+        const keywords = (config.keyword ?? "").split(",").map((k) => k.trim()).filter(Boolean);
+        const textLower = text.toLowerCase();
+        const found = keywords.length > 0 && keywords.some((kw) => textLower.includes(kw.toLowerCase()));
         if (!found) {
-          console.log(JSON.stringify({ ...ctx, msg: "skipping — keyword not found", keyword: kw }));
+          console.log(JSON.stringify({ ...ctx, msg: "skipping — no keyword matched", keywords }));
           return null;
         }
       }
@@ -1908,11 +1908,21 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
       console.log(JSON.stringify({ ...ctx, msg: "trigger matched — running agent", textLength: resolvedText.length, text: resolvedText, msSinceHandlerStart: agentStartMs - tHandler, hasAttachment: !!attachment, attachmentMime: attachment?.mimeType }));
 
       const tMonday0 = Date.now();
-      const mondayToken = await Promise.race([
-        getUserAccessToken("monday", email).catch(() => null),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+      const [mondayToken, apolloApiKey] = await Promise.all([
+        Promise.race([
+          getUserAccessToken("monday", email).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+        ]),
+        (async (): Promise<string | undefined> => {
+          if (!process.env.OAUTH_SERVICE_URL || !process.env.OAUTH_SERVICE_KEY) return undefined;
+          try {
+            const s = await fetch(`${process.env.OAUTH_SERVICE_URL}/api/user-settings/${agentId}/${encodeURIComponent(email)}`, { headers: { "x-api-key": process.env.OAUTH_SERVICE_KEY } });
+            if (s.ok) { const d = await s.json() as { apolloApiKey?: string }; return d.apolloApiKey; }
+          } catch { /* non-fatal */ }
+          return undefined;
+        })(),
       ]);
-      console.log(JSON.stringify({ ...ctx, msg: "timing: mondayToken", ms: Date.now() - tMonday0, cached: mondayToken !== null }));
+      console.log(JSON.stringify({ ...ctx, msg: "timing: mondayToken+apolloKey", ms: Date.now() - tMonday0, cachedMonday: mondayToken !== null, hasApollo: !!apolloApiKey }));
 
       const location = isGroup ? `WhatsApp group "${groupName ?? "a group"}"` : "WhatsApp DM";
 
@@ -1977,14 +1987,15 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
           history,
           "tools",
           systemPrompt,
-          email,   // gmailUser
-          email,   // calendarUser
+          email,             // gmailUser
+          email,             // calendarUser
           { ...(config.model ?? { provider: "gemini" as const, modelId: "gemini-2.5-flash" }), noThinking: true },
           mondayToken ?? undefined,
-          email,   // tasksUser
-          undefined, // memoryUser
-          attachment, // image / PDF attachment from WhatsApp
-          undefined, // whatsappUser
+          email,             // tasksUser
+          undefined,         // memoryUser
+          attachment,        // image / PDF attachment from WhatsApp
+          undefined,         // whatsappUser
+          apolloApiKey,      // Apollo.io API key
         ),
         agentTimeout,
       ]);

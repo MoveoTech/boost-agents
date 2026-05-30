@@ -479,7 +479,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                         onChange={(e) => setWaConfig((c) => ({ ...c, replyTrigger: e.target.value as WhatsAppConfig["replyTrigger"] }))}
                       >
                         <option value="mention">@mentioned in a group</option>
-                        <option value="keyword">Message contains keyword</option>
+                        <option value="keyword">Message contains keyword(s)</option>
                         <option value="always">Any message (all chats)</option>
                       </select>
                     </div>
@@ -487,7 +487,7 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
                     {waConfig.replyTrigger === "keyword" && (
                       <input
                         className="configure-input"
-                        placeholder="Keyword (e.g. urgent, boost, help)"
+                        placeholder="Keywords, comma-separated (e.g. boost, hey bot, help)"
                         value={waConfig.keyword ?? ""}
                         onChange={(e) => setWaConfig((c) => ({ ...c, keyword: e.target.value }))}
                       />
