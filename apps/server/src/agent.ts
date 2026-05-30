@@ -11,6 +11,7 @@ import {
   mondayCreateGroup, mondayDeleteGroup, mondayCreateColumn,
   mondayGetUpdates, mondayCreateUpdate, mondayDeleteUpdate,
   mondayGetMe, mondayGetUsers, mondayResolveConnectedItem,
+  mondaySearchItems, mondayGetMyItems,
 } from "./monday";
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability, calendarRsvp } from "./calendar";
@@ -200,10 +201,35 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
   },
   monday_list_boards: {
     name: "monday_list_boards",
-    description: "List all Monday.com boards the user has access to, including their IDs, groups, and item count. Always call this first to discover board IDs before other operations.",
+    description: "List all Monday.com boards the user has access to. Returns board IDs, names, workspaces, item counts, and all groups (sections) within each board. Groups represent sprints, stages, or categories. Call this first to discover board IDs and group IDs — e.g. to find the sprint board and its 'Current Sprint' group.",
     parameters: {
       properties: { limit: { type: "number", description: "Max boards to return (default 50)" } },
       required: [],
+    },
+  },
+  monday_search_items: {
+    name: "monday_search_items",
+    description: "Search for items by name across one or more Monday.com boards. Use when the user asks to find a task or item without specifying a board. Call monday_list_boards first to get board IDs.",
+    parameters: {
+      properties: {
+        boardIds:   { type: "array", items: { type: "string" }, description: "Board IDs to search across" },
+        searchTerm: { type: "string", description: "Text to search in item names" },
+        limit:      { type: "number", description: "Max results to return (default 25)" },
+      },
+      required: ["boardIds", "searchTerm"],
+    },
+  },
+  monday_get_my_items: {
+    name: "monday_get_my_items",
+    description: `Get all items assigned to the current user across one or more boards. Use for requests like "what's assigned to me", "my tasks", "what's on my plate". Sprint workflow: call monday_list_boards first to find the sprint board ID, then call this to get assigned items in that board.
+assigneeColumnId defaults to "people" (standard person column). If the board uses a different person column, call monday_get_board first to find the correct column ID.`,
+    parameters: {
+      properties: {
+        boardIds:          { type: "array", items: { type: "string" }, description: "Board IDs to check" },
+        assigneeColumnId:  { type: "string", description: "Person column ID (default: 'people')" },
+        limit:             { type: "number", description: "Max items per board (default 50)" },
+      },
+      required: ["boardIds"],
     },
   },
   monday_get_board: {
@@ -685,6 +711,7 @@ function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToke
     ALL_TOOLS.monday_get_updates, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_delete_update,
     ALL_TOOLS.monday_get_me, ALL_TOOLS.monday_get_users,
     ALL_TOOLS.monday_resolve_connected_item,
+    ALL_TOOLS.monday_search_items, ALL_TOOLS.monday_get_my_items,
     ALL_TOOLS.monday_graphql,
   );
   if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
@@ -770,7 +797,9 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
     case "monday_delete_update":
     case "monday_get_me":
     case "monday_get_users":
-    case "monday_resolve_connected_item": {
+    case "monday_resolve_connected_item":
+    case "monday_search_items":
+    case "monday_get_my_items": {
       const token = mondayToken;
       if (!token) return "Monday is not connected. Ask the user to connect their Monday account.";
       if (name === "monday_graphql")          return mondayGraphQL(token, args.query as string, args.variables as Record<string, unknown> | undefined);
@@ -803,6 +832,8 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       if (name === "monday_delete_update")    return mondayDeleteUpdate(token, args.updateId as string);
       if (name === "monday_get_me")                   return mondayGetMe(token);
       if (name === "monday_resolve_connected_item")   return mondayResolveConnectedItem(token, args.boardId as string, args.columnId as string, args.searchName as string);
+      if (name === "monday_search_items")             return mondaySearchItems(token, args.boardIds as string[], args.searchTerm as string, args.limit as number | undefined);
+      if (name === "monday_get_my_items")             return mondayGetMyItems(token, args.boardIds as string[], args.assigneeColumnId as string | undefined, args.limit as number | undefined);
       return mondayGetUsers(token, args.limit as number | undefined, args.name as string | undefined, args.emails as string[] | undefined);
     }
 

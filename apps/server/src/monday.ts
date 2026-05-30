@@ -37,7 +37,7 @@ function json(v: any): string { return JSON.stringify(v, null, 2); }
 const ITEM_FIELDS = `
   id name url state created_at updated_at
   group { id title }
-  column_values { id text value type }
+  column_values { id text value column { type } }
 `;
 
 // ── Generic ───────────────────────────────────────────────────────────────────
@@ -55,6 +55,7 @@ export async function mondayListBoards(token: string, limit = 50): Promise<strin
         id name description state
         items_count updated_at
         workspace { id name }
+        groups { id title }
       }
     }`, { limit });
   return json(data.boards);
@@ -399,6 +400,73 @@ export async function mondayResolveConnectedItem(
     otherMatches: verified.slice(1, 5).map(m => ({ id: m.id, name: m.name, boardId: m.boardId, boardName: m.boardName })),
     columnValue: { item_ids: [Number(top.id)] },
   });
+}
+
+// ── Cross-board search & My Items ─────────────────────────────────────────────
+
+export async function mondaySearchItems(
+  token: string,
+  boardIds: string[],
+  searchTerm: string,
+  limit = 25,
+): Promise<string> {
+  const results: any[] = [];
+  const queryParams = {
+    rules: [{ column_id: "name", compare_value: [searchTerm], operator: "contains_text" }],
+  };
+  for (const boardId of boardIds) {
+    const data = await gql(token, `
+      query($boardId: ID!, $limit: Int!, $queryParams: ItemsQuery) {
+        boards(ids: [$boardId]) {
+          id name
+          items_page(limit: $limit, query_params: $queryParams) {
+            items { ${ITEM_FIELDS} }
+          }
+        }
+      }`, { boardId, limit, queryParams });
+    const board = data.boards?.[0];
+    if (!board) continue;
+    for (const item of (board.items_page?.items ?? [])) {
+      results.push({ ...item, boardId: board.id, boardName: board.name });
+    }
+    if (results.length >= limit) break;
+  }
+  return json(results.slice(0, limit));
+}
+
+export async function mondayGetMyItems(
+  token: string,
+  boardIds: string[],
+  assigneeColumnId = "people",
+  limit = 50,
+): Promise<string> {
+  const meData = await gql(token, `{ me { id name } }`);
+  const myId = meData.me?.id;
+  if (!myId) return "Could not retrieve current user ID.";
+
+  const queryParams = {
+    rules: [{ column_id: assigneeColumnId, compare_value: [`person-${myId}`], operator: "any_of" }],
+  };
+  const results: any[] = [];
+  for (const boardId of boardIds) {
+    try {
+      const data = await gql(token, `
+        query($boardId: ID!, $limit: Int!, $queryParams: ItemsQuery) {
+          boards(ids: [$boardId]) {
+            id name
+            items_page(limit: $limit, query_params: $queryParams) {
+              items { ${ITEM_FIELDS} }
+            }
+          }
+        }`, { boardId, limit, queryParams });
+      const board = data.boards?.[0];
+      if (!board) continue;
+      for (const item of (board.items_page?.items ?? [])) {
+        results.push({ ...item, boardId: board.id, boardName: board.name });
+      }
+    } catch { /* board may lack the person column — skip */ }
+  }
+  return json({ assignedToId: myId, assignedToName: meData.me?.name, items: results });
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────

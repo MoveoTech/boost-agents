@@ -980,28 +980,44 @@ export async function connectSession(
           "";
 
         // Transcribe voice notes via Gemini so keyword/mention filters can match spoken words.
-        if (!text && msg.message?.audioMessage?.ptt) {
+        const audioMsg = msg.message?.audioMessage;
+        const isVoiceNote = !text && !!audioMsg?.ptt;
+        waLog("info", email, "voice-note-check", {
+          hasText: !!text,
+          hasAudioMessage: !!audioMsg,
+          ptt: audioMsg?.ptt ?? null,
+          isVoiceNote,
+          msgTypes: Object.keys(msg.message ?? {}).join(","),
+        });
+        if (isVoiceNote) {
+          waLog("info", email, "voice-note: detected — starting transcription");
           try {
             const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
             const silentLogger = { level: "silent", trace: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, fatal: ()=>{}, child: (): any => ({}) } as any;
+            waLog("info", email, "voice-note: downloading audio buffer");
             const audioBuffer = await Promise.race([
               downloadMediaMessage(msg, "buffer", {}, { logger: silentLogger, reuploadRequest: sock.updateMediaMessage }) as Promise<Buffer>,
               new Promise<never>((_, reject) => setTimeout(() => reject(new Error("voice download timed out")), 30_000)),
             ]);
+            waLog("info", email, "voice-note: download complete", { bytes: (audioBuffer as Buffer).length });
             const { GoogleGenerativeAI } = await import("@google/generative-ai");
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
             const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            waLog("info", email, "voice-note: sending to Gemini for transcription");
             const result = await geminiModel.generateContent([
-              { inlineData: { mimeType: "audio/ogg; codecs=opus", data: audioBuffer.toString("base64") } },
+              { inlineData: { mimeType: "audio/ogg; codecs=opus", data: (audioBuffer as Buffer).toString("base64") } },
               { text: "Transcribe this voice message exactly. Return only the transcript, no commentary." },
             ]);
             const transcript = result.response.text().trim();
+            waLog("info", email, "voice-note: Gemini response", { transcriptLength: transcript.length, transcriptPreview: transcript.slice(0, 100) });
             if (transcript) {
               text = `[Voice note]: ${transcript}`;
-              waLog("info", email, "voice note transcribed", { chars: transcript.length });
+              waLog("info", email, "voice-note: transcription success — text set", { chars: transcript.length, text });
+            } else {
+              waLog("warn", email, "voice-note: Gemini returned empty transcript — message will be skipped");
             }
           } catch (err) {
-            waLog("warn", email, "voice note transcription failed", { error: (err as Error).message });
+            waLog("warn", email, "voice-note: transcription failed", { error: (err as Error).message, stack: (err as Error).stack?.split("\n")[1] });
           }
         }
 
