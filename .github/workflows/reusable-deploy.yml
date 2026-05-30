@@ -60,7 +60,7 @@ jobs:
             echo "Applied config from ${{ github.repository }}"
           fi
           chmod -R 777 _child 2>/dev/null || true
-          rm -rf _child
+          rm -rf _child 2>/dev/null || true
 
       # 1. AUTH AS MASTER
       - id: 'auth_master'
