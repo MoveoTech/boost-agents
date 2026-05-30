@@ -59,7 +59,8 @@ jobs:
             cp _child/apps/server/src/config.ts apps/server/src/config.ts
             echo "Applied config from ${{ github.repository }}"
           fi
-          chmod -R u+w _child && rm -rf _child
+          chmod -R 777 _child 2>/dev/null || true
+          rm -rf _child
 
       # 1. AUTH AS MASTER
       - id: 'auth_master'
