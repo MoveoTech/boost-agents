@@ -130,7 +130,7 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
     const parts: Part[] = await Promise.all(calls.map(async (call) => {
       const output = await execute(call.name, call.args as Record<string, unknown>);
       if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
-      toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
+      toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 3000) });
       return { functionResponse: { name: call.name, response: { result: output } } } as Part;
     }));
     const note = guidanceNote(round, consecutiveErrors);
@@ -204,13 +204,15 @@ async function chatClaude(modelId: string, systemPrompt: string, history: Conten
         return { reply: text, toolUses };
       }
       round++;
-      const results: Anthropic.ToolResultBlockParam[] = [];
-      for (const block of useBlocks) {
-        const output = await execute(block.name, block.input as Record<string, unknown>);
-        if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
-        toolUses.push({ name: block.name, input: JSON.stringify(block.input), output: output.slice(0, 500) });
-        results.push({ type: "tool_result", tool_use_id: block.id, content: output });
-      }
+      const outputs = await Promise.all(useBlocks.map((block) => execute(block.name, block.input as Record<string, unknown>)));
+      let anyError = false;
+      const results: Anthropic.ToolResultBlockParam[] = useBlocks.map((block, i) => {
+        const output = outputs[i];
+        if (isToolError(output)) anyError = true;
+        toolUses.push({ name: block.name, input: JSON.stringify(block.input), output: output.slice(0, 3000) });
+        return { type: "tool_result" as const, tool_use_id: block.id, content: output };
+      });
+      if (anyError) consecutiveErrors++; else consecutiveErrors = 0;
       msgs.push({ role: "assistant", content: response.content });
       const note = guidanceNote(round, consecutiveErrors);
       if (note) { consecutiveErrors = 0; }
@@ -274,7 +276,7 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
         const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
         const output = await execute(call.function.name, args);
         if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
-        toolUses.push({ name: call.function.name, input: call.function.arguments, output: output.slice(0, 500) });
+        toolUses.push({ name: call.function.name, input: call.function.arguments, output: output.slice(0, 3000) });
         msgs.push({ role: "tool", tool_call_id: call.id, content: output });
       }
       const note = guidanceNote(round, consecutiveErrors);
@@ -330,7 +332,7 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
       const output = await execute(call.name, call.args as Record<string, unknown>);
       cb.onToolComplete(call.name, output);
       if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
-      toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 500) });
+      toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 3000) });
       return { functionResponse: { name: call.name, response: { result: output } } } as Part;
     }));
     const note = guidanceNote(round, consecutiveErrors);
@@ -401,7 +403,7 @@ async function chatClaudeStream(modelId: string, systemPrompt: string, history: 
         const output = await execute(block.name, block.input as Record<string, unknown>);
         cb.onToolComplete(block.name, output);
         if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
-        toolUses.push({ name: block.name, input: JSON.stringify(block.input), output: output.slice(0, 500) });
+        toolUses.push({ name: block.name, input: JSON.stringify(block.input), output: output.slice(0, 3000) });
         results.push({ type: "tool_result", tool_use_id: block.id, content: output });
       }
       msgs.push({ role: "assistant", content: response.content });
@@ -461,7 +463,7 @@ async function chatOpenAIStream(modelId: string, systemPrompt: string, history: 
         const output = await execute(call.function.name, args);
         cb.onToolComplete(call.function.name, output);
         if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
-        toolUses.push({ name: call.function.name, input: call.function.arguments, output: output.slice(0, 500) });
+        toolUses.push({ name: call.function.name, input: call.function.arguments, output: output.slice(0, 3000) });
         msgs.push({ role: "tool", tool_call_id: call.id, content: output });
       }
       const note = guidanceNote(round, consecutiveErrors);
