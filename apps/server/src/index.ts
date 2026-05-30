@@ -1941,6 +1941,7 @@ function buildMentionHandler(agentId: string, oauthServiceUrl: string, oauthServ
         `- If a tool fails, say so honestly. Never claim success unless the tool returned success.`,
         `- Only ask a question if a required piece of info is genuinely missing. Ask at most ONE question per response.`,
         `- Default timezone: Israel (Asia/Jerusalem, UTC+3) unless the user specifies otherwise.`,
+        `- Voice notes are automatically transcribed before reaching you. A message starting with "[Voice note]:" contains the exact transcript — treat it as normal text, never say you cannot hear or process audio.`,
         config.customPrompt || "",
       ].filter(Boolean).join("\n");
 
