@@ -729,7 +729,7 @@ Column can be specified by its ID or title (case-insensitive).`,
   },
 };
 
-function buildSystemPrompt(override?: string, addition?: string, hasMondayToken?: boolean): string {
+function buildSystemPrompt(override?: string, addition?: string, hasMondayToken?: boolean, hasCalendar?: boolean): string {
   const base = override ?? agentConfig.systemPrompt;
   const enabledSkills = agentConfig.skills?.filter((s) => s.enabled) ?? [];
   const skillsBlock = enabledSkills.length
@@ -748,11 +748,19 @@ function buildSystemPrompt(override?: string, addition?: string, hasMondayToken?
     caps.push("- **Custom API calls**: Use http_request to call any REST API with GET, POST, PUT, PATCH, or DELETE and an optional JSON body.");
   }
   if (agentConfig.tools.memory ?? true) {
-    caps.push("- **Memory**: Use memory_save to remember important facts about the user between conversations. Use memory_recall at the start of conversations to retrieve what you know. Use memory_delete to forget outdated info.");
+    caps.push("- **Memory**: Use memory_save to remember important facts about the user (phone, preferences, context) for future conversations. Use memory_delete to remove outdated info. Memories are automatically loaded into every conversation — no need to call memory_recall manually.");
   }
   const capsBlock = caps.length
     ? `\n\n---\n\nYou have access to the following capabilities:\n${caps.join("\n")}`
     : "";
+
+  const now = new Date();
+  const dateBlock = `\n\n---\n\nCurrent date/time: ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}`;
+
+  const calendarBlock = hasCalendar ? `\n\n---\n\n## Google Calendar — grounding rules (MANDATORY)
+- NEVER say you created, updated, or deleted a calendar event unless the tool response contains an event ID. If the tool returns an error, tell the user exactly what failed — do not say the operation succeeded.
+- When creating an event the user will automatically be added as an attendee — you do not need to add their own email to the attendees list.
+- After any mutation (create/update/delete), confirm by quoting the event title and ID from the tool response.` : "";
 
   const mondayBlock = hasMondayToken ? `\n\n---\n\n## Monday.com — grounding rules (MANDATORY)
 - NEVER guess, invent, or recall board IDs, group IDs, item IDs, or account URLs. All IDs must come from tool responses.
@@ -763,7 +771,7 @@ function buildSystemPrompt(override?: string, addition?: string, hasMondayToken?
 - Before reading or writing column values: call monday_get_board to get real column IDs.
 - If a requested board or item is not found in tool results, tell the user it does not exist — do not proceed.` : "";
 
-  return `${base}${skillsBlock}${additionBlock}${capsBlock}${mondayBlock}`;
+  return `${base}${skillsBlock}${additionBlock}${capsBlock}${dateBlock}${calendarBlock}${mondayBlock}`;
 }
 
 function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string, apolloApiKey?: string): ToolDecl[] {
@@ -837,7 +845,11 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       const token = await getUserAccessToken("calendar", calendarUser);
       if (!token) return "Could not retrieve Calendar access token. The user may need to reconnect.";
       if (name === "calendar_list_events")        return calendarListEvents(token, args.maxResults as number | undefined);
-      if (name === "calendar_create_event")       return calendarCreateEvent(token, args.title as string, args.startDateTime as string, args.endDateTime as string, args.description as string | undefined, args.location as string | undefined, args.attendees as string[] | undefined);
+      if (name === "calendar_create_event") {
+        const extraAttendees = (args.attendees as string[] | undefined) ?? [];
+        const allAttendees = [calendarUser, ...extraAttendees.filter((e) => e !== calendarUser)];
+        return calendarCreateEvent(token, args.title as string, args.startDateTime as string, args.endDateTime as string, args.description as string | undefined, args.location as string | undefined, allAttendees);
+      }
       if (name === "calendar_check_availability") return calendarCheckAvailability(token, args.emails as string[], args.timeMin as string, args.timeMax as string);
       if (name === "calendar_rsvp")               return calendarRsvp(token, args.eventId as string, args.responseStatus as "accepted" | "declined" | "tentative");
       if (name === "calendar_update_event")       return calendarUpdateEvent(token, args.eventId as string, { title: args.title as string | undefined, startDateTime: args.startDateTime as string | undefined, endDateTime: args.endDateTime as string | undefined, description: args.description as string | undefined, location: args.location as string | undefined, attendees: args.attendees as string[] | undefined });
@@ -1128,7 +1140,16 @@ async function runChat(
   apolloApiKey?: string,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
-  const builtPrompt = buildSystemPrompt(systemPrompt, undefined, !!mondayToken);
+  let memoriesBlock = "";
+  if (memoryUser) {
+    try {
+      const recalled = await memoryRecall(memoryUser);
+      if (recalled && !recalled.startsWith("No memor")) {
+        memoriesBlock = `\n\n---\n\n## What I know about this user\n${recalled}`;
+      }
+    } catch { /* non-fatal */ }
+  }
+  const builtPrompt = buildSystemPrompt(systemPrompt, undefined, !!mondayToken, !!calendarUser) + memoriesBlock;
 
   if (mode === "search" && agentConfig.tools.googleSearch) {
     const { GoogleGenerativeAI } = await import("@google/generative-ai");

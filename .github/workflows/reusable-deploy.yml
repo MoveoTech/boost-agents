@@ -146,7 +146,7 @@ jobs:
               AGENT_OAUTH_KEY="${{ secrets.OAUTH_SERVICE_KEY }}"
             else
               echo -n "$AGENT_OAUTH_KEY" | gcloud secrets create oauth-agent-key \
-                --data-file=- --replication-policy=automatic --project="$PROJECT_ID"
+                --data-file=- --replication-policy=automatic --project="$PROJECT_ID" 2>/dev/null || true
               echo "Per-agent OAuth key provisioned"
             fi
           fi
