@@ -18,14 +18,18 @@ export async function calendarListEvents(accessToken: string, maxResults = 50, t
   const data = await calendarFetch(
     accessToken,
     `/calendars/primary/events?timeMin=${encodeURIComponent(rangeStart)}&maxResults=${maxResults}&singleEvents=true&orderBy=startTime${timeMaxParam}`
-  ) as { items?: { id: string; summary?: string; start?: { dateTime?: string; date?: string }; end?: { dateTime?: string; date?: string }; location?: string }[] };
+  ) as { items?: { id: string; summary?: string; start?: { dateTime?: string; date?: string }; end?: { dateTime?: string; date?: string }; location?: string; description?: string; attachments?: { title?: string; fileUrl?: string }[] }[] };
 
   if (!data.items?.length) return "No upcoming events found.";
 
   const events = data.items.map((e) => {
     const start = e.start?.dateTime ?? e.start?.date ?? "Unknown";
     const end = e.end?.dateTime ?? e.end?.date ?? "Unknown";
-    return `ID: ${e.id}\nTitle: ${e.summary ?? "No title"}\nStart: ${start}\nEnd: ${end}\nLocation: ${e.location ?? "N/A"}`;
+    const desc = e.description ? `\nDescription: ${e.description.slice(0, 300)}${e.description.length > 300 ? "…" : ""}` : "";
+    const attachments = e.attachments?.length
+      ? `\nAttachments: ${e.attachments.map((a) => `${a.title ?? "Untitled"} (${a.fileUrl})`).join(", ")}`
+      : "";
+    return `ID: ${e.id}\nTitle: ${e.summary ?? "No title"}\nStart: ${start}\nEnd: ${end}\nLocation: ${e.location ?? "N/A"}${desc}${attachments}`;
   });
 
   return `Upcoming events (${data.items.length}):\n\n${events.join("\n\n---\n\n")}`;
@@ -124,7 +128,12 @@ export async function calendarGetEvent(accessToken: string, eventId: string): Pr
     location?: string;
     description?: string;
     attendees?: { email: string; responseStatus: string }[];
+    attachments?: { title?: string; fileUrl?: string; mimeType?: string }[];
   };
+
+  const attachmentLines = e.attachments?.length
+    ? e.attachments.map((a) => `  - ${a.title ?? "Untitled"}: ${a.fileUrl ?? "No URL"}`).join("\n")
+    : "None";
 
   return [
     `Title: ${e.summary ?? "No title"}`,
@@ -133,5 +142,6 @@ export async function calendarGetEvent(accessToken: string, eventId: string): Pr
     `Location: ${e.location ?? "N/A"}`,
     `Description: ${e.description ?? "N/A"}`,
     `Attendees: ${e.attendees?.map((a) => `${a.email} (${a.responseStatus})`).join(", ") ?? "None"}`,
+    `Attachments:\n${attachmentLines}`,
   ].join("\n");
 }

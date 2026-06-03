@@ -70,7 +70,7 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
     },
   },
   calendar_get_event: {
-    name: "calendar_get_event", description: "Get details of a specific calendar event.",
+    name: "calendar_get_event", description: "Get full details of a calendar event including description, attendees, and attachments (e.g. Gemini meeting summary docs).",
     parameters: { properties: { eventId: { type: "string", description: "Calendar event ID" } }, required: ["eventId"] },
   },
   calendar_check_availability: {
