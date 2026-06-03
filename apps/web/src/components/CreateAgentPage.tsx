@@ -260,6 +260,14 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
               )}
               {done && (
                 <>
+                  <a href={`https://github.com/MoveoTech/${repoName}/blob/main/SETUP.md`} target="_blank" rel="noopener" className="cap-link-row">
+                    <span>Setup guide (clone, secrets, customization)</span>
+                    <span className="cap-link-arrow">↗</span>
+                  </a>
+                  <a href={`https://github.com/MoveoTech/${repoName}`} target="_blank" rel="noopener" className="cap-link-row">
+                    <span>GitHub repo — push to main to deploy changes</span>
+                    <span className="cap-link-arrow">↗</span>
+                  </a>
                   <a href={`https://github.com/MoveoTech/${repoName}/settings/secrets/actions`} target="_blank" rel="noopener" className="cap-link-row">
                     <span>Edit API keys (GitHub repo secrets)</span>
                     <span className="cap-link-arrow">↗</span>

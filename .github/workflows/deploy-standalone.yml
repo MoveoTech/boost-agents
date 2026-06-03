@@ -1,0 +1,171 @@
+name: Deploy Agent
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  provision-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: 'auth_master'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: 'projects/45358226626/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider-v2'
+          service_account: 'deployer@boost-agents-496211.iam.gserviceaccount.com'
+
+      - name: Provision GCP Project
+        id: provision
+        run: |
+          RAW_NAME="${{ github.event.repository.name }}"
+          STRIPPED_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-20)
+          STRIPPED_NAME="${STRIPPED_NAME#boost-}"
+          PROJECT_ID="boost-${STRIPPED_NAME}-v7"
+          echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
+
+          echo "Attempting to manage project $PROJECT_ID..."
+          gcloud projects create $PROJECT_ID --folder=324333743991 --name="$RAW_NAME" || echo "Already exists."
+
+          echo "Attempting Billing Link..."
+          gcloud billing projects link $PROJECT_ID --billing-account=018E8F-3A2F6F-9B0E40 || echo "Billing failed."
+
+          echo "Attempting to Enable APIs..."
+          gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com sts.googleapis.com iamcredentials.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com --project=$PROJECT_ID || echo "API failed."
+
+          gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@boost-agents-496211.iam.gserviceaccount.com" --role="roles/owner" || true
+
+          echo "Waiting 60s for APIs and IAM to propagate..."
+          sleep 60
+
+          gcloud artifacts repositories create agents --repository-format=docker --location=us-central1 --project=$PROJECT_ID || true
+
+          if ! gcloud iam workload-identity-pools describe "github-pool-v2" --project="$PROJECT_ID" --location="global" &>/dev/null; then
+            gcloud iam workload-identity-pools create "github-pool-v2" --project="$PROJECT_ID" --location="global" || true
+            gcloud iam workload-identity-pools providers create-oidc "github-provider-v2" \
+              --project="$PROJECT_ID" --location="global" --workload-identity-pool="github-pool-v2" \
+              --issuer-uri="https://token.actions.githubusercontent.com" \
+              --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+              --attribute-condition="assertion.repository_owner == 'MoveoTech'" || true
+
+            gcloud iam service-accounts create "deployer" --project="$PROJECT_ID" || true
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/owner" || true
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:deployer@$PROJECT_ID.iam.gserviceaccount.com" --role="roles/cloudscheduler.admin" || true
+
+            NUMERIC_ID=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+            gcloud iam service-accounts add-iam-policy-binding "deployer@$PROJECT_ID.iam.gserviceaccount.com" --project="$PROJECT_ID" --role="roles/iam.workloadIdentityUser" \
+              --member="principalSet://iam.googleapis.com/projects/$NUMERIC_ID/locations/global/workloadIdentityPools/github-pool-v2/attribute.repository_owner/MoveoTech" || true
+          fi
+
+          for SECRET_NAME in api-key cookie-secret automation-secret; do
+            if ! gcloud secrets describe "$SECRET_NAME" --project="$PROJECT_ID" &>/dev/null; then
+              printf '%s' "$(openssl rand -hex 32)" | \
+                gcloud secrets create "$SECRET_NAME" --data-file=- \
+                  --replication-policy=automatic --project="$PROJECT_ID" || true
+              echo "Created secret: $SECRET_NAME"
+            fi
+          done
+
+          if ! gcloud secrets describe "oauth-agent-key" --project="$PROJECT_ID" &>/dev/null; then
+            AGENT_OAUTH_KEY=$(curl -sf -X POST "${{ secrets.OAUTH_SERVICE_URL }}/api/agent-keys" \
+              -H "x-api-key: ${{ secrets.OAUTH_SERVICE_KEY }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"agentId\":\"$PROJECT_ID\"}" | jq -r '.apiKey')
+            if [ -z "$AGENT_OAUTH_KEY" ] || [ "$AGENT_OAUTH_KEY" = "null" ]; then
+              echo "Failed to provision per-agent key — falling back to master key"
+              AGENT_OAUTH_KEY="${{ secrets.OAUTH_SERVICE_KEY }}"
+            else
+              echo -n "$AGENT_OAUTH_KEY" | gcloud secrets create oauth-agent-key \
+                --data-file=- --replication-policy=automatic --project="$PROJECT_ID" 2>/dev/null || true
+              echo "Per-agent OAuth key provisioned"
+            fi
+          fi
+
+      - name: Load auto-generated secrets
+        run: |
+          PROJECT="${{ steps.provision.outputs.project_id }}"
+          fetch() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT" 2>/dev/null || echo ""; }
+          echo "API_KEY=$(fetch api-key)"              >> $GITHUB_ENV
+          echo "COOKIE_SECRET=$(fetch cookie-secret)"  >> $GITHUB_ENV
+          echo "AUTOMATION_SECRET=$(fetch automation-secret)" >> $GITHUB_ENV
+          AGENT_OAUTH_KEY=$(fetch oauth-agent-key)
+          if [ -z "$AGENT_OAUTH_KEY" ]; then
+            AGENT_OAUTH_KEY="${{ secrets.OAUTH_SERVICE_KEY }}"
+          fi
+          echo "AGENT_OAUTH_KEY=$AGENT_OAUTH_KEY" >> $GITHUB_ENV
+
+      - name: Build Web App
+        run: |
+          cd apps/web
+          npm install
+          VITE_API_URL="" npm run build
+          mkdir -p ../server/public
+          cp -r dist/* ../server/public/
+
+      - name: Build and Push Image
+        run: |
+          SERVICE_NAME="${{ github.event.repository.name }}"
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet || true
+          docker build -t us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${SERVICE_NAME}:${{ github.run_id }} ./apps/server
+          docker push us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${SERVICE_NAME}:${{ github.run_id }}
+
+      - name: Deploy to Cloud Run
+        id: 'deploy'
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: ${{ github.event.repository.name }}
+          region: us-central1
+          project_id: ${{ steps.provision.outputs.project_id }}
+          image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ github.event.repository.name }}:${{ github.run_id }}
+          flags: '--allow-unauthenticated --min-instances 1 --max-instances 1'
+          env_vars: |
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            API_KEY=${{ env.API_KEY }}
+            COOKIE_SECRET=${{ env.COOKIE_SECRET }}
+            AUTOMATION_SECRET=${{ env.AUTOMATION_SECRET }}
+            NODE_ENV=production
+            GH_PAT=${{ secrets.GH_PAT }}
+            GITHUB_REPO=${{ github.repository }}
+            OAUTH_SERVICE_URL=${{ secrets.OAUTH_SERVICE_URL }}
+            OAUTH_SERVICE_KEY=${{ env.AGENT_OAUTH_KEY }}
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            SLACK_BOT_TOKEN=${{ secrets.SLACK_BOT_TOKEN }}
+            SLACK_SIGNING_SECRET=${{ secrets.SLACK_SIGNING_SECRET }}
+            JINA_API_KEY=${{ secrets.JINA_API_KEY }}
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
+
+      - name: Set ADMIN_EMAILS
+        run: |
+          ADMIN_EMAILS="${{ secrets.ADMIN_EMAILS }}"
+          if [ -n "$ADMIN_EMAILS" ]; then
+            gcloud run services update ${{ github.event.repository.name }} \
+              --region us-central1 \
+              --project ${{ steps.provision.outputs.project_id }} \
+              --update-env-vars "^|^ADMIN_EMAILS=$ADMIN_EMAILS" \
+              --quiet
+          fi
+
+      - name: Print URL
+        run: |
+          AGENT_URL="${{ steps.deploy.outputs.url }}"
+          PROJECT="${{ steps.provision.outputs.project_id }}"
+          echo "Agent: $AGENT_URL"
+          echo "## ✦ Agent deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** $AGENT_URL" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ secrets.OAUTH_SERVICE_URL }}" ] && [ -n "$AGENT_URL" ]; then
+            curl -sf -X PATCH "${{ secrets.OAUTH_SERVICE_URL }}/api/admin/agents/$PROJECT" \
+              -H "x-api-key: ${{ secrets.OAUTH_SERVICE_KEY }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"agentUrl\":\"$AGENT_URL\"}" || echo "URL save skipped"
+          fi

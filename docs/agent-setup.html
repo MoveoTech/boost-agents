@@ -199,6 +199,9 @@
     <a href="#attachments">File attachments</a>
     <a href="#slack">Slack bot setup</a>
 
+    <div class="nav-section-label">Developer</div>
+    <a href="#customize">Customizing your repo</a>
+
     <div class="nav-section-label">Scale & Security</div>
     <a href="#security">Security model</a>
     <a href="#scale">Creating agents at scale</a>
@@ -483,6 +486,55 @@
 
     <pre><code>@HRAgent what meetings do I have today?
 @HRAgent send a message to #general saying standup is at 10am</code></pre>
+
+    <!-- CUSTOMIZE -->
+    <h2 id="customize">Customizing your repo</h2>
+    <p>Every agent repo created through the UI is <strong>standalone</strong> — it builds and deploys from its own code. Push to <code>main</code> and your changes go live. No connection to the template.</p>
+
+    <h3>Key files</h3>
+    <table>
+      <thead><tr><th>File</th><th>What to change</th></tr></thead>
+      <tbody>
+        <tr><td>apps/server/src/config.ts</td><td>System prompt, enabled tools, skills, model, UI label. <strong>Start here.</strong></td></tr>
+        <tr><td>apps/server/src/agent.ts</td><td>AI agent loop, tool definitions, built-in tool logic.</td></tr>
+        <tr><td>apps/server/src/index.ts</td><td>HTTP routes, webhook handlers, automation runners.</td></tr>
+        <tr><td>apps/web/src/</td><td>React chat UI — components, styling, API client.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Clone and run locally</h3>
+    <pre><code>git clone https://github.com/MoveoTech/your-agent-name.git
+cd your-agent-name
+
+# Add your API key
+echo "GEMINI_API_KEY=your_key" > apps/server/.env
+
+# Start server + UI together
+npm run dev</code></pre>
+
+    <h3>Adding or changing secrets</h3>
+    <p>Go to your repo → <strong>Settings → Secrets and variables → Actions → New repository secret</strong>. After adding or changing a secret, push any commit to <code>main</code> to redeploy with the new value.</p>
+
+    <table>
+      <thead><tr><th>Secret</th><th>Status</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>GEMINI_API_KEY</td><td><span class="badge badge-required">Required</span></td><td>Main AI model</td></tr>
+        <tr><td>ADMIN_EMAILS</td><td><span class="badge badge-optional">Optional</span></td><td>Who sees the config sidebar (comma-separated)</td></tr>
+        <tr><td>ANTHROPIC_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>Claude models</td></tr>
+        <tr><td>OPENAI_API_KEY</td><td><span class="badge badge-optional">Optional</span></td><td>GPT / o-series models</td></tr>
+        <tr><td>GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET</td><td><span class="badge badge-optional">Optional</span></td><td>Gmail &amp; Calendar OAuth</td></tr>
+        <tr><td>SLACK_BOT_TOKEN / SLACK_SIGNING_SECRET</td><td><span class="badge badge-optional">Optional</span></td><td>Slack integration</td></tr>
+        <tr><td>OAUTH_SERVICE_URL / OAUTH_SERVICE_KEY / GH_PAT</td><td><span class="badge badge-auto">Org secret</span></td><td>Inherited automatically — do not change</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-info">
+      <span class="callout-icon">ℹ</span>
+      <div>Your repo's <code>SETUP.md</code> has all the same links pre-filled with your repo name and GCP project — open it for a quick reference.</div>
+    </div>
+
+    <h3>Verify your repo is standalone</h3>
+    <p>Open <code>.github/workflows/deploy.yml</code> in your repo. If it starts with <code>- name: Checkout</code> followed by <code>uses: actions/checkout@v4</code> (no <code>repository:</code> override), it's standalone. If you see <code>repository: MoveoTech/boost-agents</code>, replace the file with the standalone version from <a href="https://github.com/MoveoTech/boost-agents/blob/main/.github/workflows/deploy-standalone.yml" target="_blank">deploy-standalone.yml</a>.</p>
 
     <!-- SECURITY -->
     <h2 id="security">Security model</h2>
