@@ -52,8 +52,8 @@ const ALL_TOOLS: Record<string, ToolDecl> = {
     },
   },
   calendar_list_events: {
-    name: "calendar_list_events", description: "List upcoming events from the user's Google Calendar.",
-    parameters: { properties: { maxResults: { type: "number", description: "Max events (default 10)" } }, required: [] },
+    name: "calendar_list_events", description: "List events from the user's Google Calendar. To get all events for a specific day, pass timeMin as the start of that day (00:00:00Z) and timeMax as the end (23:59:59Z). Always use timeMin/timeMax when the user asks about a specific day or date range.",
+    parameters: { properties: { maxResults: { type: "number", description: "Max events to return (default 50)" }, timeMin: { type: "string", description: "Start of date range in ISO 8601 (e.g. 2026-06-02T00:00:00Z). Defaults to now." }, timeMax: { type: "string", description: "End of date range in ISO 8601 (e.g. 2026-06-02T23:59:59Z). Omit for open-ended." } }, required: [] },
   },
   calendar_create_event: {
     name: "calendar_create_event", description: "Create a new calendar event. Attendees receive invitations automatically.",
@@ -844,7 +844,7 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       if (!calendarUser) return "User has not connected Google Calendar. Ask them to connect first.";
       const token = await getUserAccessToken("calendar", calendarUser);
       if (!token) return "Could not retrieve Calendar access token. The user may need to reconnect.";
-      if (name === "calendar_list_events")        return calendarListEvents(token, args.maxResults as number | undefined);
+      if (name === "calendar_list_events")        return calendarListEvents(token, args.maxResults as number | undefined, args.timeMin as string | undefined, args.timeMax as string | undefined);
       if (name === "calendar_create_event") {
         const extraAttendees = (args.attendees as string[] | undefined) ?? [];
         const allAttendees = [calendarUser, ...extraAttendees.filter((e) => e !== calendarUser)];

@@ -12,11 +12,12 @@ async function calendarFetch(accessToken: string, path: string, options?: Reques
   return res.json();
 }
 
-export async function calendarListEvents(accessToken: string, maxResults = 10): Promise<string> {
-  const now = new Date().toISOString();
+export async function calendarListEvents(accessToken: string, maxResults = 50, timeMin?: string, timeMax?: string): Promise<string> {
+  const rangeStart = timeMin ?? new Date().toISOString();
+  const timeMaxParam = timeMax ? `&timeMax=${encodeURIComponent(timeMax)}` : "";
   const data = await calendarFetch(
     accessToken,
-    `/calendars/primary/events?timeMin=${encodeURIComponent(now)}&maxResults=${maxResults}&singleEvents=true&orderBy=startTime`
+    `/calendars/primary/events?timeMin=${encodeURIComponent(rangeStart)}&maxResults=${maxResults}&singleEvents=true&orderBy=startTime${timeMaxParam}`
   ) as { items?: { id: string; summary?: string; start?: { dateTime?: string; date?: string }; end?: { dateTime?: string; date?: string }; location?: string }[] };
 
   if (!data.items?.length) return "No upcoming events found.";
