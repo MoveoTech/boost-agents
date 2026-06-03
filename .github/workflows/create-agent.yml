@@ -99,31 +99,30 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          # Replace template-pulling deploy.yml with standalone version (builds from own code)
-          DEPLOY_CONTENT=$(gh api repos/MoveoTech/boost-agents/contents/.github/workflows/deploy-standalone.yml --jq '.content' | tr -d '\n')
-          DEPLOY_SHA=$(gh api "repos/MoveoTech/${REPO_NAME}/contents/.github/workflows/deploy.yml" --jq '.sha')
-          gh api "repos/MoveoTech/${REPO_NAME}/contents/.github/workflows/deploy.yml" \
-            --method PUT \
-            --field message="ci: standalone deploy (builds from own code)" \
-            --field content="$DEPLOY_CONTENT" \
-            --field sha="$DEPLOY_SHA"
-          echo "✓ Standalone deploy.yml pushed"
+          git clone https://x-access-token:$GH_TOKEN@github.com/MoveoTech/$REPO_NAME.git /tmp/$REPO_NAME
+          cd /tmp/$REPO_NAME
 
-          # Compute project ID (same formula as the provisioning step)
+          # Fetch standalone deploy.yml from template
+          gh api repos/MoveoTech/boost-agents/contents/.github/workflows/deploy-standalone.yml \
+            --jq '.content' | tr -d '\n' | base64 -d \
+            > .github/workflows/deploy.yml
+          echo "✓ Standalone deploy.yml written"
+
+          # Fetch + substitute SETUP.md template
           STRIPPED="${REPO_NAME#boost-}"
           PROJECT_ID="boost-${STRIPPED}-v7"
+          gh api repos/MoveoTech/boost-agents/contents/.github/setup-template.md \
+            --jq '.content' | tr -d '\n' | base64 -d > /tmp/setup_raw.md
+          sed "s/REPO_PLACEHOLDER/$REPO_NAME/g; s/PROJECT_PLACEHOLDER/$PROJECT_ID/g" \
+            /tmp/setup_raw.md > SETUP.md
+          echo "✓ SETUP.md written"
 
-          # Push SETUP.md — fetch template from this repo, substitute placeholders, push to child
-          TEMPLATE_B64=$(gh api repos/MoveoTech/boost-agents/contents/.github/setup-template.md --jq '.content' | tr -d '\n')
-          SETUP=$(echo "$TEMPLATE_B64" | base64 -d)
-          SETUP="${SETUP//REPO_PLACEHOLDER/$REPO_NAME}"
-          SETUP="${SETUP//PROJECT_PLACEHOLDER/$PROJECT_ID}"
-          ENCODED=$(printf '%s' "$SETUP" | base64 -w0)
-          gh api "repos/MoveoTech/${REPO_NAME}/contents/SETUP.md" \
-            --method PUT \
-            --field message="docs: add setup guide" \
-            --field content="$ENCODED"
-          echo "✓ SETUP.md pushed"
+          git config user.email "ci@moveotech.com"
+          git config user.name "Boost CI"
+          git add .github/workflows/deploy.yml SETUP.md
+          git commit -m "ci: standalone deploy + setup guide"
+          git push
+          echo "✓ Pushed to $REPO_NAME"
 
       - name: Trigger first deploy
         env:
