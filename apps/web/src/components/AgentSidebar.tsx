@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import SidebarSection from "./SidebarSection";
 import SkillsModal from "./SkillsModal";
 import UsageAnalytics from "./UsageAnalytics";
-import { saveConfig, applyConfigLive, getApiKey, getProviders, subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts, type WhatsAppConfig } from "../api/client";
-import type { AgentConfig, Skill, UserSettings } from "../types";
+import { saveConfig, applyConfigLive, getApiKey, getProviders, subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts, getCustomTools, type WhatsAppConfig } from "../api/client";
+import type { AgentConfig, Skill, UserSettings, CustomToolSummary } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? window.location.origin;
 
@@ -111,6 +111,74 @@ function ApolloConnection({ userSettings, onUserSettingsChange }: { userSettings
         </div>
       )}
     </div>
+  );
+}
+
+function CustomToolCredential({ tool, userSettings, onUserSettingsChange }: { tool: CustomToolSummary; userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void }) {
+  const [draft, setDraft] = useState("");
+  const creds = userSettings.customCredentials ?? {};
+  const connected = tool.auth.type === "none" || !!creds[tool.auth.credRef];
+
+  const handleSave = () => {
+    if (!draft.trim()) return;
+    onUserSettingsChange({ ...userSettings, customCredentials: { ...creds, [tool.auth.credRef]: draft.trim() } });
+    setDraft("");
+  };
+  const handleDisconnect = () => {
+    // Empty string is treated as "not connected" by the server (merge can't delete a key).
+    onUserSettingsChange({ ...userSettings, customCredentials: { ...creds, [tool.auth.credRef]: "" } });
+  };
+
+  return (
+    <div className="sidebar-tool-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 0 }}>
+      <div className="sidebar-tool-info">
+        <span className="sidebar-tool-icon">🧩</span>
+        <div className="sidebar-tool-text">
+          <span className="sidebar-tool-name">{tool.service}</span>
+          <span className="sidebar-tool-connection">
+            {connected ? (
+              <><span className="sidebar-tool-connected">●</span> connected</>
+            ) : (
+              <span style={{ opacity: 0.6 }}>{tool.auth.credRef} required</span>
+            )}
+            {connected && tool.auth.type !== "none" && <button className="sidebar-tool-disconnect" onClick={handleDisconnect}>Disconnect</button>}
+          </span>
+        </div>
+      </div>
+      {!connected && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6, marginLeft: 32 }}>
+          <input
+            type="password"
+            className="configure-input"
+            placeholder={`Paste ${tool.service} credential`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            style={{ flex: 1, fontSize: 12 }}
+          />
+          <button
+            className="sidebar-save-btn"
+            onClick={handleSave}
+            disabled={!draft.trim()}
+            style={{ fontSize: 12, padding: "4px 10px", whiteSpace: "nowrap" }}
+          >
+            Connect
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomToolsConnections({ userSettings, onUserSettingsChange }: { userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void }) {
+  const [tools, setTools] = useState<CustomToolSummary[]>([]);
+  useEffect(() => { getCustomTools().then(setTools).catch(() => {}); }, []);
+  if (!tools.length) return null;
+  return (
+    <>
+      {tools.map((t) => (
+        <CustomToolCredential key={t.id} tool={t} userSettings={userSettings} onUserSettingsChange={onUserSettingsChange} />
+      ))}
+    </>
   );
 }
 
@@ -583,6 +651,9 @@ export default function AgentSidebar({ isAdmin, userEmail, agentConfig, onSave, 
 
               {/* Apollo.io — API key */}
               <ApolloConnection userSettings={userSettings} onUserSettingsChange={onUserSettingsChange} />
+
+              {/* Custom tools — built conversationally; per-user credential */}
+              <CustomToolsConnections userSettings={userSettings} onUserSettingsChange={onUserSettingsChange} />
             </>)}
           </SidebarSection>
 

@@ -135,6 +135,15 @@ export async function saveUserSettings(settings: Record<string, unknown>): Promi
   });
 }
 
+export async function getCustomTools(): Promise<import("../types").CustomToolSummary[]> {
+  const res = await fetch(`${BASE}/api/custom-tools`);
+  return res.ok ? res.json() : [];
+}
+
+export async function deleteCustomTool(id: string): Promise<void> {
+  await fetch(`${BASE}/api/custom-tools/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function validateApiKey(service: "apollo" | "google_maps", key: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${BASE}/api/connections/validate-key`, {
     method: "POST",

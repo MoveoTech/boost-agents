@@ -78,6 +78,15 @@ export interface UserSettings {
   avatar?: string;
   apolloApiKey?: string;
   googleMapsApiKey?: string;
+  customCredentials?: Record<string, string>;
+}
+
+export interface CustomToolSummary {
+  id: string;
+  service: string;
+  description?: string;
+  auth: { type: string; credRef: string };
+  operations: { name: string; method: string; path: string; description?: string }[];
 }
 
 

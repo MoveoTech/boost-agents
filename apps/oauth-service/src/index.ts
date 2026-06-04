@@ -369,6 +369,49 @@ app.put("/api/user-settings/:agentId/:userId", async (req, res) => {
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
+// ── Custom tools (agent-wide tool definitions, built conversationally) ─────────
+// Definitions are shared across all users of an agent. Credentials are per-user
+// (stored in user_settings.customCredentials). Each doc keeps up to 10 prior
+// versions for rollback.
+const CUSTOM_TOOL_HISTORY = 10;
+
+function customToolsRef(agentId: string) {
+  return db.collection("custom_tools").doc(agentId).collection("tools");
+}
+
+app.get("/api/custom-tools/:agentId", async (req, res) => {
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
+  try {
+    const snap = await customToolsRef(req.params.agentId).get();
+    res.json(snap.docs.map((d) => d.data()));
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.put("/api/custom-tools/:agentId/:toolId", async (req, res) => {
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
+  const { agentId, toolId } = req.params;
+  try {
+    const ref = customToolsRef(agentId).doc(toolId);
+    const prev = await ref.get();
+    const history: unknown[] = prev.exists ? ((prev.data()!.history as unknown[]) ?? []) : [];
+    if (prev.exists) {
+      const { history: _omit, ...prevDef } = prev.data() as Record<string, unknown>;
+      history.unshift(prevDef);
+    }
+    const def = { ...req.body, id: toolId, updatedAt: new Date().toISOString() };
+    await ref.set({ ...def, history: history.slice(0, CUSTOM_TOOL_HISTORY) });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.delete("/api/custom-tools/:agentId/:toolId", async (req, res) => {
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
+  try {
+    await customToolsRef(req.params.agentId).doc(req.params.toolId).delete();
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // ── Chat history ─────────────────────────────────────────────────────────────
 
 function chatRef(agentId: string, email: string) {
@@ -731,6 +774,10 @@ app.delete("/api/admin/agents/:agentId/data", requireMasterKey, async (req, res)
     // user_settings
     await deleteSubcollection("user_settings", "users");
     await db.collection("user_settings").doc(agentId).delete();
+
+    // custom tool definitions
+    await deleteSubcollection("custom_tools", "tools");
+    await db.collection("custom_tools").doc(agentId).delete();
 
     // memories
     await deleteSubcollection("memories", "users");

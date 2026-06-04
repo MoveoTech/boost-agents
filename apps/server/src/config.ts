@@ -23,6 +23,7 @@ export interface AgentConfig {
     monday?: boolean;
     googleTasks?: boolean;
     memory?: boolean;
+    customTools?: boolean;
   };
   access: {
     chatEnabled: boolean;
@@ -56,6 +57,7 @@ export const agentConfig: AgentConfig = {
     monday: false,
     googleTasks: false,
     memory: true,
+    customTools: true,
   },
   access: {
     chatEnabled: true,

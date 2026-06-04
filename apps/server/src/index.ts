@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import path from "path";
 import { chat, chatStream, type ImageAttachment } from "./agent";
+import { fetchCustomToolDefs } from "./custom-tools";
 import { getUserAccessToken } from "./google-auth";
 import { logger } from "./logger";
 import { slackSendMessage, slackGetUserEmail } from "./slack";
@@ -1267,6 +1268,29 @@ app.post("/api/connections/validate-key", async (req, res) => {
   }
 });
 
+// ── Custom tools (agent-wide definitions; proxied to oauth-service) ────────────
+app.get("/api/custom-tools", async (req, res) => {
+  if (!getSessionEmail(req)) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const url = process.env.OAUTH_SERVICE_URL, key = process.env.OAUTH_SERVICE_KEY, agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!url || !key || !agentId) { res.json([]); return; }
+  try {
+    const r = await fetch(`${url}/api/custom-tools/${agentId}`, { headers: { "x-api-key": key } });
+    const list = r.ok ? await r.json() as Record<string, unknown>[] : [];
+    // Never leak version history to the client; expose only the public shape.
+    res.json(list.map(({ history: _h, ...def }) => def));
+  } catch { res.json([]); }
+});
+
+app.delete("/api/custom-tools/:id", async (req, res) => {
+  if (!getSessionEmail(req)) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const url = process.env.OAUTH_SERVICE_URL, key = process.env.OAUTH_SERVICE_KEY, agentId = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!url || !key || !agentId) { res.status(500).json({ error: "Not configured" }); return; }
+  try {
+    await fetch(`${url}/api/custom-tools/${agentId}/${encodeURIComponent(req.params.id)}`, { method: "DELETE", headers: { "x-api-key": key } });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
 // ── Chat history ─────────────────────────────────────────────────────────────
 
 function oauthProxy(req: express.Request) {
@@ -2365,12 +2389,14 @@ app.post("/api/chat", async (req, res) => {
     const tasksUserStream   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
     const waUserStream      = sessionEmail && getStatus(sessionEmail) === "connected" ? sessionEmail : undefined;
     let apolloApiKeyStream: string | undefined;
+    let customCredsStream: Record<string, string> | undefined;
     if (sessionEmail && process.env.OAUTH_SERVICE_URL && process.env.OAUTH_SERVICE_KEY) {
       try {
         const s = await fetch(`${process.env.OAUTH_SERVICE_URL}/api/user-settings/${process.env.GOOGLE_CLOUD_PROJECT}/${encodeURIComponent(sessionEmail)}`, { headers: { "x-api-key": process.env.OAUTH_SERVICE_KEY } });
-        if (s.ok) { const d = await s.json() as { apolloApiKey?: string }; apolloApiKeyStream = d.apolloApiKey; }
+        if (s.ok) { const d = await s.json() as { apolloApiKey?: string; customCredentials?: Record<string, string> }; apolloApiKeyStream = d.apolloApiKey; customCredsStream = d.customCredentials; }
       } catch { /* non-fatal */ }
     }
+    const customDefsStream = (agentConfig.tools.customTools ?? true) ? await fetchCustomToolDefs() : [];
     try {
       await chatStream(
         effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model,
@@ -2392,6 +2418,8 @@ app.post("/api/chat", async (req, res) => {
         imageAttachment,
         waUserStream,
         apolloApiKeyStream,
+        undefined,
+        { defs: customDefsStream, creds: customCredsStream },
       );
       send({ type: "done", toolUses });
       trackUsage(modelId, toolUses.map((t) => t.name), Date.now() - t0);
@@ -2408,13 +2436,15 @@ app.post("/api/chat", async (req, res) => {
     const tasksUser   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
     const waUser      = sessionEmail && getStatus(sessionEmail) === "connected" ? sessionEmail : undefined;
     let apolloApiKey: string | undefined;
+    let customCreds: Record<string, string> | undefined;
     if (sessionEmail && process.env.OAUTH_SERVICE_URL && process.env.OAUTH_SERVICE_KEY) {
       try {
         const s = await fetch(`${process.env.OAUTH_SERVICE_URL}/api/user-settings/${process.env.GOOGLE_CLOUD_PROJECT}/${encodeURIComponent(sessionEmail)}`, { headers: { "x-api-key": process.env.OAUTH_SERVICE_KEY } });
-        if (s.ok) { const d = await s.json() as { apolloApiKey?: string }; apolloApiKey = d.apolloApiKey; }
+        if (s.ok) { const d = await s.json() as { apolloApiKey?: string; customCredentials?: Record<string, string> }; apolloApiKey = d.apolloApiKey; customCreds = d.customCredentials; }
       } catch { /* non-fatal */ }
     }
-    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail, imageAttachment, waUser, apolloApiKey);
+    const customDefs = (agentConfig.tools.customTools ?? true) ? await fetchCustomToolDefs() : [];
+    const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail, imageAttachment, waUser, apolloApiKey, undefined, { defs: customDefs, creds: customCreds });
     trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
   } catch (err) {

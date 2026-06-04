@@ -20,6 +20,10 @@ import { lookupContact, listContacts as listContactsFn } from "./contacts";
 import { sendMessage as waSendMessage, getStatus as waGetStatus } from "./whatsapp";
 import { getUserAccessToken } from "./google-auth";
 import { agentConfig } from "./config";
+import {
+  type CustomToolDef, customDefsToToolDecls, findCustomOp, executeCustomOp,
+  validateToolDef, assertSafeHost, persistCustomToolDef, removeCustomToolDef,
+} from "./custom-tools";
 
 // ── Tool declarations (provider-agnostic) ────────────────────────────────────
 
@@ -727,6 +731,60 @@ Column can be specified by its ID or title (case-insensitive).`,
       required: [],
     },
   },
+  // ── Custom-tool builder (meta-tools) ──────────────────────────────────────────
+  custom_tool_save: {
+    name: "custom_tool_save",
+    description: `Create or update a custom tool that connects to a third-party REST API. The tool becomes available to all users of this agent on their next message. Only call this AFTER you have researched the API and confirmed the auth type and operations with the user.
+The "definition" object must match this shape:
+{
+  "id": "jira",                       // slug: lowercase letters, digits, underscore
+  "service": "Jira",                  // display name
+  "description": "Atlassian Jira issue tracking",
+  "baseUrl": "https://your-domain.atlassian.net",   // https only, public host
+  "auth": {
+    "type": "bearer" | "header" | "query" | "basic" | "none",
+    "credRef": "jira_token",          // key the user's stored credential is saved under
+    "headerName": "X-Api-Key",        // only for type "header"
+    "queryName": "api_key",           // only for type "query"
+    "basicUserField": "email"         // only for type "basic": username = the user's email, password = the credential
+  },
+  "operations": [
+    {
+      "name": "jira_list_issues",     // unique tool name (slug)
+      "description": "Search issues with JQL",
+      "method": "GET",
+      "path": "/rest/api/3/search",   // may contain {placeholders} substituted from params
+      "parameters": { "properties": { "jql": { "type": "string", "description": "JQL query" } }, "required": ["jql"] }
+    }
+  ]
+}
+Dispatch convention you can rely on: any param whose name matches a {placeholder} in the path is substituted there; every other param goes to the query string for GET/DELETE or the JSON body for POST/PUT/PATCH.`,
+    parameters: {
+      properties: { definition: { type: "object", description: "The full custom tool definition (see description for shape)." } },
+      required: ["definition"],
+    },
+  },
+  custom_tool_list: {
+    name: "custom_tool_list",
+    description: "List the custom tools already configured for this agent, including their operations and which credential each needs.",
+    parameters: { properties: {}, required: [] },
+  },
+  custom_tool_delete: {
+    name: "custom_tool_delete",
+    description: "Delete a custom tool by its id. Confirm with the user before deleting.",
+    parameters: { properties: { id: { type: "string", description: "The custom tool id (slug)" } }, required: ["id"] },
+  },
+  custom_tool_test: {
+    name: "custom_tool_test",
+    description: "Run one operation of a custom tool with the current user's stored credential to verify it works before telling the user it's ready. Returns the raw API response.",
+    parameters: {
+      properties: {
+        toolName: { type: "string", description: "The operation name to test (e.g. jira_list_issues)" },
+        args:     { type: "object", description: "Arguments for the operation" },
+      },
+      required: ["toolName"],
+    },
+  },
 };
 
 function buildSystemPrompt(override?: string, addition?: string, hasMondayToken?: boolean, hasCalendar?: boolean): string {
@@ -794,26 +852,35 @@ interface AgentContext {
   memoryUser?: string;
   whatsappUser?: string;
   apolloApiKey?: string;
+  customToolDefs?: CustomToolDef[];
+  customCredentials?: Record<string, string>;
+  callerEmail?: string;
 }
 
-const COORDINATOR_TOOL: ToolDecl = {
-  name: "delegate_to_subagent",
-  description: `Delegate a task to a specialized subagent. The subagent executes autonomously and returns a result string. Available subagents:
+function buildCoordinatorTool(ctx: AgentContext): ToolDecl {
+  const customLine = (agentConfig.tools.customTools ?? true)
+    ? `\n- custom: user-built integrations${ctx.customToolDefs?.length ? ` (${ctx.customToolDefs.map((d) => d.service).join(", ")})` : ""}, and BUILDING new custom tools (route here when the user asks to add/connect a new service or API)`
+    : "";
+  const customName = (agentConfig.tools.customTools ?? true) ? " | custom" : "";
+  return {
+    name: "delegate_to_subagent",
+    description: `Delegate a task to a specialized subagent. The subagent executes autonomously and returns a result string. Available subagents:
 - research: web search, reading URLs, fetching images, custom HTTP/API calls
 - calendar: Google Calendar — list, create, update, delete events; check availability; RSVP
 - tasks: Google Tasks — list, create, complete, update, delete tasks
 - communication: Gmail, Slack, WhatsApp — send messages
 - monday: Monday.com — boards, items, groups, columns, updates
 - memory: user memory (save/recall) and contact lookup
-- crm: Apollo.io — prospect search, contact management, email sequences`,
-  parameters: {
-    properties: {
-      subagent: { type: "string", description: "Subagent name: research | calendar | tasks | communication | monday | memory | crm" },
-      task:     { type: "string", description: "Complete task description with all context the subagent needs to act independently" },
+- crm: Apollo.io — prospect search, contact management, email sequences${customLine}`,
+    parameters: {
+      properties: {
+        subagent: { type: "string", description: `Subagent name: research | calendar | tasks | communication | monday | memory | crm${customName}` },
+        task:     { type: "string", description: "Complete task description with all context the subagent needs to act independently" },
+      },
+      required: ["subagent", "task"],
     },
-    required: ["subagent", "task"],
-  },
-};
+  };
+}
 
 const COORDINATOR_INSTRUCTIONS = `You are a coordinator agent. Delegate ALL data access and external actions to specialized subagents via delegate_to_subagent.
 Rules:
@@ -885,6 +952,15 @@ function buildSubagentTools(subagent: string, ctx: AgentContext): ToolDecl[] {
         ALL_TOOLS.apollo_get_sequences, ALL_TOOLS.apollo_add_to_sequence, ALL_TOOLS.apollo_get_email_accounts,
         ALL_TOOLS.apollo_get_news, ALL_TOOLS.apollo_org_job_postings,
       ];
+    case "custom":
+      if (!(agentConfig.tools.customTools ?? true)) return [];
+      // Builder meta-tools are always available so any user can create a tool from zero.
+      // Research uses read_webpage to discover the target API's auth + endpoints.
+      return [
+        ALL_TOOLS.custom_tool_save, ALL_TOOLS.custom_tool_list, ALL_TOOLS.custom_tool_delete, ALL_TOOLS.custom_tool_test,
+        ...(agentConfig.tools.jinaReader ?? true ? [ALL_TOOLS.read_webpage] : []),
+        ...customDefsToToolDecls(ctx.customToolDefs ?? []),
+      ];
     default:
       return [];
   }
@@ -907,7 +983,7 @@ async function runSubagent(
     console.log(JSON.stringify({ tag: "subagent", subagent: subagentName, msg: "tool call", name, argsKeys: Object.keys(args) }));
     try {
       const modifiedArgs = (await hooks?.onBeforeTool?.(name, args)) ?? args;
-      const result = await executeBuiltin(name, modifiedArgs, ctx.gmailUser, ctx.calendarUser, ctx.mondayToken, ctx.tasksUser, ctx.memoryUser, ctx.whatsappUser, ctx.apolloApiKey);
+      const result = await executeBuiltin(name, modifiedArgs, ctx.gmailUser, ctx.calendarUser, ctx.mondayToken, ctx.tasksUser, ctx.memoryUser, ctx.whatsappUser, ctx.apolloApiKey, ctx);
       const output = result ?? "Tool not implemented";
       const modifiedResult = (await hooks?.onAfterTool?.(name, modifiedArgs, output)) ?? output;
       console.log(JSON.stringify({ tag: "subagent", subagent: subagentName, msg: "tool done", name, ms: Date.now() - t0 }));
@@ -925,7 +1001,7 @@ async function runSubagent(
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string, apolloApiKey?: string): Promise<string | null> {
+async function executeBuiltin(name: string, args: Record<string, unknown>, gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string, apolloApiKey?: string, customCtx?: AgentContext): Promise<string | null> {
   switch (name) {
     case "fetch_url":
       return fetchUrl(args.url as string);
@@ -1216,8 +1292,53 @@ async function executeBuiltin(name: string, args: Record<string, unknown>, gmail
       }
     }
 
-    default:
+    case "custom_tool_save": {
+      const def = args.definition as CustomToolDef;
+      if (!def || typeof def !== "object") return "definition must be an object.";
+      const invalid = validateToolDef(def);
+      if (invalid) return `Invalid tool definition: ${invalid}`;
+      try { await assertSafeHost(def.baseUrl); }
+      catch (err) { return `baseUrl rejected: ${(err as Error).message}`; }
+      def.createdBy = def.createdBy ?? customCtx?.callerEmail;
+      def.createdAt = def.createdAt ?? new Date().toISOString();
+      const err = await persistCustomToolDef(def);
+      if (err) return err;
+      const ops = def.operations.map((o) => o.name).join(", ");
+      return `Saved custom tool "${def.id}" (${def.service}) with operations: ${ops}. It will be live on the next message once the user has connected the "${def.auth.credRef}" credential.`;
+    }
+
+    case "custom_tool_list": {
+      const defs = customCtx?.customToolDefs ?? [];
+      if (!defs.length) return "No custom tools are configured yet.";
+      return defs.map((d) => {
+        const connected = d.auth.type === "none" || !!customCtx?.customCredentials?.[d.auth.credRef];
+        const ops = d.operations.map((o) => `${o.name} (${o.method} ${o.path})`).join("; ");
+        return `• ${d.id} — ${d.service} [credential ${d.auth.credRef}: ${connected ? "connected" : "NOT connected"}]\n  ops: ${ops}`;
+      }).join("\n");
+    }
+
+    case "custom_tool_delete": {
+      const err = await removeCustomToolDef(args.id as string);
+      return err || `Deleted custom tool "${args.id}".`;
+    }
+
+    case "custom_tool_test": {
+      const toolName = args.toolName as string;
+      const found = findCustomOp(customCtx?.customToolDefs ?? [], toolName);
+      if (!found) return `No custom operation named "${toolName}". Save the tool first, then test on a later message (definitions load at the start of each message).`;
+      const cred = customCtx?.customCredentials?.[found.def.auth.credRef];
+      return executeCustomOp(found.def, found.op, (args.args as Record<string, unknown>) ?? {}, cred, customCtx?.callerEmail);
+    }
+
+    default: {
+      // Generic dispatch for a custom-tool operation (name matches a stored definition).
+      const found = findCustomOp(customCtx?.customToolDefs ?? [], name);
+      if (found) {
+        const cred = customCtx?.customCredentials?.[found.def.auth.credRef];
+        return executeCustomOp(found.def, found.op, args, cred, customCtx?.callerEmail);
+      }
       return null; // not a builtin tool
+    }
   }
 }
 
@@ -1251,9 +1372,13 @@ async function runChat(
   whatsappUser?: string,
   apolloApiKey?: string,
   hooks?: AgentHooks,
+  custom?: { defs?: CustomToolDef[]; creds?: Record<string, string> },
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
-  const ctx: AgentContext = { gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey };
+  const ctx: AgentContext = {
+    gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey,
+    customToolDefs: custom?.defs, customCredentials: custom?.creds, callerEmail: memoryUser ?? gmailUser,
+  };
 
   let memoriesBlock = "";
   if (memoryUser) {
@@ -1287,7 +1412,15 @@ async function runChat(
 
   // Coordinator mode: route requests to specialized subagents
   const agentPersonality = buildSystemPrompt(systemPrompt, undefined, !!mondayToken, !!calendarUser);
-  const coordinatorPrompt = `${COORDINATOR_INSTRUCTIONS}\n\n---\n\n${agentPersonality}${memoriesBlock}`;
+  const coordinatorTool = buildCoordinatorTool(ctx);
+  const builderBlock = (agentConfig.tools.customTools ?? true) ? `\n\n---\n\n## Building custom tools
+When the user asks to add, connect, or integrate a new service or API that isn't already available, delegate to the "custom" subagent. That subagent can research the API, save a tool definition, and test it. Drive the conversation like this:
+1. Confirm the service and what the user wants to do with it (e.g. "fetch open Jira issues", "create issues").
+2. Research the API (the custom subagent uses read_webpage) to determine the base URL, auth method (API key / bearer / basic — NOT OAuth, which isn't supported yet), and the exact endpoints. Propose suggestions yourself — don't make the user specify endpoints.
+3. Tell the user which credential is needed and ask them to add it in the Connectors panel under the credential name you chose (e.g. "jira_token"). Never ask them to paste a secret into the chat.
+4. Save the tool with custom_tool_save, then verify with custom_tool_test once the credential is connected.
+5. Confirm it's ready and usable across the agent.` : "";
+  const coordinatorPrompt = `${COORDINATOR_INSTRUCTIONS}\n\n---\n\n${agentPersonality}${builderBlock}${memoriesBlock}`;
 
   const coordinatorExecutor = async (name: string, args: Record<string, unknown>): Promise<string> => {
     if (name !== "delegate_to_subagent") return "Unknown coordinator tool";
@@ -1298,10 +1431,10 @@ async function runChat(
   };
 
   if (streamCallbacks) {
-    const toolUses = await chatWithModelStream(model, coordinatorPrompt, history, message, [COORDINATOR_TOOL], coordinatorExecutor, streamCallbacks, false, image);
+    const toolUses = await chatWithModelStream(model, coordinatorPrompt, history, message, [coordinatorTool], coordinatorExecutor, streamCallbacks, false, image);
     return { reply: "", toolUses };
   }
-  return chatWithModel(model, coordinatorPrompt, history, message, [COORDINATOR_TOOL], coordinatorExecutor, false, image);
+  return chatWithModel(model, coordinatorPrompt, history, message, [coordinatorTool], coordinatorExecutor, false, image);
 }
 
 export async function chat(
@@ -1319,8 +1452,9 @@ export async function chat(
   whatsappUser?: string,
   apolloApiKey?: string,
   hooks?: AgentHooks,
+  custom?: { defs?: CustomToolDef[]; creds?: Record<string, string> },
 ): Promise<ChatResult> {
-  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey, hooks);
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey, hooks, custom);
 }
 
 export async function chatStream(
@@ -1339,8 +1473,9 @@ export async function chatStream(
   whatsappUser?: string,
   apolloApiKey?: string,
   hooks?: AgentHooks,
+  custom?: { defs?: CustomToolDef[]; creds?: Record<string, string> },
 ): Promise<ToolUse[]> {
-  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey, hooks);
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey, hooks, custom);
   return result.toolUses;
 }
 
