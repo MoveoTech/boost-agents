@@ -3,7 +3,7 @@ import type { AgentConfig, Skill, UserSettings, CustomToolSummary } from "../typ
 import {
   applyConfigLive, getApiKey, getProviders,
   subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts, validateApiKey,
-  getCustomTools,
+  getCustomTools, deleteCustomTool,
   type WhatsAppConfig,
 } from "../api/client";
 
@@ -128,12 +128,18 @@ function BrainPanel({ userSettings, onChange, agentConfig }: {
 
 // ── Custom tools (built conversationally; per-user credential) ─────────────────
 
-function CustomToolCredentialRow({ tool, userSettings, onUserSettingsChange }: {
-  tool: CustomToolSummary; userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void;
+function CustomToolCredentialRow({ tool, userSettings, onUserSettingsChange, onDeleted }: {
+  tool: CustomToolSummary; userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void; onDeleted: (id: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const creds = userSettings.customCredentials ?? {};
   const connected = tool.auth.type === "none" || !!creds[tool.auth.credRef];
+
+  const remove = async () => {
+    if (!window.confirm(`Delete the "${tool.service}" custom tool for everyone on this agent?`)) return;
+    await deleteCustomTool(tool.id).catch(() => {});
+    onDeleted(tool.id);
+  };
 
   const save = () => {
     if (!draft.trim()) return;
@@ -160,6 +166,7 @@ function CustomToolCredentialRow({ tool, userSettings, onUserSettingsChange }: {
         {connected && tool.auth.type !== "none" && (
           <button className="lp-disc-btn" onClick={disconnect}>Disconnect</button>
         )}
+        <button className="lp-disc-btn" title="Delete this custom tool for the whole agent" onClick={remove}>Remove</button>
       </div>
       {!connected && (
         <div className="lp-key-input-row" style={{ flexWrap: "wrap", gap: 4 }}>
@@ -195,7 +202,8 @@ function CustomToolsConnections({ userSettings, onUserSettingsChange }: {
     <>
       <div className="lp-section-label" style={{ marginTop: 20 }}>Custom Tools</div>
       {tools.map((t) => (
-        <CustomToolCredentialRow key={t.id} tool={t} userSettings={userSettings} onUserSettingsChange={onUserSettingsChange} />
+        <CustomToolCredentialRow key={t.id} tool={t} userSettings={userSettings} onUserSettingsChange={onUserSettingsChange}
+          onDeleted={(id) => setTools((prev) => prev.filter((x) => x.id !== id))} />
       ))}
     </>
   );

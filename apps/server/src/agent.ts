@@ -859,7 +859,7 @@ interface AgentContext {
 
 function buildCoordinatorTool(ctx: AgentContext): ToolDecl {
   const customLine = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true)
-    ? `\n- custom: user-built integrations${ctx.customToolDefs?.length ? ` (${ctx.customToolDefs.map((d) => d.service).join(", ")})` : ""}, and BUILDING new custom tools (route here when the user asks to add/connect a new service or API)`
+    ? `\n- custom: user-built integrations${ctx.customToolDefs?.length ? ` (${ctx.customToolDefs.map((d) => d.service).join(", ")})` : ""}, and MANAGING custom tools. Route here whenever the user asks to add/connect a new service or API, OR to list/show their custom tools, OR to delete/remove a custom tool. The custom subagent has tools to list and delete — never tell the user you can't list or delete custom tools; delegate to custom instead.`
     : "";
   const customName = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true) ? " | custom" : "";
   return {
