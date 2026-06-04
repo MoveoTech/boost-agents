@@ -445,19 +445,20 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
         {/* Agent type */}
         <div className="cap-field" style={{ marginTop: 8 }}>
           <label className="cap-label">Agent type</label>
-          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 8, padding: 3, marginTop: 4 }}>
             {(["external", "internal"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setAgentType(t)}
                 style={{
-                  flex: 1, padding: "8px 0", borderRadius: 8, border: "1px solid",
-                  borderColor: agentType === t ? "var(--accent)" : "var(--border)",
-                  background: agentType === t ? "var(--accent)" : "transparent",
-                  color: agentType === t ? "#fff" : "var(--muted)",
+                  flex: 1, padding: "7px 0", borderRadius: 6, border: "none",
+                  background: agentType === t ? "#fff" : "transparent",
+                  color: agentType === t ? "#111" : "#666",
                   fontWeight: agentType === t ? 600 : 400,
                   cursor: "pointer", fontSize: 14, textTransform: "capitalize",
+                  boxShadow: agentType === t ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+                  transition: "all 0.15s",
                 }}
               >
                 {t}
