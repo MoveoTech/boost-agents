@@ -28,6 +28,14 @@ on:
         description: 'OPENAI_API_KEY — only needed for GPT/o1 models (optional)'
         required: false
         type: string
+      agent_type:
+        description: 'Agent type — external (client-facing, standard scopes) or internal (MoveoTech staff, includes Drive and restricted scopes)'
+        required: true
+        type: choice
+        default: external
+        options:
+          - external
+          - internal
 
 jobs:
   create:
@@ -79,6 +87,16 @@ jobs:
           echo "✓ GEMINI_API_KEY"
 
           # OAUTH_SERVICE_URL and OAUTH_SERVICE_KEY are org-level secrets inherited via "secrets: inherit" — no need to copy
+
+          if [ "${{ inputs.agent_type }}" = "internal" ]; then
+            printf '%s' "${{ secrets.INTERNAL_GOOGLE_CLIENT_ID }}" | gh secret set GOOGLE_CLIENT_ID --repo "$REPO"
+            printf '%s' "${{ secrets.INTERNAL_GOOGLE_CLIENT_SECRET }}" | gh secret set GOOGLE_CLIENT_SECRET --repo "$REPO"
+            echo "✓ GOOGLE_CLIENT_ID/SECRET (internal)"
+          else
+            printf '%s' "${{ secrets.GOOGLE_CLIENT_ID }}" | gh secret set GOOGLE_CLIENT_ID --repo "$REPO"
+            printf '%s' "${{ secrets.GOOGLE_CLIENT_SECRET }}" | gh secret set GOOGLE_CLIENT_SECRET --repo "$REPO"
+            echo "✓ GOOGLE_CLIENT_ID/SECRET (external)"
+          fi
 
           if [ -n "${{ inputs.admin_emails }}" ]; then
             printf '%s' "${{ inputs.admin_emails }}" | gh secret set ADMIN_EMAILS --repo "$REPO"
@@ -194,6 +212,7 @@ jobs:
           echo "| **Deploy progress** | $ACTIONS_URL |" >> $GITHUB_STEP_SUMMARY
           echo "| **Agent URL** | Available in Actions summary after deploy (~8 min) |" >> $GITHUB_STEP_SUMMARY
           echo "| **GCP project** | boost-$REPO_NAME-v7 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Agent type** | ${{ inputs.agent_type }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### What was automated" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ GitHub repo created from template" >> $GITHUB_STEP_SUMMARY

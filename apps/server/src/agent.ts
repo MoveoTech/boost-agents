@@ -774,40 +774,152 @@ function buildSystemPrompt(override?: string, addition?: string, hasMondayToken?
   return `${base}${skillsBlock}${additionBlock}${capsBlock}${dateBlock}${calendarBlock}${mondayBlock}`;
 }
 
-function buildBuiltinTools(gmailUser?: string, calendarUser?: string, mondayToken?: string, tasksUser?: string, memoryUser?: string, whatsappUser?: string, apolloApiKey?: string): ToolDecl[] {
-  const tools: ToolDecl[] = [];
-  if (agentConfig.tools.fetchUrl)    tools.push(ALL_TOOLS.fetch_url);
-  if (agentConfig.tools.httpRequest) tools.push(ALL_TOOLS.http_request);
-  if (agentConfig.tools.jinaReader ?? true) tools.push(ALL_TOOLS.read_webpage, ALL_TOOLS.search_image);
-  if (gmailUser)    tools.push(ALL_TOOLS.gmail_send);
-  if (calendarUser) tools.push(ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event, ALL_TOOLS.calendar_check_availability, ALL_TOOLS.calendar_rsvp, ALL_TOOLS.calendar_update_event, ALL_TOOLS.calendar_delete_event);
-  if (whatsappUser && waGetStatus(whatsappUser) === "connected") tools.push(ALL_TOOLS.whatsapp_send_message);
-  if (agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN) tools.push(ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user);
-  if (mondayToken)  tools.push(
-    ALL_TOOLS.monday_list_boards, ALL_TOOLS.monday_get_board, ALL_TOOLS.monday_create_board,
-    ALL_TOOLS.monday_get_items, ALL_TOOLS.monday_get_item,
-    ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item,
-    ALL_TOOLS.monday_delete_item, ALL_TOOLS.monday_archive_item,
-    ALL_TOOLS.monday_move_item_to_group, ALL_TOOLS.monday_duplicate_item, ALL_TOOLS.monday_create_subitem,
-    ALL_TOOLS.monday_create_group, ALL_TOOLS.monday_delete_group,
-    ALL_TOOLS.monday_create_column,
-    ALL_TOOLS.monday_get_updates, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_delete_update,
-    ALL_TOOLS.monday_get_me, ALL_TOOLS.monday_get_users,
-    ALL_TOOLS.monday_resolve_connected_item,
-    ALL_TOOLS.monday_search_items, ALL_TOOLS.monday_get_my_items,
-    ALL_TOOLS.monday_graphql,
-  );
-  if (tasksUser)    tools.push(ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task, ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task);
-  if ((agentConfig.tools.memory ?? true) && memoryUser) tools.push(ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete);
-  if (memoryUser) tools.push(ALL_TOOLS.contacts_lookup, ALL_TOOLS.contacts_list);
-  if (apolloApiKey) tools.push(
-    ALL_TOOLS.apollo_people_search, ALL_TOOLS.apollo_org_search,
-    ALL_TOOLS.apollo_person_enrich, ALL_TOOLS.apollo_org_enrich,
-    ALL_TOOLS.apollo_contacts_search, ALL_TOOLS.apollo_create_contact, ALL_TOOLS.apollo_update_contact,
-    ALL_TOOLS.apollo_get_sequences, ALL_TOOLS.apollo_add_to_sequence, ALL_TOOLS.apollo_get_email_accounts,
-    ALL_TOOLS.apollo_get_news, ALL_TOOLS.apollo_org_job_postings,
-  );
-  return tools;
+
+// ── Hooks ─────────────────────────────────────────────────────────────────────
+
+export interface AgentHooks {
+  /** Called before each tool execution. Return modified args or void to use original. */
+  onBeforeTool?: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown> | void>;
+  /** Called after each tool execution. Return modified result or void to use original. */
+  onAfterTool?: (name: string, args: Record<string, unknown>, result: string) => Promise<string | void>;
+}
+
+// ── Subagent / coordinator architecture ───────────────────────────────────────
+
+interface AgentContext {
+  gmailUser?: string;
+  calendarUser?: string;
+  mondayToken?: string;
+  tasksUser?: string;
+  memoryUser?: string;
+  whatsappUser?: string;
+  apolloApiKey?: string;
+}
+
+const COORDINATOR_TOOL: ToolDecl = {
+  name: "delegate_to_subagent",
+  description: `Delegate a task to a specialized subagent. The subagent executes autonomously and returns a result string. Available subagents:
+- research: web search, reading URLs, fetching images, custom HTTP/API calls
+- calendar: Google Calendar — list, create, update, delete events; check availability; RSVP
+- tasks: Google Tasks — list, create, complete, update, delete tasks
+- communication: Gmail, Slack, WhatsApp — send messages
+- monday: Monday.com — boards, items, groups, columns, updates
+- memory: user memory (save/recall) and contact lookup
+- crm: Apollo.io — prospect search, contact management, email sequences`,
+  parameters: {
+    properties: {
+      subagent: { type: "string", description: "Subagent name: research | calendar | tasks | communication | monday | memory | crm" },
+      task:     { type: "string", description: "Complete task description with all context the subagent needs to act independently" },
+    },
+    required: ["subagent", "task"],
+  },
+};
+
+const COORDINATOR_INSTRUCTIONS = `You are a coordinator agent. Delegate ALL data access and external actions to specialized subagents via delegate_to_subagent.
+Rules:
+- You cannot call external APIs or read live data yourself — always delegate.
+- Include full context in the task description so the subagent can act independently.
+- For tasks spanning multiple domains, call subagents sequentially.
+- Synthesize subagent results into a clear, direct response for the user.
+- If a subagent returns an error, report it exactly — do not claim success.
+- Only respond without delegating for questions answerable from conversation context alone (e.g. simple math, definitions, already-known facts).`;
+
+function buildSubagentTools(subagent: string, ctx: AgentContext): ToolDecl[] {
+  switch (subagent) {
+    case "research":
+      return [
+        ...(agentConfig.tools.jinaReader ?? true ? [ALL_TOOLS.read_webpage, ALL_TOOLS.search_image] : []),
+        ...(agentConfig.tools.fetchUrl ? [ALL_TOOLS.fetch_url] : []),
+        ...(agentConfig.tools.httpRequest ? [ALL_TOOLS.http_request] : []),
+      ];
+    case "calendar":
+      if (!ctx.calendarUser) return [];
+      return [
+        ALL_TOOLS.calendar_list_events, ALL_TOOLS.calendar_create_event, ALL_TOOLS.calendar_get_event,
+        ALL_TOOLS.calendar_check_availability, ALL_TOOLS.calendar_rsvp,
+        ALL_TOOLS.calendar_update_event, ALL_TOOLS.calendar_delete_event,
+      ];
+    case "tasks":
+      if (!ctx.tasksUser) return [];
+      return [
+        ALL_TOOLS.tasks_list_tasklists, ALL_TOOLS.tasks_list_tasks, ALL_TOOLS.tasks_create_task,
+        ALL_TOOLS.tasks_complete_task, ALL_TOOLS.tasks_update_task, ALL_TOOLS.tasks_delete_task,
+      ];
+    case "communication":
+      return [
+        ...(ctx.gmailUser ? [ALL_TOOLS.gmail_send] : []),
+        ...(agentConfig.tools.slack && process.env.SLACK_BOT_TOKEN
+          ? [ALL_TOOLS.slack_send_message, ALL_TOOLS.slack_list_channels, ALL_TOOLS.slack_lookup_user]
+          : []),
+        ...(ctx.whatsappUser && waGetStatus(ctx.whatsappUser) === "connected"
+          ? [ALL_TOOLS.whatsapp_send_message]
+          : []),
+      ];
+    case "monday":
+      if (!ctx.mondayToken) return [];
+      return [
+        ALL_TOOLS.monday_list_boards, ALL_TOOLS.monday_get_board, ALL_TOOLS.monday_create_board,
+        ALL_TOOLS.monday_get_items, ALL_TOOLS.monday_get_item,
+        ALL_TOOLS.monday_create_item, ALL_TOOLS.monday_update_item,
+        ALL_TOOLS.monday_delete_item, ALL_TOOLS.monday_archive_item,
+        ALL_TOOLS.monday_move_item_to_group, ALL_TOOLS.monday_duplicate_item, ALL_TOOLS.monday_create_subitem,
+        ALL_TOOLS.monday_create_group, ALL_TOOLS.monday_delete_group, ALL_TOOLS.monday_create_column,
+        ALL_TOOLS.monday_get_updates, ALL_TOOLS.monday_create_update, ALL_TOOLS.monday_delete_update,
+        ALL_TOOLS.monday_get_me, ALL_TOOLS.monday_get_users,
+        ALL_TOOLS.monday_resolve_connected_item, ALL_TOOLS.monday_search_items, ALL_TOOLS.monday_get_my_items,
+        ALL_TOOLS.monday_graphql,
+      ];
+    case "memory":
+      return [
+        ...((agentConfig.tools.memory ?? true) && ctx.memoryUser
+          ? [ALL_TOOLS.memory_save, ALL_TOOLS.memory_recall, ALL_TOOLS.memory_delete]
+          : []),
+        ...(ctx.memoryUser ? [ALL_TOOLS.contacts_lookup, ALL_TOOLS.contacts_list] : []),
+      ];
+    case "crm":
+      if (!ctx.apolloApiKey) return [];
+      return [
+        ALL_TOOLS.apollo_people_search, ALL_TOOLS.apollo_org_search,
+        ALL_TOOLS.apollo_person_enrich, ALL_TOOLS.apollo_org_enrich,
+        ALL_TOOLS.apollo_contacts_search, ALL_TOOLS.apollo_create_contact, ALL_TOOLS.apollo_update_contact,
+        ALL_TOOLS.apollo_get_sequences, ALL_TOOLS.apollo_add_to_sequence, ALL_TOOLS.apollo_get_email_accounts,
+        ALL_TOOLS.apollo_get_news, ALL_TOOLS.apollo_org_job_postings,
+      ];
+    default:
+      return [];
+  }
+}
+
+async function runSubagent(
+  subagentName: string,
+  task: string,
+  ctx: AgentContext,
+  model: ModelConfig,
+  hooks?: AgentHooks,
+): Promise<string> {
+  const tools = buildSubagentTools(subagentName, ctx);
+  if (!tools.length) {
+    return `Subagent "${subagentName}" has no available tools — the required service may not be connected.`;
+  }
+  const systemPrompt = `You are a specialized ${subagentName} agent. Complete the delegated task using your tools. Return a concise, structured result for the coordinator to use in its final reply.`;
+  const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
+    const t0 = Date.now();
+    console.log(JSON.stringify({ tag: "subagent", subagent: subagentName, msg: "tool call", name, argsKeys: Object.keys(args) }));
+    try {
+      const modifiedArgs = (await hooks?.onBeforeTool?.(name, args)) ?? args;
+      const result = await executeBuiltin(name, modifiedArgs, ctx.gmailUser, ctx.calendarUser, ctx.mondayToken, ctx.tasksUser, ctx.memoryUser, ctx.whatsappUser, ctx.apolloApiKey);
+      const output = result ?? "Tool not implemented";
+      const modifiedResult = (await hooks?.onAfterTool?.(name, modifiedArgs, output)) ?? output;
+      console.log(JSON.stringify({ tag: "subagent", subagent: subagentName, msg: "tool done", name, ms: Date.now() - t0 }));
+      return modifiedResult;
+    } catch (err) {
+      const errMsg = (err as Error).message ?? String(err);
+      console.error(JSON.stringify({ tag: "subagent", subagent: subagentName, msg: "tool error", name, ms: Date.now() - t0, error: errMsg }));
+      return `Tool error: ${errMsg}`;
+    }
+  };
+  const result = await chatWithModel(model, systemPrompt, [], task, tools, executor, false);
+  return result.reply;
 }
 
 
@@ -1138,8 +1250,11 @@ async function runChat(
   image?: ImageAttachment,
   whatsappUser?: string,
   apolloApiKey?: string,
+  hooks?: AgentHooks,
 ): Promise<ChatResult> {
   const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
+  const ctx: AgentContext = { gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey };
+
   let memoriesBlock = "";
   if (memoryUser) {
     try {
@@ -1149,9 +1264,9 @@ async function runChat(
       }
     } catch { /* non-fatal */ }
   }
-  const builtPrompt = buildSystemPrompt(systemPrompt, undefined, !!mondayToken, !!calendarUser) + memoriesBlock;
 
   if (mode === "search" && agentConfig.tools.googleSearch) {
+    const builtPrompt = buildSystemPrompt(systemPrompt, undefined, !!mondayToken, !!calendarUser) + memoriesBlock;
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
     const m = genAI.getGenerativeModel({
@@ -1166,31 +1281,27 @@ async function runChat(
   }
 
   if (mode === "no_tools") {
+    const builtPrompt = buildSystemPrompt(systemPrompt, undefined, !!mondayToken, !!calendarUser) + memoriesBlock;
     return chatWithModel(model, builtPrompt, history, message, [], async () => "Tool not available", false, image);
   }
 
-  const allTools = buildBuiltinTools(gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey);
-  const nativeSearch = agentConfig.tools.googleSearch;
+  // Coordinator mode: route requests to specialized subagents
+  const agentPersonality = buildSystemPrompt(systemPrompt, undefined, !!mondayToken, !!calendarUser);
+  const coordinatorPrompt = `${COORDINATOR_INSTRUCTIONS}\n\n---\n\n${agentPersonality}${memoriesBlock}`;
 
-  const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
-    const t0 = Date.now();
-    console.log(JSON.stringify({ tag: "agent", msg: "tool call", name, argsKeys: Object.keys(args) }));
-    try {
-      const result = await executeBuiltin(name, args, gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey);
-      console.log(JSON.stringify({ tag: "agent", msg: "tool done", name, ms: Date.now() - t0 }));
-      return result ?? "Tool not implemented";
-    } catch (err) {
-      const errMsg = (err as Error).message ?? String(err);
-      console.error(JSON.stringify({ tag: "agent", msg: "tool error", name, ms: Date.now() - t0, error: errMsg }));
-      return `Tool error: ${errMsg}`;
-    }
+  const coordinatorExecutor = async (name: string, args: Record<string, unknown>): Promise<string> => {
+    if (name !== "delegate_to_subagent") return "Unknown coordinator tool";
+    const subagentName = args.subagent as string;
+    const task = args.task as string;
+    console.log(JSON.stringify({ tag: "coordinator", msg: "delegate", subagent: subagentName }));
+    return runSubagent(subagentName, task, ctx, model, hooks);
   };
 
   if (streamCallbacks) {
-    const toolUses = await chatWithModelStream(model, builtPrompt, history, message, allTools, executor, streamCallbacks, nativeSearch, image);
+    const toolUses = await chatWithModelStream(model, coordinatorPrompt, history, message, [COORDINATOR_TOOL], coordinatorExecutor, streamCallbacks, false, image);
     return { reply: "", toolUses };
   }
-  return chatWithModel(model, builtPrompt, history, message, allTools, executor, nativeSearch, image);
+  return chatWithModel(model, coordinatorPrompt, history, message, [COORDINATOR_TOOL], coordinatorExecutor, false, image);
 }
 
 export async function chat(
@@ -1207,8 +1318,9 @@ export async function chat(
   image?: ImageAttachment,
   whatsappUser?: string,
   apolloApiKey?: string,
+  hooks?: AgentHooks,
 ): Promise<ChatResult> {
-  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey);
+  return runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, undefined, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey, hooks);
 }
 
 export async function chatStream(
@@ -1226,8 +1338,9 @@ export async function chatStream(
   image?: ImageAttachment,
   whatsappUser?: string,
   apolloApiKey?: string,
+  hooks?: AgentHooks,
 ): Promise<ToolUse[]> {
-  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey);
+  const result = await runChat(message, history, mode, systemPrompt, gmailUser, calendarUser, modelOverride, callbacks, mondayToken, tasksUser, memoryUser, image, whatsappUser, apolloApiKey, hooks);
   return result.toolUses;
 }
 
