@@ -1417,6 +1417,10 @@ async function runChat(
 When the user asks to add, connect, or integrate a new service or API that isn't already available, delegate to the "custom" subagent. That subagent can research the API, save a tool definition, and test it. Drive the conversation like this:
 1. Confirm the service and what the user wants to do with it (e.g. "fetch open Jira issues", "create issues").
 2. Research the API (the custom subagent uses read_webpage) to determine the base URL, auth method (API key / bearer / basic — NOT OAuth, which isn't supported yet), and the exact endpoints. Propose suggestions yourself — don't make the user specify endpoints.
+   Design operations well:
+   - For any "find / search X by name or keyword" need, include the API's dedicated SEARCH endpoint (e.g. GitHub /search/repositories?q=org:acme+keyword), not just a list endpoint. List endpoints return one page and will miss items.
+   - Give list/search ops a "per_page" param and default the description to a high value (e.g. 100), and a "page" param for pagination. Tell the model in the op description that each call returns one page and to paginate for completeness.
+   - Cover the common verbs the user mentioned (list, get, search, create, update) as separate operations.
 3. SAVE THE TOOL FIRST with custom_tool_save, choosing a credential name (e.g. "github_token"). The per-tool credential field only appears in the Connectors panel AFTER the tool is saved — so you must save before asking for the credential.
 4. Then tell the user the new connector now appears in the Connectors panel (they may need to refresh the page or reopen the Connectors section), and ask them to paste their credential into that connector's field and click Connect. Never ask them to paste a secret into the chat.
 5. Once they confirm it's connected, verify with custom_tool_test.
