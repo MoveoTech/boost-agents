@@ -30,6 +30,7 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
   const [openaiKey, setOpenaiKey] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [model, setModel] = useState("gemini|gemini-2.5-flash");
+  const [agentType, setAgentType] = useState<"external" | "internal">("external");
 
   // Section collapse state
   const [showAccess, setShowAccess] = useState(false);
@@ -111,6 +112,7 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
         oauthEmails: oauthEmails.trim() || undefined,
         anthropicApiKey: anthropicKey.trim() || undefined,
         openaiApiKey: openaiKey.trim() || undefined,
+        agentType,
       });
       setRepoName(rn);
       setCreateRunId(rid);
@@ -439,6 +441,33 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
             </div>
           </div>
         )}
+
+        {/* Agent type */}
+        <div className="cap-field" style={{ marginTop: 8 }}>
+          <label className="cap-label">Agent type</label>
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            {(["external", "internal"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setAgentType(t)}
+                style={{
+                  flex: 1, padding: "8px 0", borderRadius: 8, border: "1px solid",
+                  borderColor: agentType === t ? "var(--accent)" : "var(--border)",
+                  background: agentType === t ? "var(--accent)" : "transparent",
+                  color: agentType === t ? "#fff" : "var(--muted)",
+                  fontWeight: agentType === t ? 600 : 400,
+                  cursor: "pointer", fontSize: 14, textTransform: "capitalize",
+                }}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          <div className="cap-hint">
+            {agentType === "internal" ? "MoveoTech staff — includes Drive and extended Google scopes." : "Client-facing — standard Google scopes (Gmail, Calendar)."}
+          </div>
+        </div>
 
         {/* Tools/Skills note */}
         <div className="cap-tools-note">

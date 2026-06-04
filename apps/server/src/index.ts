@@ -1401,9 +1401,10 @@ app.get("/api/admin/key", requireAdmin, (_req, res) => {
 
 // Trigger the create-agent.yml GitHub Actions workflow to provision a new agent repo
 app.post("/api/admin/create-agent", requireAdmin, async (req, res) => {
-  const { agentName, geminiApiKey, adminEmails, oauthEmails, anthropicApiKey, openaiApiKey } = req.body as {
+  const { agentName, geminiApiKey, adminEmails, oauthEmails, anthropicApiKey, openaiApiKey, agentType } = req.body as {
     agentName: string; geminiApiKey: string; adminEmails?: string;
     oauthEmails?: string; anthropicApiKey?: string; openaiApiKey?: string;
+    agentType?: "external" | "internal";
   };
 
   if (!agentName?.trim() || !geminiApiKey?.trim()) {
@@ -1436,6 +1437,7 @@ app.post("/api/admin/create-agent", requireAdmin, async (req, res) => {
             oauth_emails: oauthEmails?.trim() ?? "",
             anthropic_api_key: anthropicApiKey?.trim() ?? "",
             openai_api_key: openaiApiKey?.trim() ?? "",
+            agent_type: agentType ?? "external",
           },
         }),
       }

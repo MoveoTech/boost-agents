@@ -28,6 +28,7 @@ export async function getApiKey(): Promise<string> {
 export async function createAgent(params: {
   agentName: string; geminiApiKey: string; adminEmails?: string;
   oauthEmails?: string; anthropicApiKey?: string; openaiApiKey?: string;
+  agentType?: "external" | "internal";
 }): Promise<{ actionsUrl: string; repoName: string; createRunId?: number }> {
   const res = await fetch(`${BASE}/api/admin/create-agent`, {
     method: "POST",

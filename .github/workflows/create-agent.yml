@@ -128,7 +128,7 @@ jobs:
 
           # Fetch + substitute SETUP.md template
           STRIPPED="${REPO_NAME#boost-}"
-          PROJECT_ID="boost-${STRIPPED}-v7"
+          PROJECT_ID="boost-${STRIPPED}-v8"
           gh api repos/MoveoTech/boost-agents/contents/.github/setup-template.md \
             --jq '.content' | tr -d '\n' | base64 -d > /tmp/setup_raw.md
           sed "s/REPO_PLACEHOLDER/$REPO_NAME/g; s/PROJECT_PLACEHOLDER/$PROJECT_ID/g" \
@@ -201,7 +201,7 @@ jobs:
         run: |
           REPO="MoveoTech/$REPO_NAME"
           ACTIONS_URL="https://github.com/$REPO/actions"
-          GCP_CONSOLE="https://console.cloud.google.com/run?project=boost-$REPO_NAME-v7"
+          GCP_CONSOLE="https://console.cloud.google.com/run?project=boost-$REPO_NAME-v8"
           OAUTH_CONSOLE="https://console.cloud.google.com/apis/credentials/consent?project=boost-agents-496211"
 
           echo "## ✦ Agent created: $REPO_NAME" >> $GITHUB_STEP_SUMMARY
@@ -211,7 +211,7 @@ jobs:
           echo "| **Repo** | https://github.com/$REPO |" >> $GITHUB_STEP_SUMMARY
           echo "| **Deploy progress** | $ACTIONS_URL |" >> $GITHUB_STEP_SUMMARY
           echo "| **Agent URL** | Available in Actions summary after deploy (~8 min) |" >> $GITHUB_STEP_SUMMARY
-          echo "| **GCP project** | boost-$REPO_NAME-v7 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **GCP project** | boost-$REPO_NAME-v8 |" >> $GITHUB_STEP_SUMMARY
           echo "| **Agent type** | ${{ inputs.agent_type }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### What was automated" >> $GITHUB_STEP_SUMMARY
