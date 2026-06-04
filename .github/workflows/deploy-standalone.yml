@@ -30,9 +30,15 @@ jobs:
         id: provision
         run: |
           RAW_NAME="${{ github.event.repository.name }}"
-          STRIPPED_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-20)
-          STRIPPED_NAME="${STRIPPED_NAME#boost-}"
-          PROJECT_ID="boost-${STRIPPED_NAME}-v8"
+
+          # Template repo always uses the master project (fixed ID, pre-provisioned)
+          if [ "$RAW_NAME" = "boost-agents" ]; then
+            PROJECT_ID="boost-agents-496211"
+          else
+            STRIPPED_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | cut -c1-20)
+            STRIPPED_NAME="${STRIPPED_NAME#boost-}"
+            PROJECT_ID="boost-${STRIPPED_NAME}-v8"
+          fi
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
           echo "Attempting to manage project $PROJECT_ID..."

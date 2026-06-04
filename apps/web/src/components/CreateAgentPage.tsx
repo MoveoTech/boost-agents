@@ -154,6 +154,16 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
           <p style={{ color: "var(--muted)", textAlign: "center", marginTop: 8 }}>
             Admin access required to create agents.
           </p>
+          <button
+            className="cap-btn cap-btn-secondary"
+            style={{ marginTop: 16, width: "100%" }}
+            onClick={async () => {
+              await fetch("/api/logout", { method: "POST" });
+              window.location.reload();
+            }}
+          >
+            Sign out and try a different account
+          </button>
         </div>
       </div>
     );
@@ -274,7 +284,7 @@ export default function CreateAgentPage({ email }: { email?: string | null }) {
                     <span>Edit API keys (GitHub repo secrets)</span>
                     <span className="cap-link-arrow">↗</span>
                   </a>
-                  <a href={`https://console.cloud.google.com/run?project=boost-${repoName}-v7`} target="_blank" rel="noopener" className="cap-link-row">
+                  <a href={`https://console.cloud.google.com/run?project=boost-${repoName}-v8`} target="_blank" rel="noopener" className="cap-link-row">
                     <span>GCP Cloud Run</span>
                     <span className="cap-link-arrow">↗</span>
                   </a>
