@@ -152,6 +152,7 @@ jobs:
             JINA_API_KEY=${{ secrets.JINA_API_KEY }}
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            GOOGLE_EXTRA_SCOPES=${{ secrets.GOOGLE_EXTRA_SCOPES }}
             GOOGLE_CLOUD_PROJECT=${{ steps.provision.outputs.project_id }}
 
       - name: Set ADMIN_EMAILS

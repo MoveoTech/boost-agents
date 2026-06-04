@@ -91,7 +91,8 @@ jobs:
           if [ "${{ inputs.agent_type }}" = "internal" ]; then
             printf '%s' "${{ secrets.INTERNAL_GOOGLE_CLIENT_ID }}" | gh secret set GOOGLE_CLIENT_ID --repo "$REPO"
             printf '%s' "${{ secrets.INTERNAL_GOOGLE_CLIENT_SECRET }}" | gh secret set GOOGLE_CLIENT_SECRET --repo "$REPO"
-            echo "✓ GOOGLE_CLIENT_ID/SECRET (internal)"
+            printf '%s' "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly" | gh secret set GOOGLE_EXTRA_SCOPES --repo "$REPO"
+            echo "✓ GOOGLE_CLIENT_ID/SECRET + GOOGLE_EXTRA_SCOPES (internal)"
           else
             printf '%s' "${{ secrets.GOOGLE_CLIENT_ID }}" | gh secret set GOOGLE_CLIENT_ID --repo "$REPO"
             printf '%s' "${{ secrets.GOOGLE_CLIENT_SECRET }}" | gh secret set GOOGLE_CLIENT_SECRET --repo "$REPO"

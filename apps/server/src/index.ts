@@ -856,8 +856,10 @@ app.get("/api/auth/google/start", async (req, res) => {
   const agentUrl = (req.query.returnUrl as string) || `${req.protocol}://${req.get("host")}`;
   const service = (req.query.service as string) || "gmail";
   const params = new URLSearchParams({ agentId, agentUrl, service });
-  const extra = (agentConfig as any).extraOAuthScopes?.[service];
-  if (extra?.length) params.set("extraScopes", extra.join(" "));
+  const configExtra: string[] = (agentConfig as any).extraOAuthScopes?.[service] ?? [];
+  const envExtra: string[] = (process.env.GOOGLE_EXTRA_SCOPES ?? "").split(" ").filter(Boolean);
+  const allExtra = [...new Set([...configExtra, ...envExtra])];
+  if (allExtra.length) params.set("extraScopes", allExtra.join(" "));
   res.redirect(`${oauthServiceUrl}/auth/google/start?${params}`);
 });
 
