@@ -735,6 +735,7 @@ Column can be specified by its ID or title (case-insensitive).`,
   custom_tool_save: {
     name: "custom_tool_save",
     description: `Create or update a custom tool that connects to a third-party REST API. The tool becomes available to all users of this agent on their next message. Only call this AFTER you have researched the API and confirmed the auth type and operations with the user.
+IMPORTANT: one tool per service. Put ALL operations for a service into the single "operations" array of ONE definition — do NOT call this multiple times to make separate tools for the same service (that creates duplicate connectors for the same credential). To add an operation to an existing tool, save the SAME id again with the full operations list.
 The "definition" object must match this shape:
 {
   "id": "jira",                       // slug: lowercase letters, digits, underscore
@@ -1418,6 +1419,7 @@ When the user asks to add, connect, or integrate a new service or API that isn't
 1. Confirm the service and what the user wants to do with it (e.g. "fetch open Jira issues", "create issues").
 2. Research the API (the custom subagent uses read_webpage) to determine the base URL, auth method (API key / bearer / basic — NOT OAuth, which isn't supported yet), and the exact endpoints. Propose suggestions yourself — don't make the user specify endpoints.
    Design operations well:
+   - ONE tool per service. Put EVERY operation for that service into a single tool definition (one id, one service name, one credRef) as multiple entries in the operations array. NEVER create a separate tool per action — e.g. weather "current", "forecast", and "alerts" are three operations of ONE "openweather" tool, not three tools. Creating multiple tools for the same service makes duplicate connectors for the same credential.
    - For any "find / search X by name or keyword" need, include the API's dedicated SEARCH endpoint (e.g. GitHub /search/repositories?q=org:acme+keyword), not just a list endpoint. List endpoints return one page and will miss items.
    - Give list/search ops a "per_page" param and default the description to a high value (e.g. 100), and a "page" param for pagination. Tell the model in the op description that each call returns one page and to paginate for completeness.
    - Cover the common verbs the user mentioned (list, get, search, create, update) as separate operations.

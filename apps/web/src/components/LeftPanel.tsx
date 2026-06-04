@@ -128,27 +128,29 @@ function BrainPanel({ userSettings, onChange, agentConfig }: {
 
 // ── Custom tools (built conversationally; per-user credential) ─────────────────
 
-function CustomToolCredentialRow({ tool, userSettings, onUserSettingsChange, onDeleted }: {
-  tool: CustomToolSummary; userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void; onDeleted: (id: string) => void;
+interface ToolGroup { credRef: string; authType: string; label: string; ids: string[] }
+
+function CustomToolCredentialRow({ group, userSettings, onUserSettingsChange, onDeleted }: {
+  group: ToolGroup; userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void; onDeleted: (ids: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
   const creds = userSettings.customCredentials ?? {};
-  const connected = tool.auth.type === "none" || !!creds[tool.auth.credRef];
+  const connected = group.authType === "none" || !!creds[group.credRef];
 
   const remove = async () => {
-    if (!window.confirm(`Delete the "${tool.service}" custom tool for everyone on this agent?`)) return;
-    await deleteCustomTool(tool.id).catch(() => {});
-    onDeleted(tool.id);
+    if (!window.confirm(`Delete the "${group.label}" custom tool for everyone on this agent?`)) return;
+    await Promise.all(group.ids.map((id) => deleteCustomTool(id).catch(() => {})));
+    onDeleted(group.ids);
   };
 
   const save = () => {
     if (!draft.trim()) return;
-    onUserSettingsChange({ ...userSettings, customCredentials: { ...creds, [tool.auth.credRef]: draft.trim() } });
+    onUserSettingsChange({ ...userSettings, customCredentials: { ...creds, [group.credRef]: draft.trim() } });
     setDraft("");
   };
   const disconnect = () => {
     // Empty string reads as "not connected" server-side (merge can't delete a key).
-    onUserSettingsChange({ ...userSettings, customCredentials: { ...creds, [tool.auth.credRef]: "" } });
+    onUserSettingsChange({ ...userSettings, customCredentials: { ...creds, [group.credRef]: "" } });
   };
 
   return (
@@ -156,14 +158,14 @@ function CustomToolCredentialRow({ tool, userSettings, onUserSettingsChange, onD
       <div className="lp-conn-row lp-conn-row-wrap" style={{ marginTop: 4 }}>
         <span className="lp-conn-icon">🧩</span>
         <div className="lp-conn-body">
-          <span className="lp-conn-name">{tool.service}</span>
+          <span className="lp-conn-name">{group.label}</span>
           <span className="lp-conn-status">
             {connected
               ? <><span className="lp-dot">●</span>{"•".repeat(12)}</>
-              : <span style={{ opacity: 0.5 }}>{tool.auth.credRef} required</span>}
+              : <span style={{ opacity: 0.5 }}>{group.credRef} required</span>}
           </span>
         </div>
-        {connected && tool.auth.type !== "none" && (
+        {connected && group.authType !== "none" && (
           <button className="lp-disc-btn" onClick={disconnect}>Disconnect</button>
         )}
         <button className="lp-disc-btn" title="Delete this custom tool for the whole agent" onClick={remove}>Remove</button>
@@ -171,7 +173,7 @@ function CustomToolCredentialRow({ tool, userSettings, onUserSettingsChange, onD
       {!connected && (
         <div className="lp-key-input-row" style={{ flexWrap: "wrap", gap: 4 }}>
           <input type="password" className="configure-input"
-            placeholder={`Paste ${tool.service} credential`}
+            placeholder={`Paste ${group.label} credential`}
             value={draft} onChange={(e) => setDraft(e.target.value)}
             style={{ flex: 1, fontSize: 12 }}
             onKeyDown={(e) => { if (e.key === "Enter") save(); }}
@@ -198,12 +200,22 @@ function CustomToolsConnections({ userSettings, onUserSettingsChange }: {
     return () => { clearInterval(id); window.removeEventListener("focus", onFocus); };
   }, []);
   if (!tools.length) return null;
+
+  // Collapse tools that share a credential into one connector row.
+  const groups = new Map<string, ToolGroup>();
+  for (const t of tools) {
+    const key = t.auth.credRef || t.id;
+    const g = groups.get(key);
+    if (g) { g.ids.push(t.id); if (!g.label.includes(t.service)) g.label += `, ${t.service}`; }
+    else groups.set(key, { credRef: t.auth.credRef, authType: t.auth.type, label: t.service, ids: [t.id] });
+  }
+
   return (
     <>
       <div className="lp-section-label" style={{ marginTop: 20 }}>Custom Tools</div>
-      {tools.map((t) => (
-        <CustomToolCredentialRow key={t.id} tool={t} userSettings={userSettings} onUserSettingsChange={onUserSettingsChange}
-          onDeleted={(id) => setTools((prev) => prev.filter((x) => x.id !== id))} />
+      {[...groups.values()].map((g) => (
+        <CustomToolCredentialRow key={g.credRef} group={g} userSettings={userSettings} onUserSettingsChange={onUserSettingsChange}
+          onDeleted={(ids) => setTools((prev) => prev.filter((x) => !ids.includes(x.id)))} />
       ))}
     </>
   );
