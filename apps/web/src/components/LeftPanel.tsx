@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { AgentConfig, Skill, UserSettings } from "../types";
+import type { AgentConfig, Skill, UserSettings, CustomToolSummary } from "../types";
 import {
   applyConfigLive, getApiKey, getProviders,
   subscribeWhatsAppQR, getWhatsAppConfig, saveWhatsAppConfig, importContacts, validateApiKey,
+  getCustomTools,
   type WhatsAppConfig,
 } from "../api/client";
 
@@ -122,6 +123,81 @@ function BrainPanel({ userSettings, onChange, agentConfig }: {
         </button>
       </div>
     </div>
+  );
+}
+
+// ── Custom tools (built conversationally; per-user credential) ─────────────────
+
+function CustomToolCredentialRow({ tool, userSettings, onUserSettingsChange }: {
+  tool: CustomToolSummary; userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const creds = userSettings.customCredentials ?? {};
+  const connected = tool.auth.type === "none" || !!creds[tool.auth.credRef];
+
+  const save = () => {
+    if (!draft.trim()) return;
+    onUserSettingsChange({ ...userSettings, customCredentials: { ...creds, [tool.auth.credRef]: draft.trim() } });
+    setDraft("");
+  };
+  const disconnect = () => {
+    // Empty string reads as "not connected" server-side (merge can't delete a key).
+    onUserSettingsChange({ ...userSettings, customCredentials: { ...creds, [tool.auth.credRef]: "" } });
+  };
+
+  return (
+    <>
+      <div className="lp-conn-row lp-conn-row-wrap" style={{ marginTop: 4 }}>
+        <span className="lp-conn-icon">🧩</span>
+        <div className="lp-conn-body">
+          <span className="lp-conn-name">{tool.service}</span>
+          <span className="lp-conn-status">
+            {connected
+              ? <><span className="lp-dot">●</span>{"•".repeat(12)}</>
+              : <span style={{ opacity: 0.5 }}>{tool.auth.credRef} required</span>}
+          </span>
+        </div>
+        {connected && tool.auth.type !== "none" && (
+          <button className="lp-disc-btn" onClick={disconnect}>Disconnect</button>
+        )}
+      </div>
+      {!connected && (
+        <div className="lp-key-input-row" style={{ flexWrap: "wrap", gap: 4 }}>
+          <input type="password" className="configure-input"
+            placeholder={`Paste ${tool.service} credential`}
+            value={draft} onChange={(e) => setDraft(e.target.value)}
+            style={{ flex: 1, fontSize: 12 }}
+            onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+          />
+          <button className="lp-save-btn" style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap" }}
+            disabled={!draft.trim()} onClick={save}>Connect</button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function CustomToolsConnections({ userSettings, onUserSettingsChange }: {
+  userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void;
+}) {
+  const [tools, setTools] = useState<CustomToolSummary[]>([]);
+  // Poll so a tool the agent just built shows up without a manual page refresh.
+  useEffect(() => {
+    const load = () => getCustomTools().then(setTools).catch(() => {});
+    load();
+    const id = setInterval(load, 8000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(id); window.removeEventListener("focus", onFocus); };
+  }, []);
+  if (!tools.length) return null;
+  return (
+    <>
+      <div className="lp-section-label" style={{ marginTop: 20 }}>Custom Tools</div>
+      {tools.map((t) => (
+        <CustomToolCredentialRow key={t.id} tool={t} userSettings={userSettings} onUserSettingsChange={onUserSettingsChange} />
+      ))}
+    </>
   );
 }
 
@@ -412,6 +488,8 @@ function ConnectorsPanel({
             <button className="lp-ghost-btn" style={{ fontSize: 11, marginLeft: 8, padding: "2px 8px" }} onClick={() => setMapsEditing(true)}>Override</button>
           </div>
         )}
+
+        <CustomToolsConnections userSettings={userSettings} onUserSettingsChange={onUserSettingsChange} />
 
       </>)}
 
