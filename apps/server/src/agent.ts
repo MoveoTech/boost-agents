@@ -858,10 +858,10 @@ interface AgentContext {
 }
 
 function buildCoordinatorTool(ctx: AgentContext): ToolDecl {
-  const customLine = (agentConfig.tools.customTools ?? true)
+  const customLine = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true)
     ? `\n- custom: user-built integrations${ctx.customToolDefs?.length ? ` (${ctx.customToolDefs.map((d) => d.service).join(", ")})` : ""}, and BUILDING new custom tools (route here when the user asks to add/connect a new service or API)`
     : "";
-  const customName = (agentConfig.tools.customTools ?? true) ? " | custom" : "";
+  const customName = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true) ? " | custom" : "";
   return {
     name: "delegate_to_subagent",
     description: `Delegate a task to a specialized subagent. The subagent executes autonomously and returns a result string. Available subagents:
@@ -953,7 +953,7 @@ function buildSubagentTools(subagent: string, ctx: AgentContext): ToolDecl[] {
         ALL_TOOLS.apollo_get_news, ALL_TOOLS.apollo_org_job_postings,
       ];
     case "custom":
-      if (!(agentConfig.tools.customTools ?? true)) return [];
+      if (!((agentConfig.tools as { customTools?: boolean }).customTools ?? true)) return [];
       // Builder meta-tools are always available so any user can create a tool from zero.
       // Research uses read_webpage to discover the target API's auth + endpoints.
       return [
@@ -1413,7 +1413,7 @@ async function runChat(
   // Coordinator mode: route requests to specialized subagents
   const agentPersonality = buildSystemPrompt(systemPrompt, undefined, !!mondayToken, !!calendarUser);
   const coordinatorTool = buildCoordinatorTool(ctx);
-  const builderBlock = (agentConfig.tools.customTools ?? true) ? `\n\n---\n\n## Building custom tools
+  const builderBlock = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true) ? `\n\n---\n\n## Building custom tools
 When the user asks to add, connect, or integrate a new service or API that isn't already available, delegate to the "custom" subagent. That subagent can research the API, save a tool definition, and test it. Drive the conversation like this:
 1. Confirm the service and what the user wants to do with it (e.g. "fetch open Jira issues", "create issues").
 2. Research the API (the custom subagent uses read_webpage) to determine the base URL, auth method (API key / bearer / basic — NOT OAuth, which isn't supported yet), and the exact endpoints. Propose suggestions yourself — don't make the user specify endpoints.

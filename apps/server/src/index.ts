@@ -2396,7 +2396,7 @@ app.post("/api/chat", async (req, res) => {
         if (s.ok) { const d = await s.json() as { apolloApiKey?: string; customCredentials?: Record<string, string> }; apolloApiKeyStream = d.apolloApiKey; customCredsStream = d.customCredentials; }
       } catch { /* non-fatal */ }
     }
-    const customDefsStream = (agentConfig.tools.customTools ?? true) ? await fetchCustomToolDefs() : [];
+    const customDefsStream = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true) ? await fetchCustomToolDefs() : [];
     try {
       await chatStream(
         effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model,
@@ -2443,7 +2443,7 @@ app.post("/api/chat", async (req, res) => {
         if (s.ok) { const d = await s.json() as { apolloApiKey?: string; customCredentials?: Record<string, string> }; apolloApiKey = d.apolloApiKey; customCreds = d.customCredentials; }
       } catch { /* non-fatal */ }
     }
-    const customDefs = (agentConfig.tools.customTools ?? true) ? await fetchCustomToolDefs() : [];
+    const customDefs = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true) ? await fetchCustomToolDefs() : [];
     const result = await chat(effectiveMessage.trim(), history, mode, systemPrompt, sessionEmail, sessionEmail, model, mondayToken, tasksUser, sessionEmail, imageAttachment, waUser, apolloApiKey, undefined, { defs: customDefs, creds: customCreds });
     trackUsage(modelId, result.toolUses.map((t) => t.name), Date.now() - t0);
     res.json(result);
