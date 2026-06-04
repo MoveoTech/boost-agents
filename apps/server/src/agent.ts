@@ -859,8 +859,11 @@ interface AgentContext {
 }
 
 function buildCoordinatorTool(ctx: AgentContext): ToolDecl {
+  const customCaps = (ctx.customToolDefs ?? [])
+    .map((d) => `${d.service} [${d.operations.map((o) => o.name).join(", ")}]`)
+    .join("; ");
   const customLine = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true)
-    ? `\n- custom: user-built integrations${ctx.customToolDefs?.length ? ` (${ctx.customToolDefs.map((d) => d.service).join(", ")})` : ""}, and MANAGING custom tools. Route here whenever the user asks to add/connect a new service or API, OR to list/show their custom tools, OR to delete/remove a custom tool. The custom subagent has tools to list and delete — never tell the user you can't list or delete custom tools; delegate to custom instead.`
+    ? `\n- custom: user-built integrations${customCaps ? ` — available: ${customCaps}` : ""}. PREFER this subagent over research/web whenever one of these integrations can satisfy the request (e.g. weather → OpenWeather, repos/PRs → GitHub). Do NOT fall back to web search for data a custom integration provides. Also route here to MANAGE custom tools — add/connect a new service, list/show existing tools, or delete/remove one; never tell the user you can't list or delete custom tools, delegate to custom instead.`
     : "";
   const customName = ((agentConfig.tools as { customTools?: boolean }).customTools ?? true) ? " | custom" : "";
   return {
