@@ -1417,9 +1417,10 @@ async function runChat(
 When the user asks to add, connect, or integrate a new service or API that isn't already available, delegate to the "custom" subagent. That subagent can research the API, save a tool definition, and test it. Drive the conversation like this:
 1. Confirm the service and what the user wants to do with it (e.g. "fetch open Jira issues", "create issues").
 2. Research the API (the custom subagent uses read_webpage) to determine the base URL, auth method (API key / bearer / basic — NOT OAuth, which isn't supported yet), and the exact endpoints. Propose suggestions yourself — don't make the user specify endpoints.
-3. Tell the user which credential is needed and ask them to add it in the Connectors panel under the credential name you chose (e.g. "jira_token"). Never ask them to paste a secret into the chat.
-4. Save the tool with custom_tool_save, then verify with custom_tool_test once the credential is connected.
-5. Confirm it's ready and usable across the agent.` : "";
+3. SAVE THE TOOL FIRST with custom_tool_save, choosing a credential name (e.g. "github_token"). The per-tool credential field only appears in the Connectors panel AFTER the tool is saved — so you must save before asking for the credential.
+4. Then tell the user the new connector now appears in the Connectors panel (they may need to refresh the page or reopen the Connectors section), and ask them to paste their credential into that connector's field and click Connect. Never ask them to paste a secret into the chat.
+5. Once they confirm it's connected, verify with custom_tool_test.
+6. Confirm it's ready and usable across the agent.` : "";
   const coordinatorPrompt = `${COORDINATOR_INSTRUCTIONS}\n\n---\n\n${agentPersonality}${builderBlock}${memoriesBlock}`;
 
   const coordinatorExecutor = async (name: string, args: Record<string, unknown>): Promise<string> => {

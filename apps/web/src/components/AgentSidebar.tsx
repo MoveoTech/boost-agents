@@ -171,7 +171,15 @@ function CustomToolCredential({ tool, userSettings, onUserSettingsChange }: { to
 
 function CustomToolsConnections({ userSettings, onUserSettingsChange }: { userSettings: UserSettings; onUserSettingsChange: (s: UserSettings) => void }) {
   const [tools, setTools] = useState<CustomToolSummary[]>([]);
-  useEffect(() => { getCustomTools().then(setTools).catch(() => {}); }, []);
+  // Poll so a tool the agent just built appears here without a manual page refresh.
+  useEffect(() => {
+    const load = () => getCustomTools().then(setTools).catch(() => {});
+    load();
+    const id = setInterval(load, 8000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(id); window.removeEventListener("focus", onFocus); };
+  }, []);
   if (!tools.length) return null;
   return (
     <>
