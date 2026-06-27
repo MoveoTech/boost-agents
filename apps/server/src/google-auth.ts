@@ -7,6 +7,10 @@ const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 const TOKEN_CACHE_TTL = 3 * 60 * 1000;
 
 export async function getUserAccessToken(service: "gmail" | "calendar" | "monday" | "tasks", userEmail: string): Promise<string | null> {
+  // Local dev override: skip the oauth-service and use a Monday token straight from env.
+  // Set MONDAY_TOKEN in .env to test Monday locally without a connected account.
+  if (service === "monday" && process.env.MONDAY_TOKEN) return process.env.MONDAY_TOKEN;
+
   if (!OAUTH_SERVICE_URL || !OAUTH_SERVICE_KEY) return null;
 
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;

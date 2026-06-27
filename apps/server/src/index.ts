@@ -14,6 +14,7 @@ import { commitConfig, commitConfigToRepo, readConfigFromRepo } from "./configur
 import type { AgentConfig } from "./config";
 import { listAutomations, upsertAutomation, deleteAutomation, runAutomationNow, resyncAutomationSecrets, getAutomation, patchAutomationBody } from "./automations";
 import type { Automation, AutomationStep, RunHistoryEntry } from "./automations";
+import { IS_LOCAL, localDevEmail } from "./local";
 import { connectSession, disconnectSession, getStatus, initAllSessions, sendMessage as waSendMessage, flushAllSessions, type MentionHandler, type WhatsAppConfig, DEFAULT_WA_CONFIG } from "./whatsapp";
 import { parseVCards, importContacts, listContacts } from "./contacts";
 import type { Content } from "@google/generative-ai";
@@ -73,7 +74,7 @@ const CAN_CREATE_AGENTS = process.env.BOOST_HUB === "true";
 
 app.get("/api/whoami", (req, res) => {
   if (!ACCESS_PASSWORD && !API_KEY) {
-    res.json({ isAdmin: true, email: null, authenticated: true, canCreateAgents: CAN_CREATE_AGENTS });
+    res.json({ isAdmin: true, email: localDevEmail() ?? null, authenticated: true, canCreateAgents: CAN_CREATE_AGENTS });
     return;
   }
   const bearer = req.headers.authorization?.startsWith("Bearer ")
@@ -353,7 +354,7 @@ async function prewarmFlowTokens(
   const needsGmail    = tools.has("gmail");
 
   const [mondayToken, calendarToken, tasksToken, gmailToken] = await Promise.all([
-    needsMonday   && user.monday   ? getUserAccessToken("monday",   user.email).catch(() => null) : Promise.resolve(null),
+    needsMonday   && (user.monday || !!process.env.MONDAY_TOKEN) ? getUserAccessToken("monday",   user.email).catch(() => null) : Promise.resolve(null),
     needsCalendar && user.calendar ? getUserAccessToken("calendar", user.email).catch(() => null) : Promise.resolve(null),
     needsTasks    && user.tasks    ? getUserAccessToken("tasks",    user.email).catch(() => null) : Promise.resolve(null),
     needsGmail    && user.gmail    ? getUserAccessToken("gmail",    user.email).catch(() => null) : Promise.resolve(null),
@@ -501,7 +502,8 @@ app.post("/api/run-automation", async (req, res) => {
       headers: { "x-api-key": oauthServiceKey },
     });
     const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
-    const user = users.find((u) => u.email === createdBy);
+    const user = users.find((u) => u.email === createdBy)
+      ?? (IS_LOCAL ? { email: createdBy, gmail: false, calendar: false, monday: false, tasks: false } : undefined);
     if (!user) {
       res.status(404).json({ error: `User ${createdBy} not found — they may have disconnected` });
       return;
@@ -627,7 +629,8 @@ app.post("/api/webhooks/:webhookId", async (req, res) => {
     try {
       const usersRes = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, { headers: { "x-api-key": oauthServiceKey } });
       const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
-      const user = users.find((u) => u.email === snap.createdBy);
+      const user = users.find((u) => u.email === snap.createdBy)
+        ?? (IS_LOCAL ? { email: snap.createdBy!, gmail: false, calendar: false, monday: false, tasks: false } : undefined);
       if (!user) return;
 
       const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
@@ -958,7 +961,8 @@ app.post("/api/flows/:id/run-direct", requireAdmin, async (req, res) => {
       headers: { "x-api-key": oauthServiceKey },
     });
     const { users } = await usersRes.json() as { users: { email: string; gmail: boolean; calendar: boolean; monday: boolean; tasks: boolean }[] };
-    const user = users.find((u) => u.email === automation.createdBy);
+    const user = users.find((u) => u.email === automation.createdBy)
+      ?? (IS_LOCAL ? { email: automation.createdBy!, gmail: false, calendar: false, monday: false, tasks: false } : undefined);
     if (!user) { res.status(404).json({ error: `User ${automation.createdBy} not found` }); return; }
     const whatsappUser = getStatus(user.email) === "connected" ? user.email : undefined;
     let apolloApiKeyDirect: string | undefined;
@@ -1203,8 +1207,9 @@ function getSessionEmail(req: express.Request): string | undefined {
   const bearer = req.headers.authorization?.startsWith("Bearer ")
     ? req.headers.authorization.slice(7) : null;
   const tok = bearer ?? req.cookies[COOKIE_NAME];
-  try { return (jwt.verify(tok, COOKIE_SECRET) as { email?: string }).email ?? undefined; }
-  catch { return undefined; }
+  // Locally there's no OAuth login — fall back to the dev identity so session-gated features work.
+  try { return (jwt.verify(tok, COOKIE_SECRET) as { email?: string }).email ?? localDevEmail(); }
+  catch { return localDevEmail(); }
 }
 
 // Per-user settings (model, instructions, avatar) — stored in oauth-service Firestore
@@ -1359,12 +1364,13 @@ app.delete("/api/chats/:id", async (req, res) => {
 // Returns which Google services the current user has connected
 app.get("/api/connections", async (req, res) => {
   const email = getSessionEmail(req);
-  if (!email) { res.json({ gmail: false, calendar: false }); return; }
+  const localMonday = !!process.env.MONDAY_TOKEN; // local Monday override
+  if (!email) { res.json({ gmail: false, calendar: false, monday: localMonday }); return; }
   const oauthServiceUrl = process.env.OAUTH_SERVICE_URL;
   const oauthServiceKey = process.env.OAUTH_SERVICE_KEY;
   const agentId = process.env.GOOGLE_CLOUD_PROJECT;
   if (!oauthServiceUrl || !oauthServiceKey || !agentId) {
-    res.json({ gmail: false, calendar: false }); return;
+    res.json({ gmail: false, calendar: false, monday: localMonday }); return;
   }
   try {
     const r = await fetch(`${oauthServiceUrl}/api/users/${agentId}`, {
@@ -1383,7 +1389,7 @@ app.get("/api/connections", async (req, res) => {
         whatsappOwners = data.users ?? [];
       }
     } catch { /* non-fatal — UI just won't show the lockout message */ }
-    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday, tasks: !!user?.tasks, whatsapp: waStatus === "connected", whatsappStatus: waStatus, whatsappOwners, googleMaps: !!process.env.GOOGLE_MAPS_API_KEY });
+    res.json({ gmail: !!user?.gmail, calendar: !!user?.calendar, monday: !!user?.monday || localMonday, tasks: !!user?.tasks, whatsapp: waStatus === "connected", whatsappStatus: waStatus, whatsappOwners, googleMaps: !!process.env.GOOGLE_MAPS_API_KEY });
   } catch { res.json({ gmail: false, calendar: false }); }
 });
 
@@ -1408,6 +1414,7 @@ app.delete("/api/connections/:service", async (req, res) => {
 });
 
 function requireAdmin(req: any, res: any, next: any) {
+  if (IS_LOCAL) { next(); return; } // local dev is always admin (no login flow available)
   const bearer = req.headers.authorization?.startsWith("Bearer ")
     ? req.headers.authorization.slice(7)
     : null;
@@ -2385,7 +2392,7 @@ app.post("/api/chat", async (req, res) => {
     const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
     const toolUses: { name: string; input: string; output: string }[] = [];
 
-    const mondayTokenStream = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
+    const mondayTokenStream = process.env.MONDAY_TOKEN ?? (sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined);
     const tasksUserStream   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
     const waUserStream      = sessionEmail && getStatus(sessionEmail) === "connected" ? sessionEmail : undefined;
     let apolloApiKeyStream: string | undefined;
@@ -2432,7 +2439,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const mondayToken = sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined;
+    const mondayToken = process.env.MONDAY_TOKEN ?? (sessionEmail ? (await getUserAccessToken("monday", sessionEmail).catch(() => null)) ?? undefined : undefined);
     const tasksUser   = sessionEmail ? (await getUserAccessToken("tasks",   sessionEmail).catch(() => null)) ? sessionEmail : undefined : undefined;
     const waUser      = sessionEmail && getStatus(sessionEmail) === "connected" ? sessionEmail : undefined;
     let apolloApiKey: string | undefined;

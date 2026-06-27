@@ -145,3 +145,5 @@ vite.config.ts.timestamp-*
 # Turbo cache
 .turbo/
 docs
+# Local dev flow store (non-GCP)
+.local-flows.json

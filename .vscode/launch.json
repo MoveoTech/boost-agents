@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug: apollo-agent server",
+      "cwd": "${workspaceFolder}/apps/server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-r", "ts-node/register/transpile-only"],
+      "program": "${workspaceFolder}/apps/server/src/index.ts",
+      "envFile": "${workspaceFolder}/apps/server/.env",
+      "console": "integratedTerminal",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ]
+}

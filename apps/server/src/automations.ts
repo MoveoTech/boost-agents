@@ -1,3 +1,6 @@
+import { IS_LOCAL } from "./local";
+import { localList, localGet, localUpsert, localDelete } from "./local-flows";
+
 const PROJECT = process.env.GOOGLE_CLOUD_PROJECT ?? "";
 const REGION = "us-central1";
 const AUTOMATION_SECRET = process.env.AUTOMATION_SECRET ?? "";
@@ -73,6 +76,7 @@ function parseJob(job: Record<string, unknown>): Automation {
 }
 
 export async function listAutomations(): Promise<Automation[]> {
+  if (IS_LOCAL) return localList();
   const token = await gcpToken();
   const res = await fetch(SCHEDULER_BASE, {
     headers: { Authorization: `Bearer ${token}` },
@@ -85,6 +89,7 @@ export async function listAutomations(): Promise<Automation[]> {
 }
 
 export async function upsertAutomation(automation: Automation, agentUrl: string): Promise<void> {
+  if (IS_LOCAL) { await localUpsert(automation); return; }
   const token = await gcpToken();
   const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automation.id)}`;
 
@@ -131,6 +136,19 @@ export async function upsertAutomation(automation: Automation, agentUrl: string)
 }
 
 export async function runAutomationNow(automationId: string): Promise<void> {
+  if (IS_LOCAL) {
+    // No scheduler locally — POST the flow to our own /api/run-automation, same as the scheduler would.
+    const a = await localGet(automationId);
+    if (!a) throw new Error("Flow not found");
+    const port = process.env.PORT ?? 8080;
+    const res = await fetch(`http://localhost:${port}/api/run-automation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-automation-secret": AUTOMATION_SECRET },
+      body: JSON.stringify({ id: a.id, name: a.name, steps: a.steps, createdBy: a.createdBy, oneTime: a.oneTime, notifyOnFailure: a.notifyOnFailure }),
+    });
+    if (!res.ok) throw new Error(`Failed to run flow locally: ${res.status}`);
+    return;
+  }
   const token = await gcpToken();
   const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automationId)}`;
   const res = await fetch(`https://cloudscheduler.googleapis.com/v1/${fullName}:run`, {
@@ -141,6 +159,7 @@ export async function runAutomationNow(automationId: string): Promise<void> {
 }
 
 export async function getAutomation(automationId: string): Promise<Automation | null> {
+  if (IS_LOCAL) return localGet(automationId);
   const token = await gcpToken();
   const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automationId)}`;
   const res = await fetch(`https://cloudscheduler.googleapis.com/v1/${fullName}`, {
@@ -151,6 +170,7 @@ export async function getAutomation(automationId: string): Promise<Automation | 
 }
 
 export async function deleteAutomation(automationId: string): Promise<void> {
+  if (IS_LOCAL) { await localDelete(automationId); return; }
   const token = await gcpToken();
   const fullName = `projects/${PROJECT}/locations/${REGION}/jobs/${jobId(automationId)}`;
   await fetch(`https://cloudscheduler.googleapis.com/v1/${fullName}`, {
@@ -185,6 +205,7 @@ export async function patchAutomationBody(automationId: string, patch: Partial<R
 }
 
 export async function resyncAutomationSecrets(): Promise<void> {
+  if (IS_LOCAL) return; // no scheduler jobs locally
   if (!PROJECT || !AUTOMATION_SECRET) return;
   try {
     const token = await gcpToken();
