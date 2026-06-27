@@ -94,8 +94,9 @@ app.get("/health", (_req, res) => res.json({ status: "ok" }));
 // Identity-only login (no Gmail/Calendar scopes — just email)
 // ?agentId=xxx&agentUrl=xxx
 app.get("/auth/identity/start", (req, res) => {
-  const { agentId, agentUrl } = req.query as { agentId: string; agentUrl: string };
-  const state = Buffer.from(JSON.stringify({ agentId, agentUrl, service: "identity" })).toString("base64url");
+  const { agentId, agentUrl, phone } = req.query as { agentId: string; agentUrl: string; phone?: string };
+  // phone (optional) → WhatsApp link flow: bind this number to the email Google returns.
+  const state = Buffer.from(JSON.stringify({ agentId, agentUrl, service: "identity", phone })).toString("base64url");
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: getRedirectUri(req),
@@ -153,7 +154,7 @@ app.get("/auth/google/callback", async (req, res) => {
   const { code, state } = req.query as { code: string; state: string };
 
   try {
-    const { agentId, agentUrl, service } = JSON.parse(Buffer.from(state, "base64url").toString());
+    const { agentId, agentUrl, service, phone } = JSON.parse(Buffer.from(state, "base64url").toString());
 
     // Identity uses master credentials; service connections use per-agent credentials.
     const { clientId: cbClientId, clientSecret: cbClientSecret } = service === "identity"
@@ -185,7 +186,15 @@ app.get("/auth/google/callback", async (req, res) => {
     const { email } = userInfo;
 
     if (service === "identity") {
-      // Issue a short-lived token the agent server will exchange for a session
+      // WhatsApp link flow: bind the sender's phone to this email, then show a success page.
+      if (phone) {
+        await phoneLinkRef(agentId, phone).set({ email, connectedAt: new Date().toISOString() });
+        const redirect = new URL(agentUrl);
+        redirect.searchParams.set("wa_linked", "1");
+        res.redirect(redirect.toString());
+        return;
+      }
+      // Web login: issue a short-lived token the agent server will exchange for a session
       const identityToken = jwt.sign({ email, type: "identity" }, OAUTH_SERVICE_KEY, { expiresIn: "5m" });
       const redirect = new URL(agentUrl);
       redirect.searchParams.set("identity_token", identityToken);
@@ -559,7 +568,9 @@ app.get("/api/whatsapp/:agentId", async (req, res) => {
   const { agentId } = req.params;
   try {
     const snap = await db.collection("whatsapp").doc(agentId).collection("sessions").get();
-    res.json({ users: snap.docs.map((d) => d.id) });
+    // Only count sessions that still hold credentials. A DELETE preserves a config-only
+    // doc, which must NOT keep the single-owner WhatsApp slot locked.
+    res.json({ users: snap.docs.filter((d) => d.data().creds).map((d) => d.id) });
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
@@ -606,6 +617,56 @@ app.delete("/api/whatsapp/:agentId/:userId", async (req, res) => {
       await waRef(agentId, userId).delete();
     }
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// ── Phone → identity links ────────────────────────────────────────────────────
+// Maps a WhatsApp sender's E.164 phone number to their Boost email so inbound
+// messages resolve to the sender's own connected tools. Written by the identity
+// OAuth callback (state.phone), read by the agent on each inbound message.
+
+function phoneLinkRef(agentId: string, phone: string) {
+  return db.collection("phone_links").doc(agentId).collection("numbers").doc(phone);
+}
+
+app.get("/api/phone-link/:agentId/:phone", async (req, res) => {
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
+  const { agentId, phone } = req.params;
+  try {
+    const snap = await phoneLinkRef(agentId, phone).get();
+    if (!snap.exists) { res.status(404).json({ error: "Not found" }); return; }
+    res.json({ email: snap.data()?.email });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.put("/api/phone-link/:agentId/:phone", async (req, res) => {
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
+  const { agentId, phone } = req.params;
+  const { email } = req.body as { email: string };
+  if (!email) { res.status(400).json({ error: "email required" }); return; }
+  try {
+    await phoneLinkRef(agentId, phone).set({ email, connectedAt: new Date().toISOString() });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.delete("/api/phone-link/:agentId/:phone", async (req, res) => {
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
+  const { agentId, phone } = req.params;
+  try {
+    await phoneLinkRef(agentId, phone).delete();
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+// Agent's own public URL (saved to the registry at deploy time). Lets the agent build
+// self-referencing links (e.g. WhatsApp identity link) without an env var.
+app.get("/api/agent-url/:agentId", async (req, res) => {
+  if (!await verifyAgentKey(req, res, req.params.agentId)) return;
+  const { agentId } = req.params;
+  try {
+    const snap = await db.collection("agents").where("agentId", "==", agentId).limit(1).get();
+    res.json({ agentUrl: snap.empty ? null : (snap.docs[0].data().agentUrl ?? null) });
   } catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
