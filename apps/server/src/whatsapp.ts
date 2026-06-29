@@ -394,6 +394,12 @@ export interface WhatsAppAttachment {
   mimeType: string; // e.g. "image/jpeg", "application/pdf"
 }
 
+// Last media per chat (jid) so a follow-up text ("summarize the document") can reference a file
+// sent in the immediately previous message — WhatsApp only hands us the current message's media.
+interface RecentMedia { attachment?: WhatsAppAttachment; attachmentText?: string; attachmentName?: string; ts: number; }
+const lastMediaByChat = new Map<string, RecentMedia>();
+const MEDIA_RECALL_MS = 10 * 60_000;
+
 // Handler receives full message context; returns reply text or null (= no reply)
 export type MessageHandler = (params: {
   email: string;
@@ -1079,8 +1085,28 @@ export async function connectSession(
           }
         }
 
-        const mentionedJids: string[] =
-          msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ?? [];
+        // Read the @mention from whichever message type carries it, unwrapping the envelopes
+        // WhatsApp puts around media/captioned content — otherwise a mention in an image/video/
+        // PDF/view-once caption is missed and the bot won't trigger on media messages.
+        const _ctxInfo = (m: typeof msg.message): any => {
+          if (!m) return null;
+          const inner: any =
+            (m as any).ephemeralMessage?.message ??
+            (m as any).viewOnceMessage?.message ??
+            (m as any).viewOnceMessageV2?.message ??
+            (m as any).documentWithCaptionMessage?.message ??
+            m;
+          return (
+            inner.extendedTextMessage?.contextInfo ??
+            inner.imageMessage?.contextInfo ??
+            inner.videoMessage?.contextInfo ??
+            inner.audioMessage?.contextInfo ??
+            inner.documentMessage?.contextInfo ??
+            inner.stickerMessage?.contextInfo ??
+            null
+          );
+        };
+        const mentionedJids: string[] = _ctxInfo(msg.message)?.mentionedJid ?? [];
 
         const isMentioned = !!(myJid && mentionedJids.some((j: string) =>
           j.replace(/:.*@/, "@") === myJid
@@ -1220,6 +1246,21 @@ export async function connectSession(
               attachmentError = "Couldn't download or parse the attachment. Please try sending it again.";
               waLog("warn", email, "attachment download failed", { error: (err as Error).message, mimetype, quoted: isQuoted });
             }
+          }
+        }
+
+        // Remember this message's media; or, if there's none but the user clearly refers to a
+        // file/photo they just sent, reuse the recent one so "summarize the document" works.
+        if (attachment || attachmentText) {
+          lastMediaByChat.set(from, { attachment, attachmentText, attachmentName, ts: Date.now() });
+        } else if (!attachmentError) {
+          const recent = lastMediaByChat.get(from);
+          const refersToMedia = /מסמך|קובץ|תמונה|מצורף|תנתח את זה|סכם|document|file|image|photo|pdf|attachment|summari[sz]e|analy[sz]e/i.test(text);
+          if (recent && refersToMedia && Date.now() - recent.ts < MEDIA_RECALL_MS) {
+            attachment = recent.attachment;
+            attachmentText = recent.attachmentText;
+            attachmentName = recent.attachmentName;
+            waLog("info", email, "reusing recent media for follow-up", { name: attachmentName, mimetype: attachment?.mimeType });
           }
         }
 

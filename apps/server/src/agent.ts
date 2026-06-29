@@ -13,6 +13,7 @@ import {
   mondayGetMe, mondayGetUsers, mondayResolveConnectedItem,
   mondaySearchItems, mondayGetMyItems,
 } from "./monday";
+import { mondayMcpEnabled, getMondayMcpTools, callMondayMcpTool } from "./monday-mcp";
 import { tasksListTasklists, tasksListTasks, tasksCreateTask, tasksCompleteTask, tasksUpdateTask, tasksDeleteTask } from "./tasks";
 import { calendarListEvents, calendarCreateEvent, calendarGetEvent, calendarCheckAvailability, calendarRsvp, calendarUpdateEvent, calendarDeleteEvent } from "./calendar";
 import { memorySave, memoryRecall, memoryDelete } from "./memory";
@@ -856,6 +857,12 @@ interface AgentContext {
   customToolDefs?: CustomToolDef[];
   customCredentials?: Record<string, string>;
   callerEmail?: string;
+  // Subagents push their real tool calls here so the caller can see inner tools (e.g. the Monday
+  // item id created inside the monday subagent) — the top-level result only has delegate_* calls.
+  toolSink?: ToolUse[];
+  // The coordinator's full system prompt — propagated to subagents so domain rules (e.g. required
+  // fields/columns) reach the executor that runs the tools, instead of being lost in delegation.
+  coordinatorSystemPrompt?: string;
 }
 
 function buildCoordinatorTool(ctx: AgentContext): ToolDecl {
@@ -890,9 +897,11 @@ const COORDINATOR_INSTRUCTIONS = `You are a coordinator agent. Delegate ALL data
 Rules:
 - You cannot call external APIs or read live data yourself — always delegate.
 - Include full context in the task description so the subagent can act independently.
-- For tasks spanning multiple domains, call subagents sequentially.
+- When a request touches multiple INDEPENDENT domains, emit all delegate_to_subagent calls in a SINGLE turn so they run in parallel. Only delegate sequentially when one subagent's output is needed as input to another.
+- When you delegate to exactly ONE subagent, its reply is sent to the user verbatim — so phrase that single task to produce a complete, user-ready answer (right language, confirmation, no raw data dumps).
 - Synthesize subagent results into a clear, direct response for the user.
-- If a subagent returns an error, report it exactly — do not claim success.
+- GROUNDING (critical): state an action happened ONLY if a subagent's result in THIS turn explicitly confirms it (e.g. returns the created/updated item id or "Updated item …"). Never claim you created, updated, added an update, or assigned anything unless the subagent's returned result says so. Do not invent item names, statuses, dates, or confirmations that are not in a subagent result. If you did not delegate, you did NOT perform any external action — say what you actually did.
+- If a subagent returns an error or an empty/ambiguous result, report that honestly — do not paper over it with a success message.
 - Only respond without delegating for questions answerable from conversation context alone (e.g. simple math, definitions, already-known facts).`;
 
 function buildSubagentTools(subagent: string, ctx: AgentContext): ToolDecl[] {
@@ -978,18 +987,32 @@ async function runSubagent(
   hooks?: AgentHooks,
 ): Promise<string> {
   const tools = buildSubagentTools(subagentName, ctx);
+  // Add Monday's official hosted MCP tools to the monday subagent (gated by MONDAY_MCP_ENABLED;
+  // a curated subset by default). Built-in monday_* tools stay available alongside them.
+  let mcpNames = new Set<string>();
+  if (subagentName === "monday" && ctx.mondayToken && mondayMcpEnabled()) {
+    const mcp = await getMondayMcpTools(ctx.mondayToken);
+    mcpNames = mcp.names;
+    for (const t of mcp.tools) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  }
   if (!tools.length) {
     return `Subagent "${subagentName}" has no available tools — the required service may not be connected.`;
   }
-  const systemPrompt = `You are a specialized ${subagentName} agent. Complete the delegated task using your tools. Return a concise, structured result for the coordinator to use in its final reply.`;
+  const systemPrompt = `You are a specialized ${subagentName} agent. Complete the delegated task using your tools. Return a concise, structured result for the coordinator to use in its final reply.`
+    + (ctx.coordinatorSystemPrompt
+        ? `\n\n--- DOMAIN RULES FROM THE COORDINATOR (you MUST follow these when using your tools — e.g. required fields/columns to fill, date rules, labels) ---\n${ctx.coordinatorSystemPrompt}`
+        : "");
   const executor = async (name: string, args: Record<string, unknown>): Promise<string> => {
     const t0 = Date.now();
     console.log(JSON.stringify({ tag: "subagent", subagent: subagentName, msg: "tool call", name, argsKeys: Object.keys(args) }));
     try {
       const modifiedArgs = (await hooks?.onBeforeTool?.(name, args)) ?? args;
-      const result = await executeBuiltin(name, modifiedArgs, ctx.gmailUser, ctx.calendarUser, ctx.mondayToken, ctx.tasksUser, ctx.memoryUser, ctx.whatsappUser, ctx.apolloApiKey, ctx);
+      const result = mcpNames.has(name)
+        ? await callMondayMcpTool(ctx.mondayToken!, name, modifiedArgs)
+        : await executeBuiltin(name, modifiedArgs, ctx.gmailUser, ctx.calendarUser, ctx.mondayToken, ctx.tasksUser, ctx.memoryUser, ctx.whatsappUser, ctx.apolloApiKey, ctx);
       const output = result ?? "Tool not implemented";
       const modifiedResult = (await hooks?.onAfterTool?.(name, modifiedArgs, output)) ?? output;
+      ctx.toolSink?.push({ name, input: JSON.stringify(modifiedArgs), output: modifiedResult });
       console.log(JSON.stringify({ tag: "subagent", subagent: subagentName, msg: "tool done", name, ms: Date.now() - t0 }));
       return modifiedResult;
     } catch (err) {
@@ -1378,10 +1401,11 @@ async function runChat(
   hooks?: AgentHooks,
   custom?: { defs?: CustomToolDef[]; creds?: Record<string, string> },
 ): Promise<ChatResult> {
-  const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash" };
+  const model: ModelConfig = modelOverride ?? agentConfig.model ?? { provider: "gemini", modelId: "gemini-2.5-flash", noThinking: true };
   const ctx: AgentContext = {
     gmailUser, calendarUser, mondayToken, tasksUser, memoryUser, whatsappUser, apolloApiKey,
     customToolDefs: custom?.defs, customCredentials: custom?.creds, callerEmail: memoryUser ?? gmailUser,
+    coordinatorSystemPrompt: systemPrompt,
   };
 
   let memoriesBlock = "";
@@ -1440,11 +1464,17 @@ When the user asks to add, connect, or integrate a new service or API that isn't
     return runSubagent(subagentName, task, ctx, model, hooks);
   };
 
+  // Collect the subagents' real tool calls so the caller sees inner tools (e.g. the created
+  // Monday item id), not just the coordinator's delegate_* calls.
+  const subToolUses: ToolUse[] = [];
+  ctx.toolSink = subToolUses;
+
   if (streamCallbacks) {
-    const toolUses = await chatWithModelStream(model, coordinatorPrompt, history, message, [coordinatorTool], coordinatorExecutor, streamCallbacks, false, image);
-    return { reply: "", toolUses };
+    const toolUses = await chatWithModelStream(model, coordinatorPrompt, history, message, [coordinatorTool], coordinatorExecutor, streamCallbacks, false, image, true);
+    return { reply: "", toolUses: [...toolUses, ...subToolUses] };
   }
-  return chatWithModel(model, coordinatorPrompt, history, message, [coordinatorTool], coordinatorExecutor, false, image);
+  const result = await chatWithModel(model, coordinatorPrompt, history, message, [coordinatorTool], coordinatorExecutor, false, image, true);
+  return { ...result, toolUses: [...(result.toolUses ?? []), ...subToolUses] };
 }
 
 export async function chat(

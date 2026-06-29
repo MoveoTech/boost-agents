@@ -94,7 +94,7 @@ function toGeminiSchema(p: ToolParam): Record<string, unknown> {
   };
 }
 
-async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment, noThinking?: boolean): Promise<ChatResult> {
+async function chatGemini(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, nativeSearch?: boolean, image?: ImageAttachment, noThinking?: boolean, singleToolShortCircuit?: boolean): Promise<ChatResult> {
   const genAI = getGeminiClient();
   const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
@@ -127,12 +127,18 @@ async function chatGemini(modelId: string, systemPrompt: string, history: Conten
     }
     round++;
     const calls = result.response.functionCalls()!;
-    const parts: Part[] = await Promise.all(calls.map(async (call) => {
+    const mapped = await Promise.all(calls.map(async (call) => {
       const output = await execute(call.name, call.args as Record<string, unknown>);
       if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
       toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 3000) });
-      return { functionResponse: { name: call.name, response: { result: output } } } as Part;
+      return { output, part: { functionResponse: { name: call.name, response: { result: output } } } as Part };
     }));
+    // Coordinator fast path: a single subagent delegation already returns a user-ready reply, so skip
+    // the synthesis round-trip (one fewer model call per message). Multi-call turns still merge below.
+    if (singleToolShortCircuit && calls.length === 1 && !isToolError(mapped[0].output)) {
+      return { reply: mapped[0].output, toolUses };
+    }
+    const parts: Part[] = mapped.map((m) => m.part);
     const note = guidanceNote(round, consecutiveErrors);
     if (note) { parts.push({ text: note } as any); consecutiveErrors = 0; }
     result = await session.sendMessage(parts);
@@ -290,7 +296,7 @@ async function chatOpenAI(modelId: string, systemPrompt: string, history: Conten
 
 // ── Streaming implementations ────────────────────────────────────────────────
 
-async function chatGeminiStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean, image?: ImageAttachment): Promise<ToolUse[]> {
+async function chatGeminiStream(modelId: string, systemPrompt: string, history: Content[], message: string, tools: ToolDecl[], execute: Executor, cb: StreamCallbacks, nativeSearch?: boolean, image?: ImageAttachment, noThinking?: boolean, singleToolShortCircuit?: boolean): Promise<ToolUse[]> {
   const genAI = getGeminiClient();
   const funcTool = tools.length ? [{
     functionDeclarations: tools.map((t) => ({
@@ -304,7 +310,8 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
   }] : [];
   const geminiTools = funcTool.length > 0 ? funcTool : (nativeSearch ? [{ googleSearch: {} }] : []);
 
-  const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt });
+  const generationConfig = noThinking ? { thinkingConfig: { thinkingBudget: 0 } } as never : undefined;
+  const model = genAI.getGenerativeModel({ model: modelId, tools: geminiTools as never, systemInstruction: systemPrompt, generationConfig });
   const session = model.startChat({ history });
   const toolUses: ToolUse[] = [];
   const firstMsg: Part[] = image
@@ -327,14 +334,20 @@ async function chatGeminiStream(modelId: string, systemPrompt: string, history: 
     const calls = response.functionCalls();
     if (!calls?.length) break;
     round++;
-    const parts: Part[] = await Promise.all(calls.map(async (call) => {
+    const mapped = await Promise.all(calls.map(async (call) => {
       cb.onToolStart(call.name, JSON.stringify(call.args));
       const output = await execute(call.name, call.args as Record<string, unknown>);
       cb.onToolComplete(call.name, output);
       if (isToolError(output)) consecutiveErrors++; else consecutiveErrors = 0;
       toolUses.push({ name: call.name, input: JSON.stringify(call.args), output: output.slice(0, 3000) });
-      return { functionResponse: { name: call.name, response: { result: output } } } as Part;
+      return { output, part: { functionResponse: { name: call.name, response: { result: output } } } as Part };
     }));
+    // Coordinator fast path: stream the single delegation's reply directly, skipping the synthesis call.
+    if (singleToolShortCircuit && calls.length === 1 && !isToolError(mapped[0].output)) {
+      cb.onToken(mapped[0].output);
+      return toolUses;
+    }
+    const parts: Part[] = mapped.map((m) => m.part);
     const note = guidanceNote(round, consecutiveErrors);
     if (note) { parts.push({ text: note } as any); consecutiveErrors = 0; }
     currentMsg = parts;
@@ -487,9 +500,10 @@ export async function chatWithModel(
   execute: Executor,
   nativeSearch?: boolean,
   image?: ImageAttachment,
+  singleToolShortCircuit?: boolean,
 ): Promise<ChatResult> {
   switch (model.provider) {
-    case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch, image, model.noThinking);
+    case "gemini":  return chatGemini(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch, image, model.noThinking, singleToolShortCircuit);
     case "claude":  return chatClaude(model.modelId, systemPrompt, history, message, tools, execute, nativeSearch, image);
     case "openai":  return chatOpenAI(model.modelId, systemPrompt, history, message, tools, execute, image);
     default: throw new Error(`Unknown provider: ${model.provider}`);
@@ -506,9 +520,10 @@ export async function chatWithModelStream(
   callbacks: StreamCallbacks,
   nativeSearch?: boolean,
   image?: ImageAttachment,
+  singleToolShortCircuit?: boolean,
 ): Promise<ToolUse[]> {
   switch (model.provider) {
-    case "gemini": return chatGeminiStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch, image);
+    case "gemini": return chatGeminiStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch, image, model.noThinking, singleToolShortCircuit);
     case "claude": return chatClaudeStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, nativeSearch, image);
     case "openai": return chatOpenAIStream(model.modelId, systemPrompt, history, message, tools, execute, callbacks, image);
     default: throw new Error(`Unknown provider: ${model.provider}`);

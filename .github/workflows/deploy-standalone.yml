@@ -134,7 +134,11 @@ jobs:
           region: us-central1
           project_id: ${{ steps.provision.outputs.project_id }}
           image: us-central1-docker.pkg.dev/${{ steps.provision.outputs.project_id }}/agents/${{ github.event.repository.name }}:${{ github.run_id }}
-          flags: '--allow-unauthenticated --min-instances 1 --max-instances 1'
+          # --no-cpu-throttling keeps CPU allocated so the long-lived WhatsApp (Baileys) websocket can
+          # send keep-alive pings; without it Cloud Run starves the socket and WhatsApp drops (408).
+          # --cpu 4 / --memory 1Gi: each agent reply fires 3+ sequential model calls; the JSON/crypto/MCP
+          # glue between them plus the websocket event loop share the instance, so 1 vCPU serializes them.
+          flags: '--allow-unauthenticated --min-instances 1 --max-instances 1 --no-cpu-throttling --cpu 4 --memory 1Gi --concurrency 80'
           env_vars: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             API_KEY=${{ env.API_KEY }}
